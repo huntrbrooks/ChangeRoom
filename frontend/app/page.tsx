@@ -50,6 +50,17 @@ export default function Home() {
     try {
       // Get API URL from environment or default to localhost
       const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      console.log("Using API URL:", API_URL);
+      
+      // Wake up Render service first (health check)
+      console.log("Waking up Render service...");
+      try {
+        const healthCheck = await axios.get(`${API_URL}/`, { timeout: 90000 });
+        console.log("Service is awake:", healthCheck.data);
+      } catch (wakeError: any) {
+        console.warn("Health check failed (service may be waking up):", wakeError.message);
+        // Continue anyway - service might still be waking up
+      }
 
       // 1. Call Try-On API (using first item for MVP VTON)
       const tryOnFormData = new FormData();
@@ -99,10 +110,14 @@ export default function Home() {
 
     } catch (err: any) {
       console.error("Error generating:", err);
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      
       if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
-        setError("Request timed out. Render's free tier may be waking up (takes ~30-50 seconds). Please try again in a moment.");
-      } else if (err.response?.status === 0 || err.message?.includes('Network Error')) {
-        setError("Cannot connect to backend. Render service may be spinning up. Please wait 30-60 seconds and try again.");
+        setError(`Request timed out after 2 minutes. This usually means Render's free tier is taking longer than expected to wake up. Try clicking the button again - the service should be awake now. API: ${API_URL}`);
+      } else if (err.response?.status === 0 || err.message?.includes('Network Error') || err.code === 'ERR_NETWORK') {
+        setError(`Cannot connect to backend at ${API_URL}. Check: 1) Is the service awake? 2) Is NEXT_PUBLIC_API_URL set in Vercel? 3) Try again in 30-60 seconds.`);
+      } else if (err.response?.status === 404) {
+        setError(`Backend endpoint not found. Check if API URL is correct: ${API_URL}`);
       } else {
         setError(err.response?.data?.detail || err.message || "An error occurred during generation. Please try again.");
       }
