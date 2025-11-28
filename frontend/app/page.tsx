@@ -59,6 +59,7 @@ export default function Home() {
 
       const tryOnPromise = axios.post(`${API_URL}/api/try-on`, tryOnFormData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000, // 2 minutes for Render wake-up + VTON generation
       });
 
       // 2. Call Identify & Shop API for all items
@@ -69,6 +70,7 @@ export default function Home() {
         
         const analysisRes = await axios.post(`${API_URL}/api/identify-products`, identifyFormData, {
            headers: { 'Content-Type': 'multipart/form-data' },
+           timeout: 120000, // 2 minutes for Render wake-up + Gemini processing
         });
         
         if (analysisRes.data.search_query) {
@@ -77,6 +79,7 @@ export default function Home() {
           
           const shopRes = await axios.post(`${API_URL}/api/shop`, shopFormData, {
              headers: { 'Content-Type': 'multipart/form-data' },
+             timeout: 60000, // 1 minute for product search
           });
           
           return shopRes.data.results;
@@ -96,7 +99,13 @@ export default function Home() {
 
     } catch (err: any) {
       console.error("Error generating:", err);
-      setError(err.response?.data?.detail || "An error occurred during generation. Please try again.");
+      if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        setError("Request timed out. Render's free tier may be waking up (takes ~30-50 seconds). Please try again in a moment.");
+      } else if (err.response?.status === 0 || err.message?.includes('Network Error')) {
+        setError("Cannot connect to backend. Render service may be spinning up. Please wait 30-60 seconds and try again.");
+      } else {
+        setError(err.response?.data?.detail || err.message || "An error occurred during generation. Please try again.");
+      }
     } finally {
       setIsGenerating(false);
     }
