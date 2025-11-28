@@ -54,3 +54,4 @@ def search_products(query, budget=None):
         print(f"Error searching products: {e}")
         return []
 
+

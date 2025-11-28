@@ -45,3 +45,4 @@ async def generate_try_on(user_image_file, garment_image_file, category="upper_b
         print(f"Error in VTON generation: {e}")
         raise e
 
+

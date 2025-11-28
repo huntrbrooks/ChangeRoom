@@ -3,7 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import uvicorn
 import os
+import sys
+from pathlib import Path
 from dotenv import load_dotenv
+
+# Add current directory to path to find services module
+sys.path.insert(0, str(Path(__file__).parent))
+
 from services import vton, gemini, shop
 
 load_dotenv()

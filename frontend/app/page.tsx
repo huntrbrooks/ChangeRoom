@@ -48,13 +48,16 @@ export default function Home() {
     setProducts([]);
 
     try {
+      // Get API URL from environment or default to localhost
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
       // 1. Call Try-On API (using first item for MVP VTON)
       const tryOnFormData = new FormData();
       tryOnFormData.append('user_image', userImage);
       tryOnFormData.append('clothing_image', activeItems[0]); // MVP: First item only for VTON
       tryOnFormData.append('category', 'upper_body'); // Default
 
-      const tryOnPromise = axios.post('http://localhost:8000/api/try-on', tryOnFormData, {
+      const tryOnPromise = axios.post(`${API_URL}/api/try-on`, tryOnFormData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
@@ -64,7 +67,7 @@ export default function Home() {
         const identifyFormData = new FormData();
         identifyFormData.append('clothing_image', activeItems[0]);
         
-        const analysisRes = await axios.post('http://localhost:8000/api/identify-products', identifyFormData, {
+        const analysisRes = await axios.post(`${API_URL}/api/identify-products`, identifyFormData, {
            headers: { 'Content-Type': 'multipart/form-data' },
         });
         
@@ -72,7 +75,7 @@ export default function Home() {
           const shopFormData = new FormData();
           shopFormData.append('query', analysisRes.data.search_query);
           
-          const shopRes = await axios.post('http://localhost:8000/api/shop', shopFormData, {
+          const shopRes = await axios.post(`${API_URL}/api/shop`, shopFormData, {
              headers: { 'Content-Type': 'multipart/form-data' },
           });
           

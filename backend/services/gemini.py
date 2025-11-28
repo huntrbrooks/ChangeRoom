@@ -58,3 +58,4 @@ def analyze_garment(image_bytes):
         print(f"Error analyzing garment: {e}")
         return {"error": str(e)}
 
+
