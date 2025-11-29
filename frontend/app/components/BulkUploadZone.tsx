@@ -201,16 +201,22 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         {isAnalyzing ? (
           <div className="flex flex-col items-center w-full">
             <Loader2 className="h-8 w-8 text-blue-500 animate-spin mb-4" />
-            <p className="text-sm text-gray-600 mb-3">{analysisProgress}</p>
-            {/* Progress Bar */}
-            <div className="w-full max-w-md">
-              <div className="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+            <p className="text-sm font-medium text-gray-700 mb-4">{analysisProgress}</p>
+            {/* Progress Bar - Enhanced visibility */}
+            <div className="w-full max-w-md px-4">
+              <div className="w-full bg-gray-200 rounded-full h-3 mb-2 shadow-inner">
                 <div 
-                  className="bg-blue-500 h-2.5 rounded-full transition-all duration-300 ease-out"
-                  style={{ width: `${progressPercent}%` }}
+                  className="bg-blue-500 h-3 rounded-full transition-all duration-500 ease-out shadow-md"
+                  style={{ 
+                    width: `${Math.max(progressPercent, 5)}%`,
+                    minWidth: progressPercent > 0 ? '8px' : '0px'
+                  }}
                 />
               </div>
-              <p className="text-xs text-gray-500 text-center">{progressPercent}%</p>
+              <div className="flex justify-between items-center">
+                <p className="text-xs font-semibold text-gray-600">{progressPercent}%</p>
+                <p className="text-xs text-gray-500">Processing...</p>
+              </div>
             </div>
           </div>
         ) : (

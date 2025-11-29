@@ -125,6 +125,8 @@ async def analyze_clothing_stream(clothing_images: List[UploadFile]):
                 # Update progress: starting item analysis
                 progress = int((idx / total_items) * 100)
                 yield f"data: {json.dumps({'type': 'progress', 'progress': progress, 'current': idx + 1, 'total': total_items, 'message': f'Analyzing item {idx + 1}/{total_items}: {original_filename}...'})}\n\n"
+                # Small delay to ensure progress is visible
+                await asyncio.sleep(0.1)
                 
                 logger.info(f"Analyzing item {idx + 1}: {original_filename}")
                 analysis = await analyze_clothing.analyze_clothing_item(contents, original_filename)

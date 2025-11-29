@@ -87,13 +87,26 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
         
         prompt = """
-        Analyze this clothing item in detail. Provide comprehensive information in JSON format:
+        Analyze this clothing item image and classify it accurately. Pay special attention to the item type.
+        
+        CATEGORY CLASSIFICATION RULES (CRITICAL - be accurate):
+        - "shoes": Any footwear (boots, sneakers, sandals, heels, flats, etc.) - even if only part of the shoe is visible
+        - "lower_body": Pants, jeans, shorts, skirts, leggings, trousers - anything worn on legs/waist down
+        - "upper_body": Shirts, t-shirts, blouses, tops, sweaters, hoodies - anything worn on torso/upper body
+        - "outerwear": Jackets, coats, blazers, cardigans worn over other clothing
+        - "dresses": Full-body garments (dresses, jumpsuits, rompers)
+        - "accessories": Hats, caps, bags, belts, jewelry, scarves, gloves
+        
+        IMPORTANT: Look carefully at what the item actually is. If you see boots, shoes, or any footwear, use "shoes". 
+        If you see pants, jeans, or legwear, use "lower_body". Do NOT default to "upper_body" unless it's actually a top/shirt.
+        
+        Provide comprehensive information in JSON format:
         {
             "category": "upper_body" | "lower_body" | "dresses" | "outerwear" | "accessories" | "shoes",
-            "detailed_description": "A very detailed description including: exact color(s), style (casual/formal/sporty/etc.), specific type (t-shirt, jeans, dress, etc.), material/fabric, fit (slim/loose/regular), patterns, brand if visible, and any distinctive features. This description will be used for AI image generation, so be very specific.",
+            "detailed_description": "A very detailed description including: exact color(s), style (casual/formal/sporty/etc.), specific type (t-shirt, jeans, dress, boots, sneakers, etc.), material/fabric, fit (slim/loose/regular), patterns, brand if visible, and any distinctive features. This description will be used for AI image generation, so be very specific.",
             "color": "primary color(s) - be specific",
             "style": "style description (casual, formal, sporty, etc.)",
-            "material": "fabric/material type",
+            "material": "fabric/material type (leather, cotton, denim, etc.)",
             "fit": "fit type (slim, loose, regular, oversized, etc.)",
             "patterns": "any patterns or prints",
             "brand": "brand name if visible, otherwise 'unknown'",
@@ -150,6 +163,31 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
         
         # Generate suggested filename based on category and metadata
         category = analysis.get("category", "unknown")
+        
+        # Validate and correct category if needed (fallback logic)
+        valid_categories = ["upper_body", "lower_body", "dresses", "outerwear", "accessories", "shoes"]
+        if category not in valid_categories:
+            # Try to infer from description if category is invalid
+            description_lower = analysis.get("detailed_description", "").lower()
+            if any(word in description_lower for word in ["boot", "shoe", "sneaker", "heel", "sandal", "footwear"]):
+                category = "shoes"
+                logger.info(f"Corrected category to 'shoes' based on description for {original_filename}")
+            elif any(word in description_lower for word in ["pant", "jean", "trouser", "short", "skirt", "legging"]):
+                category = "lower_body"
+                logger.info(f"Corrected category to 'lower_body' based on description for {original_filename}")
+            elif any(word in description_lower for word in ["dress", "jumpsuit", "romper"]):
+                category = "dresses"
+                logger.info(f"Corrected category to 'dresses' based on description for {original_filename}")
+            elif any(word in description_lower for word in ["jacket", "coat", "blazer", "cardigan"]):
+                category = "outerwear"
+                logger.info(f"Corrected category to 'outerwear' based on description for {original_filename}")
+            elif any(word in description_lower for word in ["hat", "cap", "bag", "belt", "scarf", "glove"]):
+                category = "accessories"
+                logger.info(f"Corrected category to 'accessories' based on description for {original_filename}")
+            else:
+                category = "upper_body"  # Default fallback
+                logger.warning(f"Using default category 'upper_body' for {original_filename}")
+        
         color = analysis.get("color", "unknown").lower().replace(" ", "_").replace("/", "_")
         style = analysis.get("style", "unknown").lower().replace(" ", "_").replace("/", "_")
         
