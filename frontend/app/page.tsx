@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { UploadZone } from './components/UploadZone';
+import { BulkUploadZone } from './components/BulkUploadZone';
 import { VirtualMirror } from './components/VirtualMirror';
 import { ProductCard } from './components/ProductCard';
 import { Shirt, Sparkles, Search } from 'lucide-react';
@@ -24,6 +25,17 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const handleBulkUpload = (files: File[], analyses: any[]) => {
+    // Fill wardrobe slots with analyzed files
+    const newItems = [...wardrobeItems];
+    files.forEach((file, idx) => {
+      if (idx < newItems.length) {
+        newItems[idx] = file;
+      }
+    });
+    setWardrobeItems(newItems);
+    console.log('Bulk upload complete. Analyzed items:', analyses);
+  };
 
   const handleGenerate = async () => {
     if (!userImage) {
@@ -230,6 +242,7 @@ export default function Home() {
                 <span className="bg-black text-white w-6 h-6 flex items-center justify-center rounded-full text-xs">2</span>
                 Choose Wardrobe
               </h2>
+              <BulkUploadZone onFilesUploaded={handleBulkUpload} />
             </section>
 
             <button
