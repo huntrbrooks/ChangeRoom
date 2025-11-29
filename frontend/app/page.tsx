@@ -225,6 +225,12 @@ export default function Home() {
               />
             </section>
 
+            <section>
+              <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <span className="bg-black text-white w-6 h-6 flex items-center justify-center rounded-full text-xs">2</span>
+                Choose Wardrobe
+              </h2>
+            </section>
 
             <button
               onClick={handleGenerate}
