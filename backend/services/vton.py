@@ -24,7 +24,99 @@ except ImportError:
     OLD_SDK_AVAILABLE = False
     logger.warning("google-generativeai package not installed. Install with: pip install google-generativeai")
 
+# Import OAuth2 authentication libraries
+try:
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google.auth import default
+    OAUTH2_AVAILABLE = True
+except ImportError:
+    OAUTH2_AVAILABLE = False
+    logger.warning("google-auth packages not installed. Install with: pip install google-auth google-auth-oauthlib google-auth-httplib2")
+
 GEMINI_SDK_AVAILABLE = NEW_SDK_AVAILABLE or OLD_SDK_AVAILABLE
+
+# OAuth2 scopes for Generative AI
+SCOPES = [
+    'https://www.googleapis.com/auth/generative-language',
+    'https://www.googleapis.com/auth/cloud-platform'
+]
+
+def _get_oauth2_credentials():
+    """
+    Get OAuth2 credentials for Google GenAI API.
+    Uses client ID and secret from environment variables.
+    For server-to-server, we need a refresh token or service account.
+    """
+    if not OAUTH2_AVAILABLE:
+        raise ImportError("google-auth packages required for OAuth2. Install: pip install google-auth google-auth-oauthlib google-auth-httplib2")
+    
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    
+    if not client_id or not client_secret:
+        raise ValueError("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables are required for OAuth2 authentication")
+    
+    # Check for refresh token (required for server-to-server OAuth2)
+    refresh_token = os.getenv("GOOGLE_REFRESH_TOKEN")
+    
+    if refresh_token:
+        # Use refresh token to get access token
+        from google.oauth2.credentials import Credentials
+        credentials = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=SCOPES
+        )
+        # Refresh to get access token
+        credentials.refresh(Request())
+        logger.info("Using OAuth2 credentials with refresh token")
+        return credentials
+    else:
+        # Try Application Default Credentials (for service accounts)
+        try:
+            credentials, project = default(scopes=SCOPES)
+            logger.info("Using Application Default Credentials for OAuth2")
+            return credentials
+        except Exception as e:
+            logger.warning(f"Application Default Credentials not available: {e}")
+            raise ValueError(
+                "OAuth2 requires either:\n"
+                "1. A refresh token (set GOOGLE_REFRESH_TOKEN) - get one by running OAuth2 flow once\n"
+                "2. A service account JSON file (set GOOGLE_APPLICATION_CREDENTIALS)\n"
+                "3. Or use API key with the older google-generativeai SDK"
+            )
+
+def _get_genai_client():
+    """
+    Get authenticated Google GenAI client using OAuth2.
+    """
+    if not NEW_SDK_AVAILABLE:
+        raise ImportError("google-genai package is required for image generation")
+    
+    try:
+        credentials = _get_oauth2_credentials()
+        # The new SDK should accept credentials directly
+        # Try passing credentials to the client
+        try:
+            client = genai_new.Client(credentials=credentials)
+            logger.info("Initialized Google GenAI client with OAuth2 credentials")
+            return client
+        except TypeError:
+            # If Client doesn't accept credentials parameter, use environment variable
+            # Set credentials as default credentials
+            import google.auth
+            google.auth.default = lambda scopes=None: (credentials, None)
+            client = genai_new.Client()
+            logger.info("Initialized Google GenAI client with OAuth2 credentials (via default)")
+            return client
+    except Exception as e:
+        logger.error(f"Failed to create GenAI client with OAuth2: {e}")
+        raise
 
 async def generate_try_on(user_image_file, garment_image_files, category="upper_body", garment_metadata=None):
     """
@@ -59,10 +151,12 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
     if not GEMINI_SDK_AVAILABLE:
         raise ImportError("Either google-genai or google-generativeai package is required")
     
+    # Check for OAuth2 credentials first, then fallback to API key
+    has_oauth2 = os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET")
     api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        logger.warning("GOOGLE_API_KEY not set. Cannot use Gemini for image generation.")
-        raise ValueError("GOOGLE_API_KEY is required for Gemini image generation")
+    
+    if not has_oauth2 and not api_key:
+        raise ValueError("Either OAuth2 credentials (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) or GOOGLE_API_KEY is required")
     
     try:
         # Read user image
@@ -80,36 +174,54 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
         
         def run_gemini_image_generation():
             # Try new SDK first (supports image generation)
+            client = None
+            use_new_sdk = False
+            
             if NEW_SDK_AVAILABLE:
                 try:
-                    # Set API key as environment variable (required by new SDK)
-                    original_key = os.environ.get('GOOGLE_API_KEY')
-                    os.environ['GOOGLE_API_KEY'] = api_key
-                    try:
-                        client = genai_new.Client()
-                        logger.info("Using new google-genai SDK for image generation")
-                        use_new_sdk = True
-                    except Exception as e:
-                        logger.error(f"New SDK initialization failed: {e}")
+                    # Try OAuth2 authentication first
+                    if has_oauth2:
+                        try:
+                            client = _get_genai_client()
+                            logger.info("Using new google-genai SDK with OAuth2 for image generation")
+                            use_new_sdk = True
+                        except Exception as e:
+                            logger.warning(f"OAuth2 authentication failed: {e}, trying API key fallback")
+                            # Fallback to API key if OAuth2 fails
+                            if api_key:
+                                os.environ['GOOGLE_API_KEY'] = api_key
+                                try:
+                                    client = genai_new.Client()
+                                    logger.info("Using new google-genai SDK with API key (may not work for image generation)")
+                                    use_new_sdk = True
+                                except Exception as e2:
+                                    logger.error(f"API key authentication also failed: {e2}")
+                                    use_new_sdk = False
+                            else:
+                                use_new_sdk = False
+                    elif api_key:
+                        # Use API key directly
+                        os.environ['GOOGLE_API_KEY'] = api_key
+                        try:
+                            client = genai_new.Client()
+                            logger.info("Using new google-genai SDK with API key (may not work for image generation)")
+                            use_new_sdk = True
+                        except Exception as e:
+                            logger.error(f"New SDK initialization failed: {e}")
+                            use_new_sdk = False
+                    else:
                         use_new_sdk = False
-                    finally:
-                        if original_key:
-                            os.environ['GOOGLE_API_KEY'] = original_key
-                        elif 'GOOGLE_API_KEY' in os.environ and os.environ['GOOGLE_API_KEY'] == api_key:
-                            del os.environ['GOOGLE_API_KEY']
                 except Exception as e:
                     logger.warning(f"Failed to use new SDK: {e}")
                     use_new_sdk = False
-            else:
-                use_new_sdk = False
             
             # Fallback to old SDK if new one not available
             if not use_new_sdk:
-                if OLD_SDK_AVAILABLE:
+                if OLD_SDK_AVAILABLE and api_key:
                     genai_old.configure(api_key=api_key)
                     logger.info("Using old google-generativeai SDK (note: does not support image generation)")
                 else:
-                    raise ImportError("No Google GenAI SDK available. Install google-genai or google-generativeai")
+                    raise ImportError("No Google GenAI SDK available or no authentication credentials. Install google-genai or google-generativeai and set up OAuth2 or API key")
             
             # Load user image
             user_image = Image.open(io.BytesIO(user_image_bytes))
@@ -231,7 +343,7 @@ Output:
             
             logger.info(f"Generating image with {len(garment_images)} clothing item(s)...")
             
-            if use_new_sdk:
+            if use_new_sdk and client:
                 # Use new SDK for image generation
                 # Model options for image generation
                 model_options = [
@@ -272,26 +384,18 @@ Output:
                         
                         logger.info(f"Sending {len(contents)} content parts: 1 text + {len(contents) - 1} images")
                         
-                        # Set API key in environment for this call
-                        original_key = os.environ.get('GOOGLE_API_KEY')
-                        os.environ['GOOGLE_API_KEY'] = api_key
-                        try:
-                            response = client.models.generate_content(
-                                model=model_name,
-                                contents=contents,
-                                config=types.GenerateContentConfig(
-                                    response_modalities=['IMAGE'],
-                                    image_config=types.ImageConfig(
-                                        aspect_ratio="2:3",
-                                        image_size="2K"
-                                    )
+                        # Generate content with authenticated client
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=types.GenerateContentConfig(
+                                response_modalities=['IMAGE'],
+                                image_config=types.ImageConfig(
+                                    aspect_ratio="2:3",
+                                    image_size="2K"
                                 )
                             )
-                        finally:
-                            if original_key:
-                                os.environ['GOOGLE_API_KEY'] = original_key
-                            elif 'GOOGLE_API_KEY' in os.environ and os.environ['GOOGLE_API_KEY'] == api_key:
-                                del os.environ['GOOGLE_API_KEY']
+                        )
                         
                         # Extract image from response
                         if hasattr(response, 'contents') and response.contents:
