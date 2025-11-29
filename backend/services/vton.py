@@ -105,10 +105,11 @@ def _get_genai_client():
         # Ensure credentials are refreshed and valid
         if not credentials.valid:
             credentials.refresh(Request())
-            logger.info("Refreshed OAuth2 credentials")
+            logger.info(f"Refreshed OAuth2 credentials. Token valid: {credentials.valid}")
         
         # Remove GOOGLE_API_KEY from environment to prevent SDK from using it
         original_api_key = os.environ.pop('GOOGLE_API_KEY', None)
+        original_app_creds = os.environ.pop('GOOGLE_APPLICATION_CREDENTIALS', None)
         
         try:
             # Method 1: Create a temporary credentials file that the SDK can read
@@ -129,21 +130,38 @@ def _get_genai_client():
             temp_creds_file = None
             try:
                 with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
-                    json.dump(creds_dict, f)
+                    json.dump(creds_dict, f, indent=2)
                     temp_creds_file = f.name
                 
                 # Set GOOGLE_APPLICATION_CREDENTIALS to point to our temp file
                 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = temp_creds_file
                 
                 logger.info(f"Created temporary credentials file: {temp_creds_file}")
+                logger.info(f"GOOGLE_APPLICATION_CREDENTIALS set to: {temp_creds_file}")
+                
+                # Verify the file exists and is readable
+                if os.path.exists(temp_creds_file):
+                    with open(temp_creds_file, 'r') as f:
+                        file_content = f.read()
+                        logger.debug(f"Credentials file content (first 100 chars): {file_content[:100]}")
+                else:
+                    logger.error(f"Credentials file does not exist: {temp_creds_file}")
                 
                 # Now create the client - it should pick up credentials from GOOGLE_APPLICATION_CREDENTIALS
+                # Also ensure we're not using any cached credentials
+                import google.auth
+                import google.auth._default
+                
+                # Clear any cached credentials
+                if hasattr(google.auth._default, '_cached_credentials'):
+                    google.auth._default._cached_credentials = None
+                
                 client = genai_new.Client()
                 logger.info("Initialized Google GenAI client with OAuth2 credentials (via temp file)")
                 return client
                 
             except Exception as e:
-                logger.warning(f"Temp file method failed: {e}, trying direct credentials")
+                logger.warning(f"Temp file method failed: {e}", exc_info=True)
                 # Clean up temp file if it exists
                 if temp_creds_file and os.path.exists(temp_creds_file):
                     try:
@@ -155,20 +173,26 @@ def _get_genai_client():
                 try:
                     import inspect
                     sig = inspect.signature(genai_new.Client.__init__)
+                    logger.info(f"Client.__init__ signature: {sig}")
                     if 'credentials' in sig.parameters:
                         client = genai_new.Client(credentials=credentials)
                         logger.info("Initialized Google GenAI client with OAuth2 credentials (direct)")
                         return client
+                    else:
+                        logger.info("Client does not accept credentials parameter")
                 except (TypeError, AttributeError) as e2:
                     logger.debug(f"Direct credentials parameter not supported: {e2}")
                 
-                # Method 3: Override google.auth.default
+                # Method 3: Override google.auth.default globally
                 import google.auth
                 original_default = google.auth.default
                 
                 def custom_default(scopes=None):
+                    logger.info(f"custom_default called with scopes: {scopes}")
                     if not credentials.valid:
+                        logger.info("Refreshing credentials in custom_default")
                         credentials.refresh(Request())
+                    logger.info(f"Returning credentials, valid: {credentials.valid}")
                     return (credentials, None)
                 
                 google.auth.default = custom_default
@@ -181,9 +205,11 @@ def _get_genai_client():
                     google.auth.default = original_default
                 
         finally:
-            # Restore GOOGLE_API_KEY if it was set
+            # Restore original environment variables if they were set
             if original_api_key:
                 os.environ['GOOGLE_API_KEY'] = original_api_key
+            if original_app_creds:
+                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = original_app_creds
             
     except Exception as e:
         logger.error(f"Failed to create GenAI client with OAuth2: {e}", exc_info=True)
