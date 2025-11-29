@@ -129,31 +129,35 @@ async def analyze_clothing_stream(clothing_images: List[UploadFile]):
                 logger.info(f"Analyzing item {idx + 1}: {original_filename}")
                 analysis = await analyze_clothing.analyze_clothing_item(contents, original_filename)
                 
-                analyzed_items.append({
+                item_result = {
                     "index": idx,
                     "original_filename": original_filename,
-                    "analysis": analysis
-                })
+                    "analysis": analysis,
+                    "status": "success"
+                }
+                analyzed_items.append(item_result)
                 
-                # Update progress: item completed
+                # Update progress: item completed - send item update
                 progress = int(((idx + 1) / total_items) * 100)
-                yield f"data: {json.dumps({'type': 'progress', 'progress': progress, 'current': idx + 1, 'total': total_items, 'message': f'Completed item {idx + 1}/{total_items}'})}\n\n"
+                yield f"data: {json.dumps({'type': 'item_complete', 'item': item_result, 'progress': progress, 'current': idx + 1, 'total': total_items, 'message': f'Completed item {idx + 1}/{total_items}'})}\n\n"
                 
             except Exception as e:
                 logger.error(f"Error analyzing item {idx + 1}: {e}", exc_info=True)
-                analyzed_items.append({
+                item_result = {
                     "index": idx,
                     "original_filename": clothing_image.filename or f"item_{idx + 1}",
                     "error": str(e),
+                    "status": "error",
                     "analysis": {
                         "category": "unknown",
                         "detailed_description": "clothing item",
                         "suggested_filename": f"unknown_item_{idx + 1}.jpg"
                     }
-                })
-                # Still update progress even on error
+                }
+                analyzed_items.append(item_result)
+                # Still update progress even on error - send item update
                 progress = int(((idx + 1) / total_items) * 100)
-                yield f"data: {json.dumps({'type': 'progress', 'progress': progress, 'current': idx + 1, 'total': total_items, 'message': f'Error analyzing item {idx + 1}'})}\n\n"
+                yield f"data: {json.dumps({'type': 'item_complete', 'item': item_result, 'progress': progress, 'current': idx + 1, 'total': total_items, 'message': f'Error analyzing item {idx + 1}'})}\n\n"
         
         # Send final result
         yield f"data: {json.dumps({'type': 'complete', 'items': analyzed_items})}\n\n"
