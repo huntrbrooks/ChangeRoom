@@ -69,5 +69,12 @@ async def shop_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app", 
+        host="0.0.0.0", 
+        port=8000, 
+        reload=True,
+        timeout_keep_alive=600,  # 10 minutes for long-running requests
+        timeout_graceful_shutdown=30  # 30 seconds for graceful shutdown
+    )
 

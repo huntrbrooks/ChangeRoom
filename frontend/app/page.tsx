@@ -47,6 +47,15 @@ export default function Home() {
     setError(null);
     setProducts([]);
 
+    // Suppress browser extension message channel errors
+    const originalError = console.error;
+    console.error = (...args: any[]) => {
+      if (args[0]?.toString().includes('message channel closed')) {
+        return; // Suppress message channel errors
+      }
+      originalError.apply(console, args);
+    };
+
     try {
       // Get API URL from environment or default to localhost
       const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -55,36 +64,55 @@ export default function Home() {
       // Wake up Render service first (health check)
       console.log("Waking up Render service...");
       try {
-        const healthCheck = await axios.get(`${API_URL}/`, { timeout: 90000 });
+        const healthCheck = await axios.get(`${API_URL}/`, { timeout: 180000 }); // 3 minutes
         console.log("Service is awake:", healthCheck.data);
       } catch (wakeError: any) {
         console.warn("Health check failed (service may be waking up):", wakeError.message);
         // Continue anyway - service might still be waking up
       }
 
-      // 1. Call Try-On API (using first item for MVP VTON)
-      const tryOnFormData = new FormData();
-      tryOnFormData.append('user_image', userImage);
-      tryOnFormData.append('clothing_image', activeItems[0]); // MVP: First item only for VTON
-      tryOnFormData.append('category', 'upper_body'); // Default
+      // Step 1: Call Try-On API (sequential execution - must succeed before product search)
+      let tryOnRes;
+      try {
+        const tryOnFormData = new FormData();
+        tryOnFormData.append('user_image', userImage);
+        tryOnFormData.append('clothing_image', activeItems[0]); // MVP: First item only for VTON
+        tryOnFormData.append('category', 'upper_body'); // Default
 
-      const tryOnPromise = axios.post(`${API_URL}/api/try-on`, tryOnFormData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000, // 2 minutes for Render wake-up + VTON generation
-      });
+        console.log("Starting try-on generation...");
+        tryOnRes = await axios.post(`${API_URL}/api/try-on`, tryOnFormData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 600000, // 10 minutes for Render wake-up + VTON generation
+        });
 
-      // 2. Call Identify & Shop API for all items
-      // We'll do this for the first item for now to demonstrate flow
-      const searchPromise = (async () => {
+        if (tryOnRes.data.image_url) {
+          setGeneratedImage(tryOnRes.data.image_url);
+          console.log("Try-on completed successfully");
+        }
+      } catch (tryOnError: any) {
+        console.error("Error in try-on:", tryOnError);
+        const errorMessage = tryOnError.code === 'ECONNABORTED' || tryOnError.message?.includes('timeout')
+          ? `Try-on request timed out after 10 minutes. This usually means the Replicate service is taking longer than expected. Please try again.`
+          : tryOnError.response?.data?.detail || tryOnError.message || "Failed to generate try-on image. Please try again.";
+        setError(`Try-on failed: ${errorMessage}`);
+        setIsGenerating(false);
+        console.error = originalError; // Restore original error handler
+        return; // Stop execution if try-on fails
+      }
+
+      // Step 2: Call Identify & Shop API (only if try-on succeeded)
+      try {
+        console.log("Starting product identification...");
         const identifyFormData = new FormData();
         identifyFormData.append('clothing_image', activeItems[0]);
         
         const analysisRes = await axios.post(`${API_URL}/api/identify-products`, identifyFormData, {
            headers: { 'Content-Type': 'multipart/form-data' },
-           timeout: 120000, // 2 minutes for Render wake-up + Gemini processing
+           timeout: 600000, // 10 minutes for Render wake-up + Gemini processing
         });
         
         if (analysisRes.data.search_query) {
+          console.log("Product identification successful, searching for products...");
           const shopFormData = new FormData();
           shopFormData.append('query', analysisRes.data.search_query);
           
@@ -93,36 +121,37 @@ export default function Home() {
              timeout: 60000, // 1 minute for product search
           });
           
-          return shopRes.data.results;
+          if (shopRes.data.results) {
+            setProducts(shopRes.data.results);
+            console.log("Product search completed successfully");
+          }
+        } else {
+          console.warn("No search query returned from product identification");
         }
-        return [];
-      })();
-
-      const [tryOnRes, searchResults] = await Promise.all([tryOnPromise, searchPromise]);
-
-      if (tryOnRes.data.image_url) {
-        setGeneratedImage(tryOnRes.data.image_url);
-      }
-      
-      if (searchResults) {
-        setProducts(searchResults);
+      } catch (searchError: any) {
+        // Product search failure is non-critical - show try-on result anyway
+        console.warn("Error in product search (non-critical):", searchError);
+        // Don't set error state - user can still see the try-on result
+        // Optionally show a non-blocking warning
+        if (searchError.code === 'ECONNABORTED' || searchError.message?.includes('timeout')) {
+          console.warn("Product search timed out, but try-on was successful");
+        }
       }
 
     } catch (err: any) {
-      console.error("Error generating:", err);
+      console.error("Unexpected error:", err);
       const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       
-      if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
-        setError(`Request timed out after 2 minutes. This usually means Render's free tier is taking longer than expected to wake up. Try clicking the button again - the service should be awake now. API: ${API_URL}`);
-      } else if (err.response?.status === 0 || err.message?.includes('Network Error') || err.code === 'ERR_NETWORK') {
+      if (err.response?.status === 0 || err.message?.includes('Network Error') || err.code === 'ERR_NETWORK') {
         setError(`Cannot connect to backend at ${API_URL}. Check: 1) Is the service awake? 2) Is NEXT_PUBLIC_API_URL set in Vercel? 3) Try again in 30-60 seconds.`);
       } else if (err.response?.status === 404) {
         setError(`Backend endpoint not found. Check if API URL is correct: ${API_URL}`);
       } else {
-        setError(err.response?.data?.detail || err.message || "An error occurred during generation. Please try again.");
+        setError(err.response?.data?.detail || err.message || "An unexpected error occurred. Please try again.");
       }
     } finally {
       setIsGenerating(false);
+      console.error = originalError; // Restore original error handler
     }
   };
 
