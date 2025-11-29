@@ -203,52 +203,54 @@ Output:
                 try:
                     logger.info(f"Attempting to use model: {model_name} for virtual try-on generation")
                     
-                    # Prepare content: system prompt + user image + all clothing images
-                    contents = [user_prompt, user_image]  # Start with prompt and user image
-                    contents.extend(garment_images)  # Add all clothing images
+                    # Convert PIL Images to base64 for API compatibility
+                    def image_to_base64(img):
+                        buffer = io.BytesIO()
+                        img.save(buffer, format='PNG')
+                        return base64.b64encode(buffer.getvalue()).decode('utf-8')
                     
-                    # Convert PIL Images to bytes for API compatibility if needed
-                    user_img_bytes = io.BytesIO()
-                    user_image.save(user_img_bytes, format='PNG')
-                    user_img_bytes.seek(0)
+                    user_img_base64 = image_to_base64(user_image)
+                    garment_img_base64_list = [image_to_base64(img) for img in garment_images]
                     
-                    garment_img_bytes_list = []
-                    for garment_img in garment_images:
-                        gb = io.BytesIO()
-                        garment_img.save(gb, format='PNG')
-                        gb.seek(0)
-                        garment_img_bytes_list.append(gb.getvalue())
+                    # Build contents in the format expected by google-genai SDK
+                    # Format: list of parts, where each part can be text or inline_data
+                    contents = []
                     
-                    # Try with PIL Images first
-                    try:
-                        response = client.models.generate_content(
-                            model=model_name,
-                            contents=contents,
-                            config=types.GenerateContentConfig(
-                                response_modalities=['IMAGE'],  # Request image output
-                                image_config=types.ImageConfig(
-                                    aspect_ratio="2:3",  # Portrait orientation for fashion
-                                    image_size="2K"      # 2K resolution (options: "1K", "2K", "4K")
-                                )
+                    # Add text prompt as first part
+                    contents.append({
+                        "text": user_prompt
+                    })
+                    
+                    # Add user image
+                    contents.append({
+                        "inline_data": {
+                            "mime_type": "image/png",
+                            "data": user_img_base64
+                        }
+                    })
+                    
+                    # Add all clothing images
+                    for garment_base64 in garment_img_base64_list:
+                        contents.append({
+                            "inline_data": {
+                                "mime_type": "image/png",
+                                "data": garment_base64
+                            }
+                        })
+                    
+                    logger.info(f"Sending {len(contents)} content parts: 1 text + {len(contents) - 1} images")
+                    
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=types.GenerateContentConfig(
+                            response_modalities=['IMAGE'],  # Request image output
+                            image_config=types.ImageConfig(
+                                aspect_ratio="2:3",  # Portrait orientation for fashion
+                                image_size="2K"      # 2K resolution (options: "1K", "2K", "4K")
                             )
                         )
-                    except Exception as img_format_error:
-                        # If PIL Images don't work, try with bytes
-                        logger.warning(f"PIL Image format failed, trying bytes: {img_format_error}")
-                        contents_bytes = [user_prompt, user_img_bytes.getvalue()]
-                        contents_bytes.extend(garment_img_bytes_list)
-                        
-                        response = client.models.generate_content(
-                            model=model_name,
-                            contents=contents_bytes,
-                            config=types.GenerateContentConfig(
-                                response_modalities=['IMAGE'],
-                                image_config=types.ImageConfig(
-                                    aspect_ratio="2:3",
-                                    image_size="2K"
-                                )
-                            )
-                        )
+                    )
                     
                     # Extract image from response
                     if hasattr(response, 'contents') and response.contents:
