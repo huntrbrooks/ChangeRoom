@@ -53,7 +53,7 @@ async def root():
 @app.post("/api/try-on")
 async def try_on(
     user_image: UploadFile = File(...),
-    clothing_image: UploadFile = File(...),  # Single image (backward compatibility, required)
+    clothing_image: Optional[UploadFile] = File(None),  # Optional - can use clothing_file_url instead
     category: Optional[str] = Form(None),
     garment_metadata: Optional[str] = Form(None),  # JSON string of metadata
     clothing_file_url: Optional[str] = Form(None)  # URL to saved clothing file (alternative to upload)
@@ -65,6 +65,13 @@ async def try_on(
     Currently supports single clothing image for backward compatibility.
     """
     try:
+        # Validate that at least one clothing source is provided
+        if not clothing_image and not clothing_file_url:
+            raise HTTPException(
+                status_code=422, 
+                detail="Either 'clothing_image' or 'clothing_file_url' must be provided"
+            )
+        
         # Parse metadata if provided
         metadata = None
         if garment_metadata:
@@ -79,23 +86,42 @@ async def try_on(
         if clothing_file_url:
             # Load file from saved location
             try:
-                # Remove /uploads prefix if present, get just filename
-                filename = clothing_file_url.replace("/uploads/", "").split("/")[-1]
+                # Extract filename from URL - handle both relative and absolute URLs
+                # Remove query parameters and fragments
+                url_path = clothing_file_url.split("?")[0].split("#")[0]
+                # Extract just the filename (last part after /)
+                filename = url_path.split("/")[-1]
+                # Remove /uploads/ prefix if present in the path
+                if "/uploads/" in url_path:
+                    filename = url_path.split("/uploads/")[-1]
+                
                 file_path = UPLOADS_DIR / filename
+                logger.info(f"Attempting to load file: {file_path} (from URL: {clothing_file_url}, extracted filename: {filename})")
+                
                 if file_path.exists():
                     clothing_file_handle = open(file_path, 'rb')
                     clothing_image_files = [clothing_file_handle]
-                    logger.info(f"Using saved file: {file_path}")
+                    logger.info(f"Successfully loaded saved file: {file_path}")
                 else:
-                    raise HTTPException(status_code=404, detail=f"Clothing file not found: {filename}")
+                    # List available files for debugging
+                    available_files = list(UPLOADS_DIR.glob("*")) if UPLOADS_DIR.exists() else []
+                    logger.error(f"File not found: {file_path}")
+                    logger.error(f"Available files in uploads: {[f.name for f in available_files]}")
+                    raise HTTPException(
+                        status_code=404, 
+                        detail=f"Clothing file not found: {filename}. Available files: {[f.name for f in available_files[:5]]}"
+                    )
             except HTTPException:
                 raise
             except Exception as e:
-                logger.error(f"Error loading saved clothing file: {e}")
+                logger.error(f"Error loading saved clothing file: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Could not load saved clothing file: {str(e)}")
-        else:
+        elif clothing_image:
             # Use uploaded file
             clothing_image_files = [clothing_image.file]
+        else:
+            # This shouldn't happen due to validation above, but just in case
+            raise HTTPException(status_code=422, detail="No clothing image provided")
         
         # Use category from metadata if available, otherwise use provided or default
         final_category = category or (metadata.get('category') if metadata else None) or "upper_body"
