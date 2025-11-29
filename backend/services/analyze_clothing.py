@@ -189,72 +189,77 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
         
         prompt = """
-        You are a clothing classification expert. Analyze this image and classify the clothing item with EXTREME ACCURACY.
+        You are an expert clothing classifier. Your ONLY job is to identify what clothing item is in this image and classify it correctly.
         
-        CRITICAL CLASSIFICATION RULES - FOLLOW THESE EXACTLY:
+        ⚠️ CRITICAL: DO NOT default to "upper_body". Look at the image carefully and identify the PRIMARY item.
         
-        1. "shoes" - Use ONLY for footwear:
-           - Boots (hiking boots, work boots, combat boots, ankle boots, etc.)
-           - Sneakers, athletic shoes, running shoes, trainers
-           - Sandals, flip-flops, slides
-           - Heels, pumps, flats, loafers, oxfords
-           - ANY item that goes on feet, even if only partially visible
-           - If you see laces, soles, heels, or any shoe structure → "shoes"
+        STEP 1: Identify the PRIMARY item in the image. What is it?
+        - Is it footwear (boots, shoes, sneakers)? → "shoes"
+        - Is it legwear (pants, jeans, shorts, skirt)? → "lower_body"  
+        - Is it a hat, cap, bag, or accessory? → "accessories"
+        - Is it a jacket, coat, or outer layer? → "outerwear"
+        - Is it a dress or full-body garment? → "dresses"
+        - Is it a shirt, t-shirt, or top? → "upper_body"
         
-        2. "lower_body" - Use for leg/waist garments:
-           - Pants, trousers, jeans, slacks
-           - Shorts (any length)
-           - Skirts (mini, midi, maxi, pencil, A-line, etc.)
-           - Leggings, tights, yoga pants
-           - Sweatpants, joggers
-           - ANY item worn from waist down
-           - If you see waistband, leg openings, or pant structure → "lower_body"
+        STEP 2: Classify based on these EXACT rules:
         
-        3. "accessories" - Use for non-garment items:
-           - Hats, caps, beanies, berets
-           - Bags, purses, backpacks
-           - Belts, watches, jewelry
-           - Scarves, gloves, mittens
-           - Sunglasses, ties, bow ties
-           - If it's worn but not a garment → "accessories"
+        "shoes" = ANY footwear visible:
+        - Boots (work boots, combat boots, hiking boots, ankle boots, etc.)
+        - Sneakers, trainers, athletic shoes, running shoes
+        - Sandals, flip-flops, slides
+        - Heels, pumps, flats, loafers, oxfords
+        - If you see: laces, soles, heels, toe caps, eyelets, shoelaces → "shoes"
+        - Even if only part of a boot/shoe is visible → "shoes"
         
-        4. "upper_body" - Use ONLY for torso garments:
-           - T-shirts, shirts, blouses, tops
-           - Sweaters, pullovers, cardigans (if not outerwear)
-           - Tank tops, camisoles
-           - Hoodies (if not outerwear)
-           - Polo shirts, button-down shirts
-           - ONLY items worn on torso/chest area
+        "lower_body" = ANY leg/waist garment:
+        - Pants, trousers, jeans, slacks, cargo pants
+        - Shorts (any length: bermuda, cargo shorts, etc.)
+        - Skirts (mini, midi, maxi, pencil, A-line, etc.)
+        - Leggings, tights, yoga pants, sweatpants, joggers
+        - If you see: waistband, belt loops, leg openings, inseam, cargo pockets → "lower_body"
         
-        5. "outerwear" - Use for garments worn OVER other clothing:
-           - Jackets (denim, leather, bomber, etc.)
-           - Coats (winter coats, trench coats, etc.)
-           - Blazers, suit jackets
-           - Hoodies that are clearly outerwear
-           - Vests, gilets
-           - Windbreakers, rain jackets
+        "accessories" = Non-garment items:
+        - Hats, caps, baseball caps, beanies, berets
+        - Bags, purses, backpacks, handbags
+        - Belts, watches, jewelry
+        - Scarves, gloves, mittens
+        - If it's a hat/cap → "accessories" (NOT upper_body!)
         
-        6. "dresses" - Use for full-body garments:
-           - Dresses (any style)
-           - Jumpsuits, rompers
-           - Overalls (if full-body)
+        "outerwear" = Garments worn OVER other clothing:
+        - Jackets (denim, leather, bomber, etc.)
+        - Coats (winter, trench, overcoat, etc.)
+        - Blazers, suit jackets
+        - Hoodies (if clearly outerwear style)
+        - Vests, gilets, windbreakers
         
-        CLASSIFICATION PROCESS:
-        1. FIRST, identify what the item IS (boots? pants? hat? shirt?)
-        2. THEN, match it to the correct category above
-        3. DO NOT default to "upper_body" - it's the most common mistake
-        4. If you see boots/shoes → "shoes" (even if other items are visible)
-        5. If you see pants/trousers → "lower_body" (even if other items are visible)
-        6. If you see a hat/cap → "accessories" (not upper_body!)
+        "dresses" = Full-body garments:
+        - Dresses (any style)
+        - Jumpsuits, rompers
+        - Overalls (if full-body)
+        
+        "upper_body" = Torso garments ONLY:
+        - T-shirts, shirts, blouses, tops
+        - Sweaters, pullovers
+        - Tank tops, camisoles
+        - Polo shirts, button-down shirts
+        - ONLY use this if it's clearly a top/shirt, NOT if it's boots, pants, or a hat
+        
+        ⚠️ COMMON MISTAKES TO AVOID:
+        - Boots are NOT "upper_body" → they are "shoes"
+        - Pants are NOT "upper_body" → they are "lower_body"
+        - Hats/caps are NOT "upper_body" → they are "accessories"
+        - If you see boots in the image → "shoes"
+        - If you see pants in the image → "lower_body"
+        - If you see a hat/cap in the image → "accessories"
         
         EXAMPLES:
-        - Brown leather boots with laces → "shoes" (NOT upper_body)
-        - Black baseball cap → "accessories" (NOT upper_body)
-        - Blue cargo pants with pockets → "lower_body" (NOT upper_body)
-        - Red t-shirt with graphic print → "upper_body" (CORRECT)
-        - Zip-up hoodie → "outerwear" or "upper_body" (depends on style)
+        Image shows brown leather boots → category: "shoes" (NOT upper_body)
+        Image shows black baseball cap → category: "accessories" (NOT upper_body)
+        Image shows blue cargo pants → category: "lower_body" (NOT upper_body)
+        Image shows red t-shirt → category: "upper_body" (CORRECT)
+        Image shows zip-up hoodie → category: "outerwear" or "upper_body"
         
-        Provide comprehensive information in JSON format:
+        Now analyze the image and provide comprehensive information in JSON format:
         {
             "category": "upper_body" | "lower_body" | "dresses" | "outerwear" | "accessories" | "shoes",
             "detailed_description": "A very detailed description including: exact color(s), style (casual/formal/sporty/etc.), specific type (t-shirt, jeans, dress, boots, sneakers, etc.), material/fabric, fit (slim/loose/regular), patterns, brand if visible, and any distinctive features. This description will be used for AI image generation, so be very specific.",
@@ -280,8 +285,12 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
         """
         
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",  # Use more powerful model for better accuracy
             messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert clothing classifier. Your primary task is to accurately identify and classify clothing items. Always look carefully at what the item actually is - boots are shoes, pants are lower_body, hats are accessories. Do NOT default to upper_body."
+                },
                 {
                     "role": "user",
                     "content": [
@@ -292,13 +301,15 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": f"data:image/{mime_type};base64,{image_base64}"
+                                "url": f"data:image/{mime_type};base64,{image_base64}",
+                                "detail": "high"  # Use high detail for better image analysis
                             }
                         }
                     ]
                 }
             ],
-            max_tokens=1000,
+            max_tokens=1500,  # Increased for more detailed descriptions
+            temperature=0.1,  # Lower temperature for more consistent classification
             response_format={"type": "json_object"}
         )
         
@@ -425,9 +436,10 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
             "worn on torso", "worn on chest", "upper body", "upper-body"
         ]
         
-        # PRIMARY VALIDATION: Always validate category against description using keyword matching
+        # AGGRESSIVE VALIDATION: Always validate category against description using keyword matching
         # This ensures misclassifications are caught regardless of what OpenAI returns
         logger.info(f"Validating category for {original_filename}: OpenAI returned '{category}'")
+        logger.info(f"Description preview: {description_lower[:200]}")
         
         # Count keyword matches for each category
         shoes_matches = sum(1 for keyword in shoes_keywords if keyword in description_lower)
@@ -447,31 +459,38 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
             "upper_body": upper_body_matches
         }
         
+        logger.info(f"Keyword match scores for {original_filename}: {match_scores}")
+        
         # Find category with highest match score
         max_matches = max(match_scores.values())
         keyword_determined_category = None
         
+        # AGGRESSIVE CORRECTION: If we have keyword matches, ALWAYS use them over OpenAI's category
+        # This is critical because OpenAI sometimes misclassifies boots/pants/hats as upper_body
         if max_matches > 0:
             # Get category with most keyword matches
             keyword_determined_category = max(match_scores, key=match_scores.get)
             
-            # Always prioritize keyword matching over OpenAI's category if keywords found
-            # This ensures boots/pants/hats are correctly classified even if OpenAI misclassifies
+            # ALWAYS override OpenAI's category if keyword matching found a different category
+            # This is especially important when OpenAI returns "upper_body" for boots/pants/hats
             if keyword_determined_category != category:
-                logger.info(f"Keyword validation: '{category}' → '{keyword_determined_category}' "
-                          f"(matches: {match_scores}) for {original_filename}")
+                logger.warning(f"⚠️ CORRECTING MISCLASSIFICATION: '{category}' → '{keyword_determined_category}' "
+                             f"for {original_filename} (keyword matches: {match_scores})")
                 category = keyword_determined_category
                 corrected = True
             else:
-                logger.info(f"Keyword validation confirmed '{category}' for {original_filename} "
+                logger.info(f"✓ Keyword validation confirmed '{category}' for {original_filename} "
                           f"(matches: {match_scores[keyword_determined_category]})")
         else:
-            # No keyword matches found - check if category is valid
-            if category not in valid_categories:
+            # No keyword matches found - this is suspicious, log it
+            if category == "upper_body":
+                logger.warning(f"⚠️ WARNING: No keyword matches found and category is 'upper_body' for {original_filename}. "
+                             f"This might be a misclassification. Description: {description_lower[:300]}")
+            elif category not in valid_categories:
                 logger.warning(f"No keyword matches found and invalid category '{category}' for {original_filename}")
                 corrected = True
             else:
-                logger.warning(f"No keyword matches found for {original_filename}, using OpenAI category '{category}'")
+                logger.info(f"No keyword matches found for {original_filename}, using OpenAI category '{category}'")
         
         # If category is still invalid, try keyword matching as fallback
         if category not in valid_categories:
