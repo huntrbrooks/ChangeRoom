@@ -91,19 +91,33 @@ export default function Home() {
         tryOnFormData.append('clothing_image', activeItems[0]); // MVP: First item only for VTON
         
         // Use metadata if available (from analysis)
+        // Transform to format expected by system prompt: background, style, framing, pose, camera, extras
         const firstItem = activeItems[0] as any;
         if (firstItem.metadata || firstItem.category || firstItem.detailed_description) {
-          const metadata = {
-            category: firstItem.category || 'upper_body',
-            detailed_description: firstItem.detailed_description || '',
-            color: firstItem.metadata?.color || '',
-            style: firstItem.metadata?.style || '',
-            material: firstItem.metadata?.material || '',
-            fit: firstItem.metadata?.fit || '',
-            ...firstItem.metadata
-          };
+          // Build metadata in the format expected by the system prompt
+          const metadata: any = {};
+          
+          // Map analyzed metadata to system prompt format
+          if (firstItem.metadata?.style) {
+            metadata.style = firstItem.metadata.style; // e.g., "studio", "streetwear", "mirror selfie"
+          }
+          
+          // Default to full body framing for fashion try-on
+          metadata.framing = "full_body"; // or "three_quarter", "waist_up"
+          
+          // Include any additional metadata as "extras"
+          const extras: any = {};
+          if (firstItem.metadata?.color) extras.color = firstItem.metadata.color;
+          if (firstItem.metadata?.material) extras.material = firstItem.metadata.material;
+          if (firstItem.metadata?.fit) extras.fit = firstItem.metadata.fit;
+          if (firstItem.detailed_description) extras.detailed_description = firstItem.detailed_description;
+          
+          if (Object.keys(extras).length > 0) {
+            metadata.extras = extras;
+          }
+          
           tryOnFormData.append('garment_metadata', JSON.stringify(metadata));
-          tryOnFormData.append('category', metadata.category);
+          tryOnFormData.append('category', firstItem.category || 'upper_body');
           console.log("Using analyzed metadata for try-on:", metadata);
         } else {
           tryOnFormData.append('category', 'upper_body'); // Default

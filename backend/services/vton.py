@@ -16,31 +16,35 @@ except ImportError:
     GEMINI_IMAGE_SDK_AVAILABLE = False
     logger.warning("google-genai package not installed. Install with: pip install google-genai")
 
-async def generate_try_on(user_image_file, garment_image_file, category="upper_body", garment_metadata=None):
+async def generate_try_on(user_image_file, garment_image_files, category="upper_body", garment_metadata=None):
     """
     Uses Gemini 3 Pro (Nano Banana Pro) image editing to combine person and clothing images.
-    Edits the person image to add/change the clothing item.
+    Generates a photorealistic image of the person wearing all clothing items.
     
     Args:
-        user_image_file: File-like object of the person image (base image to edit).
-        garment_image_file: File-like object of the clothing image (reference for editing).
-        category: Category of the garment (upper_body, lower_body, dresses).
-        garment_metadata: Optional metadata from analysis (dict with detailed_description, color, style, etc.)
+        user_image_file: File-like object of the person image (USER_IMAGE).
+        garment_image_files: File-like object or list of File-like objects of clothing images (CLOTHING_IMAGES).
+        category: Category of the garment (upper_body, lower_body, dresses) - kept for backward compatibility.
+        garment_metadata: Optional metadata dict with styling instructions (background, style, framing, pose, camera, extras).
         
     Returns:
-        str: Base64 data URL of the edited image.
+        str: Base64 data URL of the generated image.
     """
-    # Use Gemini 3 Pro for image editing
-    return await _generate_with_gemini(user_image_file, garment_image_file, category, garment_metadata)
+    # Normalize to list if single file
+    if not isinstance(garment_image_files, list):
+        garment_image_files = [garment_image_files]
+    
+    # Use Gemini 3 Pro for image generation
+    return await _generate_with_gemini(user_image_file, garment_image_files, category, garment_metadata)
 
 
-async def _generate_with_gemini(user_image_file, garment_image_file, category="upper_body", garment_metadata=None):
+async def _generate_with_gemini(user_image_file, garment_image_files, category="upper_body", garment_metadata=None):
     """
-    Uses Gemini 3 Pro (Nano Banana Pro) for image editing.
-    Takes the person image and edits it to add/change the clothing item.
+    Uses Gemini 3 Pro (Nano Banana Pro) for virtual try-on image generation.
+    Generates a photorealistic image of the person wearing all clothing items.
     
     Uses the new google-genai SDK with proper API configuration.
-    If garment_metadata is provided, uses it for more accurate editing.
+    Implements the system prompt for virtual try-on API.
     """
     if not GEMINI_IMAGE_SDK_AVAILABLE:
         raise ImportError("google-genai package is required. Install with: pip install google-genai")
@@ -51,62 +55,143 @@ async def _generate_with_gemini(user_image_file, garment_image_file, category="u
         raise ValueError("GOOGLE_API_KEY is required for Gemini 3 Pro image generation")
     
     try:
-        # Read images to analyze them for better prompt generation
+        # Read user image
         if hasattr(user_image_file, 'seek'):
             user_image_file.seek(0)
-        if hasattr(garment_image_file, 'seek'):
-            garment_image_file.seek(0)
-        
         user_image_bytes = user_image_file.read() if hasattr(user_image_file, 'read') else user_image_file
-        garment_image_bytes = garment_image_file.read() if hasattr(garment_image_file, 'read') else garment_image_file
         
-        def run_gemini_image_edit():
+        # Read all clothing images
+        garment_image_bytes_list = []
+        for garment_file in garment_image_files:
+            if hasattr(garment_file, 'seek'):
+                garment_file.seek(0)
+            garment_bytes = garment_file.read() if hasattr(garment_file, 'read') else garment_file
+            garment_image_bytes_list.append(garment_bytes)
+        
+        def run_gemini_image_generation():
             # Initialize the new Google GenAI client
             client = genai.Client(api_key=api_key)
             
-            # Load images
+            # Load user image
             user_image = Image.open(io.BytesIO(user_image_bytes))
-            garment_image = Image.open(io.BytesIO(garment_image_bytes))
             
-            # Use pre-analyzed metadata if available, otherwise analyze on the fly
-            if garment_metadata and garment_metadata.get('detailed_description'):
-                garment_description = garment_metadata['detailed_description']
-                logger.info("Using pre-analyzed metadata for garment description")
-            else:
-                # Fallback: analyze the clothing image for better editing instructions
-                analysis_model = genai.GenerativeModel('gemini-1.5-flash')
-                garment_prompt = "Describe this clothing item in detail. Include: color, style, type, material, and distinctive features. Be specific about how it should look when worn."
-                try:
-                    garment_analysis = analysis_model.generate_content([garment_prompt, garment_image])
-                    garment_description = garment_analysis.text if hasattr(garment_analysis, 'text') else "this clothing item"
-                except Exception as e:
-                    logger.warning(f"Could not analyze garment image: {e}. Using generic description.")
-                    garment_description = f"a {category} clothing item"
+            # Load all clothing images
+            garment_images = [Image.open(io.BytesIO(gb)) for gb in garment_image_bytes_list]
             
-            # Build enhanced editing prompt with metadata if available
-            metadata_context = ""
+            # System prompt for virtual try-on API
+            system_prompt = """You are the image generator behind a virtual try on API endpoint called /api/try-on.
+
+Each request provides:
+
+- One USER_IMAGE: a photo of the real person who must appear in the final image.
+
+- One or more CLOTHING_IMAGES: photos of individual clothing items to be worn by that person.
+
+- Optional METADATA: a JSON object with styling instructions.
+
+Your job:
+
+Generate one high quality, photorealistic image of the SAME PERSON from the USER_IMAGE, wearing ALL of the clothing items from CLOTHING_IMAGES, styled according to METADATA.
+
+Identity and body consistency:
+
+- The person in the output must clearly be the same person as in USER_IMAGE.
+
+- Keep the same face, age, skin tone, hair color, hairstyle, facial hair, tattoos, and body type.
+
+- Do not beautify, slim, bulk up, de-age, change ethnicity, or otherwise alter their core appearance unless METADATA explicitly allows this.
+
+Clothing requirements:
+
+- Use ONLY the clothing items shown in CLOTHING_IMAGES.
+
+- Reproduce the actual colors, prints, logos, graphics, fabrics, and textures accurately.
+
+- Respect correct layering:
+
+  - Underwear or base layers closest to the body.
+
+  - Tops over base layers.
+
+  - Jackets, coats, or hoodies as outer layers.
+
+- If an item is partly visible, infer the missing parts logically while staying consistent with visible details.
+
+- Ignore the bodies, models, faces, and backgrounds in CLOTHING_IMAGES. Only the garments matter.
+
+- Do not add extra garments, shoes, accessories, or logos that are not in CLOTHING_IMAGES unless METADATA explicitly asks for them.
+
+Pose, framing, and composition:
+
+- By default, show a three quarter or full body view that clearly displays the full outfit.
+
+- Keep the person centered and in focus.
+
+- Hands, arms, and body position should not block key parts of the clothing whenever possible.
+
+- If METADATA specifies pose, angle, crop, or framing, follow it.
+
+Background and visual style:
+
+- Default background: simple, neutral, studio style with soft, flattering light.
+
+- If METADATA includes environment, mood, or background style, follow it.
+
+- Do not add overlaid text, watermarks, stickers, or design elements unless METADATA clearly requests them.
+
+- Aim for realistic photography quality, similar to a professional fashion photo or a clean mirror selfie, depending on METADATA.
+
+Using METADATA:
+
+METADATA is a JSON object that can include keys like:
+
+- "background": description of the background or environment.
+
+- "style": description of photo style, for example studio, streetwear, mirror selfie.
+
+- "framing": for example full_body, three_quarter, waist_up.
+
+- "pose": instructions for body pose or direction.
+
+- "camera": instructions like close_up, wide, eye_level, low_angle.
+
+- "extras": any additional user preferences.
+
+Treat METADATA as high priority instructions, as long as they do not conflict with:
+
+1) Preserving the identity from USER_IMAGE,
+
+2) Accurately representing the clothing from CLOTHING_IMAGES.
+
+Conflict resolution:
+
+- If there is any conflict, always prioritise:
+
+  1) Identity consistency with USER_IMAGE,
+
+  2) Clothing accuracy from CLOTHING_IMAGES,
+
+  3) METADATA and other text instructions.
+
+- If something is unclear, choose the safest and most realistic option that shows the outfit clearly and keeps the person recognisable.
+
+Output:
+
+- Return exactly one generated image of the person wearing all clothing items, with no text in the image and no textual explanation in the response."""
+            
+            # Build user prompt with metadata if available
+            user_prompt = system_prompt
+            
             if garment_metadata:
-                color = garment_metadata.get('color', '')
-                style = garment_metadata.get('style', '')
-                material = garment_metadata.get('material', '')
-                fit = garment_metadata.get('fit', '')
-                
-                if color or style or material or fit:
-                    metadata_context = f" The clothing is {color} in color, {style} in style, made of {material}, with a {fit} fit."
+                # Format metadata as JSON string for the prompt
+                import json
+                metadata_str = json.dumps(garment_metadata, indent=2)
+                user_prompt += f"\n\nMETADATA:\n{metadata_str}"
+                logger.info(f"Using metadata: {list(garment_metadata.keys())}")
             
-            # Create editing prompt - instruct Gemini to edit the person image
-            edit_prompt = (
-                f"Edit this person image to show them wearing {garment_description}.{metadata_context} "
-                f"Replace or add the clothing item to match the reference clothing image exactly. "
-                f"The clothing should fit naturally on the person, maintain their pose and body shape, "
-                f"and look realistic. Keep the person's face, body proportions, and background the same. "
-                f"Only modify the clothing to match the reference garment. Pay attention to the specific "
-                f"details: color, material texture, fit, and style as described."
-            )
+            logger.info(f"Generating image with {len(garment_images)} clothing item(s)...")
             
-            logger.info(f"Editing image with prompt: {edit_prompt[:150]}...")
-            
-            # Model options for image editing (try in order of preference)
+            # Model options for image generation (try in order of preference)
             model_options = [
                 "gemini-3-pro-image-preview",  # Nano Banana Pro (Gemini 3 Pro Image)
                 "gemini-3-pro-preview",        # Alternative model name
@@ -116,28 +201,29 @@ async def _generate_with_gemini(user_image_file, garment_image_file, category="u
             last_error = None
             for model_name in model_options:
                 try:
-                    logger.info(f"Attempting to use model: {model_name} for image editing")
+                    logger.info(f"Attempting to use model: {model_name} for virtual try-on generation")
                     
-                    # Edit image using person image as base and garment as reference
-                    # Convert PIL Images to bytes for API compatibility
+                    # Prepare content: system prompt + user image + all clothing images
+                    contents = [user_prompt, user_image]  # Start with prompt and user image
+                    contents.extend(garment_images)  # Add all clothing images
+                    
+                    # Convert PIL Images to bytes for API compatibility if needed
                     user_img_bytes = io.BytesIO()
                     user_image.save(user_img_bytes, format='PNG')
                     user_img_bytes.seek(0)
                     
-                    garment_img_bytes = io.BytesIO()
-                    garment_image.save(garment_img_bytes, format='PNG')
-                    garment_img_bytes.seek(0)
+                    garment_img_bytes_list = []
+                    for garment_img in garment_images:
+                        gb = io.BytesIO()
+                        garment_img.save(gb, format='PNG')
+                        gb.seek(0)
+                        garment_img_bytes_list.append(gb.getvalue())
                     
-                    # Pass both images: person image as the base to edit, garment as reference
-                    # The API accepts images in various formats - try PIL Image first, then bytes if needed
+                    # Try with PIL Images first
                     try:
                         response = client.models.generate_content(
                             model=model_name,
-                            contents=[
-                                edit_prompt,
-                                user_image,  # Base image to edit (PIL Image)
-                                garment_image  # Reference clothing image (PIL Image)
-                            ],
+                            contents=contents,
                             config=types.GenerateContentConfig(
                                 response_modalities=['IMAGE'],  # Request image output
                                 image_config=types.ImageConfig(
@@ -149,13 +235,12 @@ async def _generate_with_gemini(user_image_file, garment_image_file, category="u
                     except Exception as img_format_error:
                         # If PIL Images don't work, try with bytes
                         logger.warning(f"PIL Image format failed, trying bytes: {img_format_error}")
+                        contents_bytes = [user_prompt, user_img_bytes.getvalue()]
+                        contents_bytes.extend(garment_img_bytes_list)
+                        
                         response = client.models.generate_content(
                             model=model_name,
-                            contents=[
-                                edit_prompt,
-                                user_img_bytes.getvalue(),  # Base image as bytes
-                                garment_img_bytes.getvalue()  # Reference image as bytes
-                            ],
+                            contents=contents_bytes,
                             config=types.GenerateContentConfig(
                                 response_modalities=['IMAGE'],
                                 image_config=types.ImageConfig(
@@ -202,7 +287,7 @@ async def _generate_with_gemini(user_image_file, garment_image_file, category="u
         except RuntimeError:
             loop = asyncio.get_event_loop()
         
-        image_data = await loop.run_in_executor(None, run_gemini_image_edit)
+        image_data = await loop.run_in_executor(None, run_gemini_image_generation)
         
         # Convert to base64 data URL for frontend compatibility
         if isinstance(image_data, bytes):

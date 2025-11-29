@@ -42,10 +42,15 @@ async def root():
 @app.post("/api/try-on")
 async def try_on(
     user_image: UploadFile = File(...),
-    clothing_image: UploadFile = File(...),
+    clothing_image: UploadFile = File(...),  # Single image (backward compatibility, required)
     category: Optional[str] = Form(None),
     garment_metadata: Optional[str] = Form(None)  # JSON string of metadata
 ):
+    """
+    Virtual try-on endpoint. Accepts user image and clothing image(s).
+    For multiple clothing items, send multiple requests or update to accept list.
+    Currently supports single clothing image for backward compatibility.
+    """
     try:
         # Parse metadata if provided
         metadata = None
@@ -56,16 +61,19 @@ async def try_on(
             except Exception as e:
                 logger.warning(f"Could not parse garment_metadata: {e}")
         
+        # For now, use single clothing image (can be extended to support list)
+        clothing_image_files = [clothing_image.file]
+        
         # Use category from metadata if available, otherwise use provided or default
         final_category = category or (metadata.get('category') if metadata else None) or "upper_body"
         
-        logger.info(f"Try-on request received for category: {final_category}")
+        logger.info(f"Try-on request received for category: {final_category} with {len(clothing_image_files)} clothing item(s)")
         if metadata:
-            logger.info(f"Using pre-analyzed metadata for better results")
+            logger.info(f"Using metadata: {list(metadata.keys())}")
         
         result_url = await vton.generate_try_on(
             user_image.file, 
-            clothing_image.file, 
+            clothing_image_files, 
             final_category,
             metadata
         )
