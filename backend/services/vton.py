@@ -54,28 +54,37 @@ def _get_oauth2_credentials():
     
     client_id = os.getenv("GOOGLE_CLIENT_ID")
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    refresh_token = os.getenv("GOOGLE_REFRESH_TOKEN")
+    
+    # Log what we found (without exposing secrets)
+    logger.info(f"OAuth2 environment check - CLIENT_ID: {'SET' if client_id else 'MISSING'}, CLIENT_SECRET: {'SET' if client_secret else 'MISSING'}, REFRESH_TOKEN: {'SET' if refresh_token else 'MISSING'}")
     
     if not client_id or not client_secret:
         raise ValueError("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables are required for OAuth2 authentication")
     
-    # Check for refresh token (required for server-to-server OAuth2)
-    refresh_token = os.getenv("GOOGLE_REFRESH_TOKEN")
+    if not refresh_token:
+        raise ValueError("GOOGLE_REFRESH_TOKEN environment variable is required for OAuth2 authentication. Run get_oauth2_token.py to get a refresh token.")
     
-    if refresh_token:
-        # Use refresh token to get access token
-        from google.oauth2.credentials import Credentials
-        credentials = Credentials(
-            token=None,
-            refresh_token=refresh_token,
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=client_id,
-            client_secret=client_secret,
-            scopes=SCOPES
-        )
-        # Refresh to get access token
+    # Use refresh token to get access token
+    from google.oauth2.credentials import Credentials
+    credentials = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=SCOPES
+    )
+    # Refresh to get access token
+    try:
         credentials.refresh(Request())
-        logger.info("Using OAuth2 credentials with refresh token")
+        logger.info(f"OAuth2 credentials refreshed successfully. Token valid: {credentials.valid}, Expired: {credentials.expired}")
+        if credentials.token:
+            logger.info(f"Access token obtained (first 20 chars): {credentials.token[:20]}...")
         return credentials
+    except Exception as e:
+        logger.error(f"Failed to refresh OAuth2 credentials: {e}", exc_info=True)
+        raise ValueError(f"Failed to refresh OAuth2 credentials: {e}. Please check your GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN.")
     else:
         # Try Application Default Credentials (for service accounts)
         try:
