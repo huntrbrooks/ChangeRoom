@@ -94,29 +94,66 @@ def _get_oauth2_credentials():
 def _get_genai_client():
     """
     Get authenticated Google GenAI client using OAuth2.
+    The new SDK uses Application Default Credentials (ADC).
     """
     if not NEW_SDK_AVAILABLE:
         raise ImportError("google-genai package is required for image generation")
     
     try:
         credentials = _get_oauth2_credentials()
-        # The new SDK should accept credentials directly
-        # Try passing credentials to the client
+        
+        # Ensure credentials are refreshed and valid
+        if not credentials.valid:
+            credentials.refresh(Request())
+            logger.info("Refreshed OAuth2 credentials")
+        
+        # The new google-genai SDK should use Application Default Credentials
+        # We need to ensure the SDK picks up our OAuth2 credentials
+        # Remove GOOGLE_API_KEY from environment to prevent SDK from using it
+        original_api_key = os.environ.pop('GOOGLE_API_KEY', None)
+        
         try:
-            client = genai_new.Client(credentials=credentials)
-            logger.info("Initialized Google GenAI client with OAuth2 credentials")
-            return client
-        except TypeError:
-            # If Client doesn't accept credentials parameter, use environment variable
-            # Set credentials as default credentials
+            # Method 1: Try passing credentials directly if supported
+            try:
+                import inspect
+                sig = inspect.signature(genai_new.Client.__init__)
+                if 'credentials' in sig.parameters:
+                    client = genai_new.Client(credentials=credentials)
+                    logger.info("Initialized Google GenAI client with OAuth2 credentials (direct)")
+                    return client
+            except (TypeError, AttributeError) as e:
+                logger.debug(f"Direct credentials parameter not supported: {e}")
+            
+            # Method 2: Use Application Default Credentials
+            # Temporarily override google.auth.default to return our credentials
             import google.auth
-            google.auth.default = lambda scopes=None: (credentials, None)
-            client = genai_new.Client()
-            logger.info("Initialized Google GenAI client with OAuth2 credentials (via default)")
-            return client
+            original_default = google.auth.default
+            
+            def custom_default(scopes=None):
+                # Refresh credentials if needed
+                if not credentials.valid:
+                    credentials.refresh(Request())
+                return (credentials, None)
+            
+            # Override default function
+            google.auth.default = custom_default
+            
+            try:
+                client = genai_new.Client()
+                logger.info("Initialized Google GenAI client with OAuth2 credentials (via ADC override)")
+                return client
+            finally:
+                # Restore original default
+                google.auth.default = original_default
+                
+        finally:
+            # Restore GOOGLE_API_KEY if it was set
+            if original_api_key:
+                os.environ['GOOGLE_API_KEY'] = original_api_key
+            
     except Exception as e:
-        logger.error(f"Failed to create GenAI client with OAuth2: {e}")
-        raise
+        logger.error(f"Failed to create GenAI client with OAuth2: {e}", exc_info=True)
+        raise ValueError(f"OAuth2 authentication failed: {e}. Please check your GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN environment variables.")
 
 async def generate_try_on(user_image_file, garment_image_files, category="upper_body", garment_metadata=None):
     """
