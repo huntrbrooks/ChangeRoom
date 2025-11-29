@@ -82,11 +82,21 @@ export default function Home() {
       try {
         const tryOnFormData = new FormData();
         tryOnFormData.append('user_image', userImage);
-        tryOnFormData.append('clothing_image', activeItems[0]); // MVP: First item only for VTON
         
         // Use metadata if available (from analysis)
         // Transform to format expected by system prompt: background, style, framing, pose, camera, extras
         const firstItem = activeItems[0] as any;
+        
+        // Use saved file URL if available, otherwise upload the file
+        if (firstItem?.file_url) {
+          // Use saved file from server
+          tryOnFormData.append('clothing_file_url', firstItem.file_url);
+          console.log("Using saved file URL for try-on:", firstItem.file_url);
+        } else {
+          // Upload file directly
+          tryOnFormData.append('clothing_image', activeItems[0]); // MVP: First item only for VTON
+        }
+        
         if (firstItem.metadata || firstItem.category || firstItem.detailed_description) {
           // Build metadata in the format expected by the system prompt
           const metadata: any = {};

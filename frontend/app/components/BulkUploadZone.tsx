@@ -10,9 +10,13 @@ interface AnalyzedItem {
     detailed_description: string;
     suggested_filename: string;
     metadata: any;
+    item_type?: string;
   };
   error?: string;
   status?: 'analyzing' | 'success' | 'error';
+  file_url?: string;
+  saved_filename?: string;
+  saved_file?: string;
 }
 
 interface BulkUploadZoneProps {
@@ -54,6 +58,8 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
     setAnalyzedItems(initialItems);
 
     try {
+      const API_URL_FETCH = API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      
       // Create FormData with all files
       const formData = new FormData();
       selectedFiles.forEach((file) => {
@@ -61,7 +67,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
       });
 
       // Use fetch for Server-Sent Events (SSE) streaming
-      const response = await fetch(`${API_URL}/api/analyze-clothing`, {
+      const response = await fetch(`${API_URL_FETCH}/api/analyze-clothing`, {
         method: 'POST',
         body: formData,
         // Don't set Content-Type header, let browser set it with boundary
@@ -135,25 +141,63 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         }
       }
 
-      // Create new File objects with suggested names and attach metadata
+      // Use saved files from server if available, otherwise create File objects
       const processedFiles: File[] = [];
-      selectedFiles.forEach((file, idx) => {
-        const analysis = allAnalyses[idx]?.analysis;
-        if (analysis) {
-          // Create a new File with the suggested filename
+      const API_URL_PROCESS = API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      
+      for (let idx = 0; idx < selectedFiles.length; idx++) {
+        const file = selectedFiles[idx];
+        const item = allAnalyses[idx];
+        const analysis = item?.analysis;
+        
+        if (analysis && item?.file_url) {
+          // File was saved on server - fetch it and create File object
+          try {
+            const fileUrl = item.file_url.startsWith('http') 
+              ? item.file_url 
+              : `${API_URL_PROCESS}${item.file_url}`;
+            
+            const response = await fetch(fileUrl);
+            const blob = await response.blob();
+            const savedFilename = item.saved_filename || analysis.suggested_filename || file.name;
+            const newFile = new File([blob], savedFilename, { type: blob.type || file.type });
+            
+            // Attach metadata to the file object
+            (newFile as any).metadata = analysis.metadata || {};
+            (newFile as any).detailed_description = analysis.detailed_description;
+            (newFile as any).category = analysis.category;
+            (newFile as any).item_type = analysis.item_type;
+            (newFile as any).file_url = fileUrl; // Store URL for try-on API
+            (newFile as any).saved_filename = savedFilename;
+            
+            processedFiles.push(newFile);
+          } catch (error) {
+            console.warn(`Failed to fetch saved file for ${file.name}, using original:`, error);
+            // Fallback to original file
+            const newFile = new File([file], analysis.suggested_filename || file.name, { type: file.type });
+            (newFile as any).metadata = analysis.metadata || {};
+            (newFile as any).detailed_description = analysis.detailed_description;
+            (newFile as any).category = analysis.category;
+            (newFile as any).item_type = analysis.item_type;
+            processedFiles.push(newFile);
+          }
+        } else if (analysis) {
+          // Analysis available but file not saved - create File with suggested name
           const suggestedName = analysis.suggested_filename || file.name;
           const newFile = new File([file], suggestedName, { type: file.type });
           
-          // Attach metadata to the file object (stored in a custom property)
-          (newFile as any).metadata = analysis.metadata;
+          // Attach metadata to the file object
+          (newFile as any).metadata = analysis.metadata || {};
           (newFile as any).detailed_description = analysis.detailed_description;
           (newFile as any).category = analysis.category;
+          (newFile as any).item_type = analysis.item_type;
           
           processedFiles.push(newFile);
         } else {
+          // No analysis available - use original file
           processedFiles.push(file);
         }
-      });
+      }
 
       // Call the upload handler
       onFilesUploaded(processedFiles, allAnalyses);
