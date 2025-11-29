@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { UploadZone } from './components/UploadZone';
-import { WardrobeSelector } from './components/WardrobeSelector';
 import { VirtualMirror } from './components/VirtualMirror';
 import { ProductCard } from './components/ProductCard';
 import { Shirt, Sparkles, Search } from 'lucide-react';
@@ -25,23 +24,6 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleWardrobeItemSelect = (index: number, file: File) => {
-    const newItems = [...wardrobeItems];
-    newItems[index] = file;
-    setWardrobeItems(newItems);
-  };
-
-  const handleBulkUpload = (files: File[], analyses: any[]) => {
-    // Fill wardrobe slots with analyzed files
-    const newItems = [...wardrobeItems];
-    files.forEach((file, idx) => {
-      if (idx < newItems.length) {
-        newItems[idx] = file;
-      }
-    });
-    setWardrobeItems(newItems);
-    console.log('Bulk upload complete. Analyzed items:', analyses);
-  };
 
   const handleGenerate = async () => {
     if (!userImage) {
@@ -243,18 +225,6 @@ export default function Home() {
               />
             </section>
 
-            <section>
-              <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <span className="bg-black text-white w-6 h-6 flex items-center justify-center rounded-full text-xs">2</span>
-                Choose Wardrobe
-                <span className="text-xs font-normal text-gray-500 ml-2">(Upload up to 5 items)</span>
-              </h2>
-              <WardrobeSelector 
-                items={wardrobeItems} 
-                onItemSelect={handleWardrobeItemSelect}
-                onBulkUpload={handleBulkUpload}
-              />
-            </section>
 
             <button
               onClick={handleGenerate}
