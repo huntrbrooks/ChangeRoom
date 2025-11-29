@@ -33,6 +33,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
   const [progressPercent, setProgressPercent] = useState<number>(0);
   const [analyzedItems, setAnalyzedItems] = useState<AnalyzedItem[]>([]);
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
+  const [savedFileUrls, setSavedFileUrls] = useState<Map<number, string>>(new Map());
 
   const handleBulkUpload = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
@@ -115,6 +116,16 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                 const category = itemData.analysis?.category || 'unknown';
                 const itemType = itemData.analysis?.item_type || '';
                 const filename = itemData.saved_filename || itemData.analysis?.suggested_filename || itemData.original_filename;
+                
+                console.log(`Item ${itemData.index + 1} complete:`, {
+                  category,
+                  itemType,
+                  filename,
+                  file_url: itemData.file_url,
+                  saved_filename: itemData.saved_filename,
+                  fullItem: itemData
+                });
+                
                 setAnalysisProgress(data.message || `Completed ${data.current}/${data.total} items: ${category}${itemType ? ` (${itemType})` : ''}`);
                 
                 setAnalyzedItems(prev => prev.map((item, idx) => 
@@ -130,7 +141,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                       item_type: itemType
                     },
                     saved_filename: filename,
-                    file_url: data.item.file_url
+                    file_url: itemData.file_url || ''
                   } : item
                 ));
               } else if (data.type === 'complete') {
@@ -163,6 +174,17 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                     
                     console.log(`Updating item ${idx + 1} display:`, { category, itemType, filename });
                     
+                    const fileUrl = analysis.file_url || '';
+                    
+                    // Store the file URL for image display
+                    if (fileUrl) {
+                      setSavedFileUrls(prev => {
+                        const newMap = new Map(prev);
+                        newMap.set(idx, fileUrl);
+                        return newMap;
+                      });
+                    }
+                    
                     return { 
                       ...item, 
                       ...analysis, 
@@ -175,7 +197,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                         item_type: itemType
                       },
                       saved_filename: filename,
-                      file_url: analysis.file_url
+                      file_url: fileUrl
                     };
                   }
                   return item;
@@ -356,12 +378,24 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                   }
                 `}
               >
-                {file && (
+                {(file || item.file_url) && (
                   <div className="space-y-2">
                     <img
-                      src={URL.createObjectURL(file)}
-                      alt={item.original_filename}
+                      src={
+                        item.file_url 
+                          ? (item.file_url.startsWith('http') 
+                              ? item.file_url 
+                              : `${API_URL}${item.file_url}`)
+                          : (file ? URL.createObjectURL(file) : '')
+                      }
+                      alt={item.saved_filename || item.analysis?.suggested_filename || item.original_filename}
                       className="w-full h-32 object-cover rounded"
+                      onError={(e) => {
+                        // Fallback to original file if saved URL fails
+                        if (item.file_url && file) {
+                          (e.target as HTMLImageElement).src = URL.createObjectURL(file);
+                        }
+                      }}
                     />
                     <div className="text-xs">
                       <p className="font-medium text-gray-900 truncate mb-1" title={item.saved_filename || item.analysis?.suggested_filename || item.original_filename}>

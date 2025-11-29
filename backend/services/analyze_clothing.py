@@ -324,104 +324,177 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
         
         # Generate suggested filename based on category and metadata
         category = analysis.get("category", "unknown").strip().lower()
+        original_category = category
         
-        # Get description for validation
+        # Aggregate ALL text fields for comprehensive keyword matching
+        # This includes description, material, style, details, item type, etc.
         description_lower = analysis.get("detailed_description", "").lower()
         description_lower += " " + analysis.get("material", "").lower()
         description_lower += " " + analysis.get("style", "").lower()
+        description_lower += " " + analysis.get("details", "").lower()
+        description_lower += " " + analysis.get("color", "").lower()
+        description_lower += " " + analysis.get("texture", "").lower()
+        # Add any other descriptive fields that might contain keywords
         
         # Comprehensive category validation and correction
         valid_categories = ["upper_body", "lower_body", "dresses", "outerwear", "accessories", "shoes"]
-        original_category = category
         corrected = False
         
-        # Define comprehensive keyword sets for each category
+        # Define comprehensive keyword sets for each category with synonyms and variations
         shoes_keywords = [
-            "boot", "shoe", "sneaker", "heel", "sandal", "footwear", "lace-up", "oxford", 
-            "loafer", "pump", "flat", "slipper", "moccasin", "trainer", "athletic shoe",
-            "sole", "tread", "outsole", "insole", "toe cap", "heel counter", "eyelets"
+            # Core footwear terms
+            "boot", "boots", "shoe", "shoes", "sneaker", "sneakers", "footwear", "foot gear",
+            # Specific types
+            "heel", "heels", "sandal", "sandals", "lace-up", "lace up", "oxford", "oxfords",
+            "loafer", "loafers", "pump", "pumps", "flat", "flats", "slipper", "slippers",
+            "moccasin", "moccasins", "trainer", "trainers", "athletic shoe", "athletic shoes",
+            "running shoe", "running shoes", "hiking boot", "hiking boots", "work boot", "work boots",
+            "combat boot", "combat boots", "ankle boot", "ankle boots",
+            # Shoe parts (strong indicators)
+            "sole", "soles", "tread", "outsole", "outsoles", "insole", "insoles",
+            "toe cap", "toe caps", "heel counter", "heel counters", "eyelets", "eyelets",
+            "shoelace", "shoelaces", "lace", "laces", "tongue", "toe box", "arch support",
+            # Action/context clues
+            "worn on feet", "worn on foot", "foot", "feet", "step", "walking", "tread"
         ]
         
         lower_body_keywords = [
-            "pant", "jean", "trouser", "short", "skirt", "legging", "sweatpant", "jogger",
-            "cargo", "chino", "khaki", "waistband", "crotch", "inseam", "outseam",
-            "pant leg", "trouser leg", "hem", "cuff", "zipper fly", "button fly"
+            # Core legwear terms
+            "pant", "pants", "jean", "jeans", "trouser", "trousers", "short", "shorts",
+            "skirt", "skirts", "legging", "leggings", "sweatpant", "sweatpants", "jogger", "joggers",
+            # Specific types
+            "cargo", "chino", "chinos", "khaki", "khakis", "dress pant", "dress pants",
+            "capri", "bermuda short", "bermuda shorts", "bike short", "bike shorts",
+            # Parts (strong indicators)
+            "waistband", "waistbands", "crotch", "inseam", "inseams", "outseam", "outseams",
+            "pant leg", "pant legs", "trouser leg", "trouser legs", "leg opening",
+            "hem", "hems", "cuff", "cuffs", "zipper fly", "zipper flies", "button fly",
+            "zipper", "zippers", "belt loop", "belt loops", "pocket", "pockets",
+            # Context clues
+            "worn on legs", "worn on waist", "worn from waist", "leg", "legs", "thigh", "thighs"
         ]
         
         accessories_keywords = [
-            "hat", "cap", "beanie", "beret", "baseball cap", "bag", "purse", "backpack",
-            "belt", "scarf", "glove", "mitten", "watch", "jewelry", "necklace", "bracelet",
-            "sunglass", "tie", "bow tie", "headband", "bandana"
+            # Headwear
+            "hat", "hats", "cap", "caps", "beanie", "beanies", "beret", "berets",
+            "baseball cap", "baseball caps", "baseball hat", "baseball hats",
+            "headband", "headbands", "bandana", "bandanas", "headwear", "head gear",
+            # Bags
+            "bag", "bags", "purse", "purses", "backpack", "backpacks", "handbag", "handbags",
+            "tote", "totes", "clutch", "satchel", "satchels", "briefcase", "briefcases",
+            # Belts & Jewelry
+            "belt", "belts", "watch", "watches", "jewelry", "jewellery", "necklace", "necklaces",
+            "bracelet", "bracelets", "ring", "rings", "earring", "earrings",
+            # Other accessories
+            "scarf", "scarves", "glove", "gloves", "mitten", "mittens", "sunglass", "sunglasses",
+            "tie", "ties", "bow tie", "bow ties", "bowtie", "bowties", "cufflink", "cufflinks",
+            "accessory", "accessories", "worn on head", "worn on wrist", "worn on neck"
         ]
         
         outerwear_keywords = [
-            "jacket", "coat", "blazer", "cardigan", "windbreaker", "rain jacket",
-            "bomber", "parka", "trench coat", "overcoat", "vest", "gilet"
+            # Core outerwear
+            "jacket", "jackets", "coat", "coats", "blazer", "blazers", "cardigan", "cardigans",
+            "windbreaker", "windbreakers", "rain jacket", "rain jackets", "raincoat", "raincoats",
+            # Specific types
+            "bomber", "bombers", "parka", "parkas", "trench coat", "trench coats", "trenchcoat",
+            "overcoat", "overcoats", "vest", "vests", "gilet", "gilets", "puffer", "puffers",
+            "down jacket", "down jackets", "fleece", "hoodie", "hoodies", "sweatshirt", "sweatshirts",
+            # Context clues
+            "worn over", "worn on top", "outer layer", "outer garment"
         ]
         
         dresses_keywords = [
-            "dress", "jumpsuit", "romper", "overall", "gown", "frock"
+            # Core dresses
+            "dress", "dresses", "gown", "gowns", "frock", "frocks",
+            # One-piece garments
+            "jumpsuit", "jumpsuits", "romper", "rompers", "overall", "overalls",
+            "bodysuit", "bodysuits", "onesie", "onesies",
+            # Context clues
+            "one-piece", "one piece", "full-body", "full body", "from shoulder to"
         ]
         
         upper_body_keywords = [
-            "shirt", "t-shirt", "blouse", "top", "sweater", "pullover", "tank top",
-            "camisole", "polo", "button-down", "henley", "turtleneck"
+            # Core tops
+            "shirt", "shirts", "t-shirt", "t-shirts", "tshirt", "tshirts", "tee", "tees",
+            "blouse", "blouses", "top", "tops", "sweater", "sweaters", "pullover", "pullovers",
+            "tank top", "tank tops", "camisole", "camisoles", "polo", "polos",
+            "button-down", "button-downs", "henley", "henleys", "turtleneck", "turtlenecks",
+            # Specific types
+            "crop top", "crop tops", "tube top", "tube tops", "halter top", "halter tops",
+            # Context clues (weak - only use if no other category matches)
+            "worn on torso", "worn on chest", "upper body", "upper-body"
         ]
         
-        # First check: if category is invalid, try to infer
+        # PRIMARY VALIDATION: Always validate category against description using keyword matching
+        # This ensures misclassifications are caught regardless of what OpenAI returns
+        logger.info(f"Validating category for {original_filename}: OpenAI returned '{category}'")
+        
+        # Count keyword matches for each category
+        shoes_matches = sum(1 for keyword in shoes_keywords if keyword in description_lower)
+        lower_body_matches = sum(1 for keyword in lower_body_keywords if keyword in description_lower)
+        accessories_matches = sum(1 for keyword in accessories_keywords if keyword in description_lower)
+        outerwear_matches = sum(1 for keyword in outerwear_keywords if keyword in description_lower)
+        dresses_matches = sum(1 for keyword in dresses_keywords if keyword in description_lower)
+        upper_body_matches = sum(1 for keyword in upper_body_keywords if keyword in description_lower)
+        
+        # Create match scores dictionary
+        match_scores = {
+            "shoes": shoes_matches,
+            "lower_body": lower_body_matches,
+            "accessories": accessories_matches,
+            "outerwear": outerwear_matches,
+            "dresses": dresses_matches,
+            "upper_body": upper_body_matches
+        }
+        
+        # Find category with highest match score
+        max_matches = max(match_scores.values())
+        keyword_determined_category = None
+        
+        if max_matches > 0:
+            # Get category with most keyword matches
+            keyword_determined_category = max(match_scores, key=match_scores.get)
+            
+            # Always prioritize keyword matching over OpenAI's category if keywords found
+            # This ensures boots/pants/hats are correctly classified even if OpenAI misclassifies
+            if keyword_determined_category != category:
+                logger.info(f"Keyword validation: '{category}' → '{keyword_determined_category}' "
+                          f"(matches: {match_scores}) for {original_filename}")
+                category = keyword_determined_category
+                corrected = True
+            else:
+                logger.info(f"Keyword validation confirmed '{category}' for {original_filename} "
+                          f"(matches: {match_scores[keyword_determined_category]})")
+        else:
+            # No keyword matches found - check if category is valid
+            if category not in valid_categories:
+                logger.warning(f"No keyword matches found and invalid category '{category}' for {original_filename}")
+                corrected = True
+            else:
+                logger.warning(f"No keyword matches found for {original_filename}, using OpenAI category '{category}'")
+        
+        # If category is still invalid, try keyword matching as fallback
         if category not in valid_categories:
-            logger.warning(f"Invalid category '{category}' for {original_filename}, attempting correction...")
-            corrected = True
-        
-        # Second check: Always validate category against description (even if category seems valid)
-        # This catches cases where model returns wrong category
-        if category == "upper_body":
-            # Check if it's actually shoes, pants, or accessories
-            if any(keyword in description_lower for keyword in shoes_keywords):
-                category = "shoes"
-                corrected = True
-                logger.info(f"Corrected '{original_category}' → 'shoes' for {original_filename} (detected footwear)")
-            elif any(keyword in description_lower for keyword in lower_body_keywords):
-                category = "lower_body"
-                corrected = True
-                logger.info(f"Corrected '{original_category}' → 'lower_body' for {original_filename} (detected legwear)")
-            elif any(keyword in description_lower for keyword in accessories_keywords):
-                category = "accessories"
-                corrected = True
-                logger.info(f"Corrected '{original_category}' → 'accessories' for {original_filename} (detected accessory)")
-        
-        # If category is still invalid or needs correction, use keyword matching
-        if category not in valid_categories or corrected:
-            if any(keyword in description_lower for keyword in shoes_keywords):
-                category = "shoes"
-                logger.info(f"Set category to 'shoes' based on description for {original_filename}")
-            elif any(keyword in description_lower for keyword in lower_body_keywords):
-                category = "lower_body"
-                logger.info(f"Set category to 'lower_body' based on description for {original_filename}")
-            elif any(keyword in description_lower for keyword in accessories_keywords):
-                category = "accessories"
-                logger.info(f"Set category to 'accessories' based on description for {original_filename}")
-            elif any(keyword in description_lower for keyword in outerwear_keywords):
-                category = "outerwear"
-                logger.info(f"Set category to 'outerwear' based on description for {original_filename}")
-            elif any(keyword in description_lower for keyword in dresses_keywords):
-                category = "dresses"
-                logger.info(f"Set category to 'dresses' based on description for {original_filename}")
-            elif any(keyword in description_lower for keyword in upper_body_keywords):
-                category = "upper_body"
-                logger.info(f"Set category to 'upper_body' based on description for {original_filename}")
+            if max_matches > 0 and keyword_determined_category:
+                category = keyword_determined_category
+                logger.info(f"Set category to '{category}' based on keyword matching for {original_filename}")
             else:
                 # Last resort: default to upper_body but log warning
                 category = "upper_body"
-                logger.warning(f"Could not determine category for {original_filename}, defaulting to 'upper_body'. Description: {description_lower[:100]}")
+                logger.warning(f"Could not determine category for {original_filename}, defaulting to 'upper_body'. "
+                             f"Description: {description_lower[:200]}")
         
         # Final validation
         if category not in valid_categories:
             category = "unknown"
             logger.error(f"Failed to determine valid category for {original_filename}")
         
+        # Log final category decision
+        logger.info(f"Final category for {original_filename}: '{category}' (corrected: {corrected}, original: {original_category})")
+        
         # Extract specific item type from description for better filename
         item_type = _extract_specific_item_type(description_lower, category)
+        logger.info(f"Extracted item_type for {original_filename}: '{item_type}'")
         
         color = analysis.get("color", "unknown").lower().replace(" ", "_").replace("/", "_")
         style = analysis.get("style", "unknown").lower().replace(" ", "_").replace("/", "_")
@@ -463,7 +536,7 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
             "classification_corrected": corrected  # Flag indicating if category was corrected
         }
         
-        return {
+        result = {
             "category": category,
             "item_type": item_type,  # User-friendly specific type
             "detailed_description": analysis.get("detailed_description", "clothing item"),
@@ -476,6 +549,9 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
             "full_analysis": analysis,
             "classification_corrected": corrected
         }
+        
+        logger.info(f"Returning analysis result for {original_filename}: category={category}, item_type={item_type}, filename={suggested_filename}")
+        return result
 
     except Exception as e:
         logger.error(f"Error analyzing clothing item: {e}", exc_info=True)
