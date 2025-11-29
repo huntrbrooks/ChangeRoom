@@ -16,7 +16,7 @@ except ImportError:
     GEMINI_IMAGE_SDK_AVAILABLE = False
     logger.warning("google-genai package not installed. Install with: pip install google-genai")
 
-async def generate_try_on(user_image_file, garment_image_file, category="upper_body"):
+async def generate_try_on(user_image_file, garment_image_file, category="upper_body", garment_metadata=None):
     """
     Uses Gemini 3 Pro (Nano Banana Pro) image editing to combine person and clothing images.
     Edits the person image to add/change the clothing item.
@@ -25,20 +25,22 @@ async def generate_try_on(user_image_file, garment_image_file, category="upper_b
         user_image_file: File-like object of the person image (base image to edit).
         garment_image_file: File-like object of the clothing image (reference for editing).
         category: Category of the garment (upper_body, lower_body, dresses).
+        garment_metadata: Optional metadata from analysis (dict with detailed_description, color, style, etc.)
         
     Returns:
         str: Base64 data URL of the edited image.
     """
     # Use Gemini 3 Pro for image editing
-    return await _generate_with_gemini(user_image_file, garment_image_file, category)
+    return await _generate_with_gemini(user_image_file, garment_image_file, category, garment_metadata)
 
 
-async def _generate_with_gemini(user_image_file, garment_image_file, category="upper_body"):
+async def _generate_with_gemini(user_image_file, garment_image_file, category="upper_body", garment_metadata=None):
     """
     Uses Gemini 3 Pro (Nano Banana Pro) for image editing.
     Takes the person image and edits it to add/change the clothing item.
     
     Uses the new google-genai SDK with proper API configuration.
+    If garment_metadata is provided, uses it for more accurate editing.
     """
     if not GEMINI_IMAGE_SDK_AVAILABLE:
         raise ImportError("google-genai package is required. Install with: pip install google-genai")
@@ -66,23 +68,40 @@ async def _generate_with_gemini(user_image_file, garment_image_file, category="u
             user_image = Image.open(io.BytesIO(user_image_bytes))
             garment_image = Image.open(io.BytesIO(garment_image_bytes))
             
-            # Use Gemini to analyze the clothing image for better editing instructions
-            analysis_model = genai.GenerativeModel('gemini-1.5-flash')
-            garment_prompt = "Describe this clothing item in detail. Include: color, style, type, material, and distinctive features. Be specific about how it should look when worn."
-            try:
-                garment_analysis = analysis_model.generate_content([garment_prompt, garment_image])
-                garment_description = garment_analysis.text if hasattr(garment_analysis, 'text') else "this clothing item"
-            except Exception as e:
-                logger.warning(f"Could not analyze garment image: {e}. Using generic description.")
-                garment_description = f"a {category} clothing item"
+            # Use pre-analyzed metadata if available, otherwise analyze on the fly
+            if garment_metadata and garment_metadata.get('detailed_description'):
+                garment_description = garment_metadata['detailed_description']
+                logger.info("Using pre-analyzed metadata for garment description")
+            else:
+                # Fallback: analyze the clothing image for better editing instructions
+                analysis_model = genai.GenerativeModel('gemini-1.5-flash')
+                garment_prompt = "Describe this clothing item in detail. Include: color, style, type, material, and distinctive features. Be specific about how it should look when worn."
+                try:
+                    garment_analysis = analysis_model.generate_content([garment_prompt, garment_image])
+                    garment_description = garment_analysis.text if hasattr(garment_analysis, 'text') else "this clothing item"
+                except Exception as e:
+                    logger.warning(f"Could not analyze garment image: {e}. Using generic description.")
+                    garment_description = f"a {category} clothing item"
+            
+            # Build enhanced editing prompt with metadata if available
+            metadata_context = ""
+            if garment_metadata:
+                color = garment_metadata.get('color', '')
+                style = garment_metadata.get('style', '')
+                material = garment_metadata.get('material', '')
+                fit = garment_metadata.get('fit', '')
+                
+                if color or style or material or fit:
+                    metadata_context = f" The clothing is {color} in color, {style} in style, made of {material}, with a {fit} fit."
             
             # Create editing prompt - instruct Gemini to edit the person image
             edit_prompt = (
-                f"Edit this person image to show them wearing {garment_description}. "
-                f"Replace or add the clothing item to match the reference clothing image. "
+                f"Edit this person image to show them wearing {garment_description}.{metadata_context} "
+                f"Replace or add the clothing item to match the reference clothing image exactly. "
                 f"The clothing should fit naturally on the person, maintain their pose and body shape, "
                 f"and look realistic. Keep the person's face, body proportions, and background the same. "
-                f"Only modify the clothing to match the reference garment."
+                f"Only modify the clothing to match the reference garment. Pay attention to the specific "
+                f"details: color, material texture, fit, and style as described."
             )
             
             logger.info(f"Editing image with prompt: {edit_prompt[:150]}...")

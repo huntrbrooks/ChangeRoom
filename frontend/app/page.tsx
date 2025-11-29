@@ -31,6 +31,18 @@ export default function Home() {
     setWardrobeItems(newItems);
   };
 
+  const handleBulkUpload = (files: File[], analyses: any[]) => {
+    // Fill wardrobe slots with analyzed files
+    const newItems = [...wardrobeItems];
+    files.forEach((file, idx) => {
+      if (idx < newItems.length) {
+        newItems[idx] = file;
+      }
+    });
+    setWardrobeItems(newItems);
+    console.log('Bulk upload complete. Analyzed items:', analyses);
+  };
+
   const handleGenerate = async () => {
     if (!userImage) {
       setError("Please upload a photo of yourself.");
@@ -77,7 +89,25 @@ export default function Home() {
         const tryOnFormData = new FormData();
         tryOnFormData.append('user_image', userImage);
         tryOnFormData.append('clothing_image', activeItems[0]); // MVP: First item only for VTON
-        tryOnFormData.append('category', 'upper_body'); // Default
+        
+        // Use metadata if available (from analysis)
+        const firstItem = activeItems[0] as any;
+        if (firstItem.metadata || firstItem.category || firstItem.detailed_description) {
+          const metadata = {
+            category: firstItem.category || 'upper_body',
+            detailed_description: firstItem.detailed_description || '',
+            color: firstItem.metadata?.color || '',
+            style: firstItem.metadata?.style || '',
+            material: firstItem.metadata?.material || '',
+            fit: firstItem.metadata?.fit || '',
+            ...firstItem.metadata
+          };
+          tryOnFormData.append('garment_metadata', JSON.stringify(metadata));
+          tryOnFormData.append('category', metadata.category);
+          console.log("Using analyzed metadata for try-on:", metadata);
+        } else {
+          tryOnFormData.append('category', 'upper_body'); // Default
+        }
 
         console.log("Starting try-on generation...");
         tryOnRes = await axios.post(`${API_URL}/api/try-on`, tryOnFormData, {
@@ -207,7 +237,8 @@ export default function Home() {
               </h2>
               <WardrobeSelector 
                 items={wardrobeItems} 
-                onItemSelect={handleWardrobeItemSelect} 
+                onItemSelect={handleWardrobeItemSelect}
+                onBulkUpload={handleBulkUpload}
               />
             </section>
 

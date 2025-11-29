@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 # Add current directory to path to find services module
 sys.path.insert(0, str(Path(__file__).parent))
 
-from services import vton, gemini, shop
+from services import vton, gemini, shop, analyze_clothing
 
 load_dotenv()
 
@@ -42,16 +42,32 @@ async def root():
 @app.post("/api/try-on")
 async def try_on(
     user_image: UploadFile = File(...),
-    clothing_image: UploadFile = File(...), # Currently handling single item for simplicity in MVP, can expand to list
-    category: str = Form("upper_body")
+    clothing_image: UploadFile = File(...),
+    category: Optional[str] = Form(None),
+    garment_metadata: Optional[str] = Form(None)  # JSON string of metadata
 ):
     try:
-        logger.info(f"Try-on request received for category: {category}")
-        # UploadFile.file is a SpooledTemporaryFile which works with Replicate
+        # Parse metadata if provided
+        metadata = None
+        if garment_metadata:
+            try:
+                import json
+                metadata = json.loads(garment_metadata)
+            except Exception as e:
+                logger.warning(f"Could not parse garment_metadata: {e}")
+        
+        # Use category from metadata if available, otherwise use provided or default
+        final_category = category or (metadata.get('category') if metadata else None) or "upper_body"
+        
+        logger.info(f"Try-on request received for category: {final_category}")
+        if metadata:
+            logger.info(f"Using pre-analyzed metadata for better results")
+        
         result_url = await vton.generate_try_on(
             user_image.file, 
             clothing_image.file, 
-            category
+            final_category,
+            metadata
         )
         logger.info(f"Try-on completed successfully. Result URL: {result_url}")
         return {"image_url": result_url}
@@ -77,6 +93,55 @@ async def identify_products(
         return analysis
     except Exception as e:
         logger.error(f"Error in identify-products endpoint: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/analyze-clothing")
+async def analyze_clothing_items(
+    clothing_images: List[UploadFile] = File(...)
+):
+    """
+    Analyzes multiple clothing items, categorizes them, and extracts metadata.
+    Returns analyzed items with suggested filenames and metadata for Gemini 3 Pro.
+    """
+    try:
+        logger.info(f"Clothing analysis request received for {len(clothing_images)} items")
+        
+        if len(clothing_images) > 5:
+            raise HTTPException(status_code=400, detail="Maximum 5 clothing items allowed")
+        
+        analyzed_items = []
+        for idx, clothing_image in enumerate(clothing_images):
+            try:
+                contents = await clothing_image.read()
+                original_filename = clothing_image.filename or f"item_{idx + 1}"
+                
+                logger.info(f"Analyzing item {idx + 1}: {original_filename}")
+                analysis = await analyze_clothing.analyze_clothing_item(contents, original_filename)
+                
+                analyzed_items.append({
+                    "index": idx,
+                    "original_filename": original_filename,
+                    "analysis": analysis
+                })
+                
+            except Exception as e:
+                logger.error(f"Error analyzing item {idx + 1}: {e}", exc_info=True)
+                analyzed_items.append({
+                    "index": idx,
+                    "original_filename": clothing_image.filename or f"item_{idx + 1}",
+                    "error": str(e),
+                    "analysis": {
+                        "category": "unknown",
+                        "detailed_description": "clothing item",
+                        "suggested_filename": f"unknown_item_{idx + 1}.jpg"
+                    }
+                })
+        
+        logger.info(f"Analysis completed for {len(analyzed_items)} items")
+        return {"items": analyzed_items}
+        
+    except Exception as e:
+        logger.error(f"Error in analyze-clothing endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/shop")
