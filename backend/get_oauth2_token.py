@@ -27,6 +27,7 @@ def get_refresh_token():
         return
     
     # Create OAuth2 flow configuration
+    # For installed apps, use the standard redirect URIs
     client_config = {
         "installed": {
             "client_id": client_id,
@@ -34,7 +35,13 @@ def get_refresh_token():
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
             "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "redirect_uris": ["http://localhost"]
+            "redirect_uris": [
+                "http://localhost:8080",
+                "http://localhost:8080/",
+                "urn:ietf:wg:oauth:2.0:oob",  # For out-of-band flow
+                "http://127.0.0.1:8080",
+                "http://127.0.0.1:8080/"
+            ]
         }
     }
     
@@ -44,7 +51,15 @@ def get_refresh_token():
     # Run the OAuth2 flow
     print("Starting OAuth2 flow...")
     print("A browser window will open. Please authorize the application.")
-    credentials = flow.run_local_server(port=0)
+    print("\nNOTE: Make sure these redirect URIs are added in Google Cloud Console:")
+    print("  - http://localhost:8080")
+    print("  - http://localhost:8080/")
+    print("  - http://127.0.0.1:8080")
+    print("  - http://127.0.0.1:8080/")
+    print("  - urn:ietf:wg:oauth:2.0:oob")
+    print("\nIf you get a redirect_uri_mismatch error, add the URIs above to your OAuth2 client in Google Cloud Console.")
+    print("\nOpening browser...")
+    credentials = flow.run_local_server(port=8080, open_browser=True)
     
     # Get refresh token
     refresh_token = credentials.refresh_token
