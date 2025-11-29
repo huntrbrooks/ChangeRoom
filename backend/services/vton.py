@@ -8,22 +8,23 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 # Import Google GenAI SDK for image generation
+# Try both SDKs - new one for image generation, old one as fallback
 try:
-    from google import genai
+    from google import genai as genai_new
     from google.genai import types
-    GEMINI_IMAGE_SDK_AVAILABLE = True
     NEW_SDK_AVAILABLE = True
 except ImportError:
-    GEMINI_IMAGE_SDK_AVAILABLE = False
     NEW_SDK_AVAILABLE = False
     logger.warning("google-genai package not installed. Install with: pip install google-genai")
 
-# Also try the older SDK as fallback
 try:
     import google.generativeai as genai_old
     OLD_SDK_AVAILABLE = True
 except ImportError:
     OLD_SDK_AVAILABLE = False
+    logger.warning("google-generativeai package not installed. Install with: pip install google-generativeai")
+
+GEMINI_SDK_AVAILABLE = NEW_SDK_AVAILABLE or OLD_SDK_AVAILABLE
 
 async def generate_try_on(user_image_file, garment_image_files, category="upper_body", garment_metadata=None):
     """
@@ -55,13 +56,13 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
     Uses the new google-genai SDK with proper API configuration.
     Implements the system prompt for virtual try-on API.
     """
-    if not GEMINI_IMAGE_SDK_AVAILABLE:
-        raise ImportError("google-genai package is required. Install with: pip install google-genai")
+    if not GEMINI_SDK_AVAILABLE:
+        raise ImportError("Either google-genai or google-generativeai package is required")
     
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        logger.warning("GOOGLE_API_KEY not set. Cannot use Gemini 3 Pro.")
-        raise ValueError("GOOGLE_API_KEY is required for Gemini 3 Pro image generation")
+        logger.warning("GOOGLE_API_KEY not set. Cannot use Gemini for image generation.")
+        raise ValueError("GOOGLE_API_KEY is required for Gemini image generation")
     
     try:
         # Read user image
@@ -78,36 +79,37 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
             garment_image_bytes_list.append(garment_bytes)
         
         def run_gemini_image_generation():
-            # The new google-genai SDK requires API key to be set as environment variable
-            # Set it temporarily for this request
-            original_key = os.environ.get('GOOGLE_API_KEY')
-            os.environ['GOOGLE_API_KEY'] = api_key
-            
-            try:
-                # Create client - it will use GOOGLE_API_KEY from environment
-                # The new SDK should automatically pick up the environment variable
-                client = genai.Client()
-                logger.info("Initialized Google GenAI client with API key from environment")
-                use_new_sdk = True
-            except Exception as e:
-                logger.error(f"Failed to initialize Google GenAI client: {e}")
-                # Try alternative: pass API key directly if supported
+            # Try new SDK first (supports image generation)
+            if NEW_SDK_AVAILABLE:
                 try:
-                    # Some versions might support direct API key parameter
-                    client = genai.Client(api_key=api_key)
-                    logger.info("Initialized Google GenAI client with direct API key")
-                    use_new_sdk = True
-                except Exception as e2:
-                    logger.error(f"Direct API key also failed: {e2}")
-                    raise ValueError(f"Failed to authenticate with Google GenAI SDK: {e2}. Please check your GOOGLE_API_KEY.")
-            finally:
-                # Restore original key if it existed
-                if original_key:
-                    os.environ['GOOGLE_API_KEY'] = original_key
-                elif 'GOOGLE_API_KEY' in os.environ:
-                    # Only delete if we set it (check if it was the same)
-                    if os.environ.get('GOOGLE_API_KEY') == api_key:
-                        del os.environ['GOOGLE_API_KEY']
+                    # Set API key as environment variable (required by new SDK)
+                    original_key = os.environ.get('GOOGLE_API_KEY')
+                    os.environ['GOOGLE_API_KEY'] = api_key
+                    try:
+                        client = genai_new.Client()
+                        logger.info("Using new google-genai SDK for image generation")
+                        use_new_sdk = True
+                    except Exception as e:
+                        logger.error(f"New SDK initialization failed: {e}")
+                        use_new_sdk = False
+                    finally:
+                        if original_key:
+                            os.environ['GOOGLE_API_KEY'] = original_key
+                        elif 'GOOGLE_API_KEY' in os.environ and os.environ['GOOGLE_API_KEY'] == api_key:
+                            del os.environ['GOOGLE_API_KEY']
+                except Exception as e:
+                    logger.warning(f"Failed to use new SDK: {e}")
+                    use_new_sdk = False
+            else:
+                use_new_sdk = False
+            
+            # Fallback to old SDK if new one not available
+            if not use_new_sdk:
+                if OLD_SDK_AVAILABLE:
+                    genai_old.configure(api_key=api_key)
+                    logger.info("Using old google-generativeai SDK (note: does not support image generation)")
+                else:
+                    raise ImportError("No Google GenAI SDK available. Install google-genai or google-generativeai")
             
             # Load user image
             user_image = Image.open(io.BytesIO(user_image_bytes))
@@ -229,109 +231,106 @@ Output:
             
             logger.info(f"Generating image with {len(garment_images)} clothing item(s)...")
             
-            # Model options for image generation (try in order of preference)
-            # Note: These model names may need to be updated based on Google's current offerings
-            model_options = [
-                "gemini-2.0-flash-exp",        # Try this first as it's more stable
-                "gemini-3-pro-image-preview",  # Nano Banana Pro (Gemini 3 Pro Image)
-                "gemini-3-pro-preview",        # Alternative model name
-            ]
-            
-            last_error = None
-            for model_name in model_options:
-                try:
-                    logger.info(f"Attempting to use model: {model_name} for virtual try-on generation")
-                    
-                    # Convert PIL Images to base64 for API compatibility
-                    def image_to_base64(img):
-                        buffer = io.BytesIO()
-                        img.save(buffer, format='PNG')
-                        return base64.b64encode(buffer.getvalue()).decode('utf-8')
-                    
-                    user_img_base64 = image_to_base64(user_image)
-                    garment_img_base64_list = [image_to_base64(img) for img in garment_images]
-                    
-                    # Build contents in the format expected by google-genai SDK
-                    # Format: list of parts, where each part can be text or inline_data
-                    contents = []
-                    
-                    # Add text prompt as first part
-                    contents.append({
-                        "text": user_prompt
-                    })
-                    
-                    # Add user image
-                    contents.append({
-                        "inline_data": {
-                            "mime_type": "image/png",
-                            "data": user_img_base64
-                        }
-                    })
-                    
-                    # Add all clothing images
-                    for garment_base64 in garment_img_base64_list:
+            if use_new_sdk:
+                # Use new SDK for image generation
+                # Model options for image generation
+                model_options = [
+                    "gemini-2.0-flash-exp",
+                    "gemini-3-pro-image-preview",
+                    "gemini-3-pro-preview",
+                ]
+                
+                last_error = None
+                for model_name in model_options:
+                    try:
+                        logger.info(f"Attempting to use model: {model_name} for virtual try-on generation")
+                        
+                        # Convert PIL Images to base64
+                        def image_to_base64(img):
+                            buffer = io.BytesIO()
+                            img.save(buffer, format='PNG')
+                            return base64.b64encode(buffer.getvalue()).decode('utf-8')
+                        
+                        user_img_base64 = image_to_base64(user_image)
+                        garment_img_base64_list = [image_to_base64(img) for img in garment_images]
+                        
+                        # Build contents for new SDK
+                        contents = [{"text": user_prompt}]
                         contents.append({
                             "inline_data": {
                                 "mime_type": "image/png",
-                                "data": garment_base64
+                                "data": user_img_base64
                             }
                         })
-                    
-                    logger.info(f"Sending {len(contents)} content parts: 1 text + {len(contents) - 1} images")
-                    
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=contents,
-                        config=types.GenerateContentConfig(
-                            response_modalities=['IMAGE'],  # Request image output
-                            image_config=types.ImageConfig(
-                                aspect_ratio="2:3",  # Portrait orientation for fashion
-                                image_size="2K"      # 2K resolution (options: "1K", "2K", "4K")
+                        for garment_base64 in garment_img_base64_list:
+                            contents.append({
+                                "inline_data": {
+                                    "mime_type": "image/png",
+                                    "data": garment_base64
+                                }
+                            })
+                        
+                        logger.info(f"Sending {len(contents)} content parts: 1 text + {len(contents) - 1} images")
+                        
+                        # Set API key in environment for this call
+                        original_key = os.environ.get('GOOGLE_API_KEY')
+                        os.environ['GOOGLE_API_KEY'] = api_key
+                        try:
+                            response = client.models.generate_content(
+                                model=model_name,
+                                contents=contents,
+                                config=types.GenerateContentConfig(
+                                    response_modalities=['IMAGE'],
+                                    image_config=types.ImageConfig(
+                                        aspect_ratio="2:3",
+                                        image_size="2K"
+                                    )
+                                )
                             )
-                        )
-                    )
-                    
-                    # Extract image from response
-                    if hasattr(response, 'contents') and response.contents:
-                        for content in response.contents:
-                            if hasattr(content, 'parts') and content.parts:
-                                for part in content.parts:
-                                    if hasattr(part, 'inline_data') and part.inline_data:
-                                        return part.inline_data.data
-                                    elif hasattr(part, 'image') and part.image:
-                                        # Handle different response formats
-                                        if hasattr(part.image, 'data'):
-                                            return part.image.data
-                                        elif hasattr(part.image, 'bytes'):
-                                            return part.image.bytes
-                    
-                    # Alternative: check for image in response directly
-                    if hasattr(response, 'image'):
-                        if hasattr(response.image, 'data'):
-                            return response.image.data
-                        elif hasattr(response.image, 'bytes'):
-                            return response.image.bytes
-                    
-                    raise ValueError("No image data found in response")
-                    
-                except Exception as e:
-                    last_error = e
-                    error_msg = str(e)
-                    # Check if it's an authentication error
-                    if "401" in error_msg or "UNAUTHENTICATED" in error_msg or "CREDENTIALS" in error_msg:
-                        logger.error(f"Authentication error with model {model_name}: {e}")
-                        logger.error("This might indicate:")
-                        logger.error("1. API key is invalid or expired")
-                        logger.error("2. API key doesn't have permissions for this API")
-                        logger.error("3. The new google-genai SDK requires OAuth2 instead of API keys")
-                        logger.error("4. The API endpoint doesn't support API key authentication")
-                        # Don't try other models if it's an auth error - they'll all fail
-                        raise ValueError(f"Authentication failed: {e}. Please check your GOOGLE_API_KEY configuration.")
-                    logger.warning(f"Model {model_name} failed: {e}. Trying next model...")
-                    continue
-            
-            # If all models failed, raise the last error
-            raise last_error or ValueError("All Gemini image editing models failed")
+                        finally:
+                            if original_key:
+                                os.environ['GOOGLE_API_KEY'] = original_key
+                            elif 'GOOGLE_API_KEY' in os.environ and os.environ['GOOGLE_API_KEY'] == api_key:
+                                del os.environ['GOOGLE_API_KEY']
+                        
+                        # Extract image from response
+                        if hasattr(response, 'contents') and response.contents:
+                            for content in response.contents:
+                                if hasattr(content, 'parts') and content.parts:
+                                    for part in content.parts:
+                                        if hasattr(part, 'inline_data') and part.inline_data:
+                                            return part.inline_data.data
+                                        elif hasattr(part, 'image') and part.image:
+                                            if hasattr(part.image, 'data'):
+                                                return part.image.data
+                                            elif hasattr(part.image, 'bytes'):
+                                                return part.image.bytes
+                        
+                        if hasattr(response, 'image'):
+                            if hasattr(response.image, 'data'):
+                                return response.image.data
+                            elif hasattr(response.image, 'bytes'):
+                                return response.image.bytes
+                        
+                        raise ValueError("No image data found in response")
+                        
+                    except Exception as e:
+                        last_error = e
+                        error_msg = str(e)
+                        if "401" in error_msg or "UNAUTHENTICATED" in error_msg or "CREDENTIALS" in error_msg or "OAuth2" in error_msg:
+                            logger.error(f"Authentication error: {e}")
+                            logger.error("The new google-genai SDK requires OAuth2 authentication, not API keys.")
+                            logger.error("You have two options:")
+                            logger.error("1. Set up OAuth2 credentials in Google Cloud Console")
+                            logger.error("2. Use a different image generation service that supports API keys")
+                            raise ValueError(f"Authentication failed: The google-genai SDK requires OAuth2, not API keys. Error: {e}")
+                        logger.warning(f"Model {model_name} failed: {e}. Trying next model...")
+                        continue
+                
+                raise last_error or ValueError("All image generation models failed")
+            else:
+                # Old SDK doesn't support image generation
+                raise ValueError("Image generation is not supported with the google-generativeai SDK. Please install google-genai package and set up OAuth2 authentication, or use a different image generation service.")
         
         # Execute in thread pool
         try:
