@@ -8,4 +8,6 @@ python-multipart
 python-dotenv
 Pillow
 piexif
+openai>=1.0.0  # OpenAI SDK for batch preprocessing with structured outputs
+boto3>=1.26.0  # For cloud storage (R2/S3) support
 

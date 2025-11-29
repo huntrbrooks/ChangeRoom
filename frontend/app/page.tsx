@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import axios from 'axios';
 import { UploadZone } from './components/UploadZone';
 import { BulkUploadZone } from './components/BulkUploadZone';
 import { VirtualMirror } from './components/VirtualMirror';
 import { ProductCard } from './components/ProductCard';
-import { Shirt, Sparkles, Search } from 'lucide-react';
+import { Shirt, Sparkles, Search, Loader2 } from 'lucide-react';
 
 // Define types locally for now
 interface Product {
@@ -24,6 +25,7 @@ export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   const handleBulkUpload = (files: File[], analyses: any[]) => {
     // Fill wardrobe slots with analyzed files
@@ -35,6 +37,12 @@ export default function Home() {
     });
     setWardrobeItems(newItems);
     console.log('Bulk upload complete. Analyzed items:', analyses);
+  };
+
+  const handleItemRemove = (index: number) => {
+    const newItems = [...wardrobeItems];
+    newItems[index] = null;
+    setWardrobeItems(newItems);
   };
 
   const handleGenerate = async () => {
@@ -52,6 +60,10 @@ export default function Home() {
     setIsGenerating(true);
     setError(null);
     setProducts([]);
+
+    // Create abort controller for cancellation
+    const controller = new AbortController();
+    setAbortController(controller);
 
     // Suppress browser extension message channel errors
     const originalError = console.error;
@@ -131,6 +143,7 @@ export default function Home() {
         tryOnRes = await axios.post(`${API_URL}/api/try-on`, tryOnFormData, {
           headers: { 'Content-Type': 'multipart/form-data' },
           timeout: 600000, // 10 minutes for Render wake-up + VTON generation
+          signal: controller.signal,
         });
 
         if (tryOnRes.data.image_url) {
@@ -138,10 +151,16 @@ export default function Home() {
           console.log("Try-on completed successfully");
         }
       } catch (tryOnError: any) {
+        if (tryOnError.name === 'CanceledError' || tryOnError.code === 'ERR_CANCELED') {
+          setError('Operation cancelled');
+          setIsGenerating(false);
+          console.error = originalError;
+          return;
+        }
         console.error("Error in try-on:", tryOnError);
         const errorMessage = tryOnError.code === 'ECONNABORTED' || tryOnError.message?.includes('timeout')
-          ? `Try-on request timed out after 10 minutes. This usually means the Replicate service is taking longer than expected. Please try again.`
-          : tryOnError.response?.data?.detail || tryOnError.message || "Failed to generate try-on image. Please try again.";
+          ? `The try-on is taking longer than expected. This usually means our servers are busy. Please try again in a few moments.`
+          : tryOnError.response?.data?.detail || tryOnError.message || "We couldn't generate your try-on. Please check your photos and try again.";
         setError(`Try-on failed: ${errorMessage}`);
         setIsGenerating(false);
         console.error = originalError; // Restore original error handler
@@ -157,6 +176,7 @@ export default function Home() {
         const analysisRes = await axios.post(`${API_URL}/api/identify-products`, identifyFormData, {
            headers: { 'Content-Type': 'multipart/form-data' },
            timeout: 600000, // 10 minutes for Render wake-up + Gemini processing
+           signal: controller.signal,
         });
         
         if (analysisRes.data.search_query) {
@@ -167,6 +187,7 @@ export default function Home() {
           const shopRes = await axios.post(`${API_URL}/api/shop`, shopFormData, {
              headers: { 'Content-Type': 'multipart/form-data' },
              timeout: 60000, // 1 minute for product search
+             signal: controller.signal,
           });
           
           if (shopRes.data.results) {
@@ -177,28 +198,37 @@ export default function Home() {
           console.warn("No search query returned from product identification");
         }
       } catch (searchError: any) {
+        if (searchError.name === 'CanceledError' || searchError.code === 'ERR_CANCELED') {
+          // Cancelled, don't show error
+          return;
+        }
         // Product search failure is non-critical - show try-on result anyway
         console.warn("Error in product search (non-critical):", searchError);
-        // Don't set error state - user can still see the try-on result
-        // Optionally show a non-blocking warning
+        // Show subtle notification for product search failure
         if (searchError.code === 'ECONNABORTED' || searchError.message?.includes('timeout')) {
           console.warn("Product search timed out, but try-on was successful");
         }
       }
 
     } catch (err: any) {
+      if (err.name === 'CanceledError' || err.code === 'ERR_CANCELED') {
+        setError('Operation cancelled');
+        setIsGenerating(false);
+        console.error = originalError;
+        return;
+      }
       console.error("Unexpected error:", err);
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       
       if (err.response?.status === 0 || err.message?.includes('Network Error') || err.code === 'ERR_NETWORK') {
-        setError(`Cannot connect to backend at ${API_URL}. Check: 1) Is the service awake? 2) Is NEXT_PUBLIC_API_URL set in Vercel? 3) Try again in 30-60 seconds.`);
+        setError(`Unable to connect to our servers. Please check your internet connection and try again. If the problem persists, the service may be temporarily unavailable.`);
       } else if (err.response?.status === 404) {
-        setError(`Backend endpoint not found. Check if API URL is correct: ${API_URL}`);
+        setError(`The requested service is not available. Please try again later.`);
       } else {
         setError(err.response?.data?.detail || err.message || "An unexpected error occurred. Please try again.");
       }
     } finally {
       setIsGenerating(false);
+      setAbortController(null);
       console.error = originalError; // Restore original error handler
     }
   };
@@ -215,9 +245,8 @@ export default function Home() {
             <h1 className="text-lg sm:text-xl font-bold tracking-tight">Change Room</h1>
           </div>
           <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-gray-600">
-            <a href="#" className="hover:text-black">How it Works</a>
-            <a href="#" className="hover:text-black">Pricing</a>
-            <a href="#" className="hover:text-black">About</a>
+            <Link href="/how-it-works" className="hover:text-black transition-colors">How it Works</Link>
+            <Link href="/about" className="hover:text-black transition-colors">About</Link>
           </nav>
         </div>
       </header>
@@ -243,7 +272,8 @@ export default function Home() {
               <UploadZone 
                 label="Your Photo" 
                 selectedFile={userImage} 
-                onFileSelect={setUserImage} 
+                onFileSelect={setUserImage}
+                onClear={() => setUserImage(null)}
               />
             </section>
 
@@ -252,7 +282,17 @@ export default function Home() {
                 <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs">2</span>
                 Choose Wardrobe
               </h2>
-              <BulkUploadZone onFilesUploaded={handleBulkUpload} />
+              <BulkUploadZone 
+                onFilesUploaded={handleBulkUpload}
+                onItemRemove={handleItemRemove}
+              />
+              {wardrobeItems.filter(item => item !== null).length > 1 && (
+                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm text-blue-800">
+                    💡 <strong>Note:</strong> Currently trying on the first item. Multi-item try-on coming soon!
+                  </p>
+                </div>
+              )}
             </section>
 
             <button
@@ -269,7 +309,10 @@ export default function Home() {
               `}
             >
               {isGenerating ? (
-                <>Thinking...</>
+                <>
+                  <Loader2 size={18} className="sm:w-5 sm:h-5 animate-spin" />
+                  <span>Generating your look...</span>
+                </>
               ) : (
                 <>
                   <Sparkles size={18} className="sm:w-5 sm:h-5 text-yellow-300" />
@@ -277,6 +320,15 @@ export default function Home() {
                 </>
               )}
             </button>
+            {isGenerating && (
+              <button
+                onClick={() => abortController?.abort()}
+                className="mt-2 text-sm text-gray-600 hover:text-gray-900 underline w-full text-center"
+                aria-label="Cancel operation"
+              >
+                Cancel
+              </button>
+            )}
           </div>
 
           {/* Right Column: Results */}

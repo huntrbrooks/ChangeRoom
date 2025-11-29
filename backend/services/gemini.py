@@ -62,37 +62,61 @@ async def analyze_garment(image_bytes):
         
         # Use Gemini 1.5 Flash for speed/quality balance
         # This model supports text+image analysis via REST API with API key
-        endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        # Try v1 API first, fallback to v1beta if needed
+        endpoints = [
+            "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent",
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+        ]
         
         # Make async HTTP request using httpx (no SDK required)
+        # Try different API versions if one fails
+        last_error = None
+        response = None
         async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{endpoint}?key={api_key}",
-                headers={
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "contents": [
-                        {
-                            "role": "user",
-                            "parts": [
-                                {"text": prompt},
+            for endpoint in endpoints:
+                try:
+                    response = await client.post(
+                        f"{endpoint}?key={api_key}",
+                        headers={
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "contents": [
                                 {
-                                    "inline_data": {
-                                        "mime_type": "image/png",
-                                        "data": image_base64
-                                    }
+                                    "role": "user",
+                                    "parts": [
+                                        {"text": prompt},
+                                        {
+                                            "inline_data": {
+                                                "mime_type": "image/png",
+                                                "data": image_base64
+                                            }
+                                        }
+                                    ]
                                 }
                             ]
-                        }
-                    ]
-                },
-            )
+                        },
+                    )
+                    
+                    if not response.is_success:
+                        error_text = response.text
+                        logger.warning(f"Gemini API error with {endpoint.split('/')[-2]}: {response.status_code} - {error_text}")
+                        last_error = {"error": f"Gemini API error: {response.status_code}", "details": error_text}
+                        response = None  # Reset response so we know it failed
+                        continue
+                    
+                    # Success - break out of loop
+                    break
+                except Exception as e:
+                    logger.warning(f"Error calling {endpoint.split('/')[-2]}: {e}")
+                    last_error = {"error": str(e)}
+                    response = None  # Reset response so we know it failed
+                    continue
             
-            if not response.is_success:
-                error_text = response.text
-                logger.error(f"Gemini API error: {response.status_code} - {error_text}")
-                return {"error": f"Gemini API error: {response.status_code}", "details": error_text}
+            # If all endpoints failed, return error
+            if not response or last_error:
+                logger.error(f"All Gemini API endpoints failed. Last error: {last_error}")
+                return last_error if last_error else {"error": "All Gemini API endpoints failed"}
             
             data = response.json()
             

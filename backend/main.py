@@ -24,6 +24,7 @@ if sys.stderr.encoding != 'utf-8':
 sys.path.insert(0, str(Path(__file__).parent))
 
 from services import vton, gemini, shop, analyze_clothing
+from services import preprocess_clothing
 
 load_dotenv()
 
@@ -387,6 +388,67 @@ async def read_image_metadata(image_path: str):
     except Exception as e:
         logger.error(f"Error reading image metadata: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/preprocess-clothing")
+async def preprocess_clothing_batch(
+    clothing_images: List[UploadFile] = File(...)
+):
+    """
+    Batch preprocessing endpoint for clothing images.
+    
+    Uses OpenAI to analyze up to 5 images in a single batch call.
+    Returns structured metadata and saves files with proper naming.
+    
+    This endpoint implements the clean architecture:
+    - OpenAI: Analyzes images and provides structured metadata + recommended filenames
+    - Backend: Saves files, handles storage, wires everything for Gemini
+    
+    Args:
+        clothing_images: List of uploaded image files (max 5)
+        
+    Returns:
+        JSON with items array containing metadata and file URLs
+    """
+    try:
+        logger.info(f"Batch preprocessing request received for {len(clothing_images)} images")
+        
+        if len(clothing_images) > 5:
+            raise HTTPException(status_code=400, detail="Maximum 5 clothing items allowed")
+        
+        if len(clothing_images) == 0:
+            raise HTTPException(status_code=400, detail="At least one image is required")
+        
+        # Read all images into memory
+        image_bytes_list = []
+        original_filenames = []
+        
+        for image_file in clothing_images:
+            contents = await image_file.read()
+            image_bytes_list.append(contents)
+            original_filenames.append(image_file.filename or "unknown")
+        
+        # Call batch preprocessing service
+        processed_items = await preprocess_clothing.preprocess_clothing_batch(
+            image_bytes_list,
+            original_filenames,
+            str(UPLOADS_DIR)
+        )
+        
+        logger.info(f"Batch preprocessing complete: {len(processed_items)} items processed")
+        
+        return {
+            "items": processed_items,
+            "total": len(processed_items)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in preprocess-clothing endpoint: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to preprocess clothing images: {str(e)}"
+        )
 
 @app.post("/api/shop")
 async def shop_endpoint(

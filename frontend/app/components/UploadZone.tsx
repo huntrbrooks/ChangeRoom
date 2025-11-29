@@ -1,13 +1,24 @@
-import React, { useCallback } from 'react';
-import { Upload, X } from 'lucide-react';
+import React, { useCallback, useState } from 'react';
+import { Upload, X, Info } from 'lucide-react';
 
 interface UploadZoneProps {
-  onFileSelect: (file: File) => void;
+  onFileSelect: (file: File | null) => void;
+  onClear?: () => void;
   selectedFile: File | null;
   label: string;
 }
 
-export const UploadZone: React.FC<UploadZoneProps> = ({ onFileSelect, selectedFile, label }) => {
+export const UploadZone: React.FC<UploadZoneProps> = ({ onFileSelect, onClear, selectedFile, label }) => {
+  const [showTips, setShowTips] = useState(false);
+
+  const handleClear = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onClear) {
+      onClear();
+    } else {
+      onFileSelect(null);
+    }
+  }, [onClear, onFileSelect]);
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
@@ -25,7 +36,30 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileSelect, selectedFi
 
   return (
     <div className="w-full">
-      <label className="block text-xs sm:text-sm font-medium mb-2">{label}</label>
+      <div className="flex items-center justify-between mb-2">
+        <label className="block text-xs sm:text-sm font-medium">{label}</label>
+        {!selectedFile && (
+          <button
+            type="button"
+            onClick={() => setShowTips(!showTips)}
+            className="text-xs text-gray-500 hover:text-gray-700 underline flex items-center gap-1"
+            aria-label="Show photo tips"
+          >
+            <Info size={14} />
+            Tips for best results
+          </button>
+        )}
+      </div>
+      {showTips && !selectedFile && (
+        <div className="mb-3 p-3 bg-blue-50 rounded-lg text-xs text-gray-700 border border-blue-100">
+          <ul className="list-disc list-inside space-y-1">
+            <li>Use a full-body photo for best results</li>
+            <li>Good lighting works best</li>
+            <li>Plain background recommended</li>
+            <li>Stand straight with arms at your sides</li>
+          </ul>
+        </div>
+      )}
       <div
         onDragOver={(e) => e.preventDefault()}
         onDrop={handleDrop}
@@ -42,11 +76,8 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileSelect, selectedFi
               className="max-h-32 sm:max-h-48 mx-auto rounded"
             />
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                // Note: Parent needs to handle clear if needed, or just overwrite
-              }}
-              className="absolute top-0 right-0 bg-red-500 text-white p-1.5 sm:p-1 rounded-full transform translate-x-1/2 -translate-y-1/2 min-w-[32px] min-h-[32px] flex items-center justify-center touch-manipulation"
+              onClick={handleClear}
+              className="absolute top-0 right-0 bg-red-500 hover:bg-red-600 text-white p-1.5 sm:p-1 rounded-full transform translate-x-1/2 -translate-y-1/2 min-w-[32px] min-h-[32px] flex items-center justify-center touch-manipulation transition-colors"
               aria-label="Remove image"
             >
               <X size={14} className="sm:w-4 sm:h-4" />

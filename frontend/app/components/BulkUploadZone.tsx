@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { Upload, Loader2 } from 'lucide-react';
+import { Upload, Loader2, X } from 'lucide-react';
 import axios from 'axios';
 
 interface AnalyzedItem {
@@ -21,11 +21,13 @@ interface AnalyzedItem {
 
 interface BulkUploadZoneProps {
   onFilesUploaded: (files: File[], analyses: AnalyzedItem[]) => void;
+  onItemRemove?: (index: number) => void;
   API_URL?: string;
 }
 
 export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({ 
   onFilesUploaded,
+  onItemRemove,
   API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -46,7 +48,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
     }
 
     setIsAnalyzing(true);
-    setAnalysisProgress('Uploading and analyzing clothing items...');
+    setAnalysisProgress('Uploading and analyzing clothing items with OpenAI...');
     setProgressPercent(0);
     setUploadedFiles(selectedFiles);
     
@@ -61,168 +63,90 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
     try {
       const API_URL_FETCH = API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       
+      // Update progress
+      setProgressPercent(20);
+      setAnalysisProgress('Sending images to backend for OpenAI analysis...');
+      
       // Create FormData with all files
       const formData = new FormData();
       selectedFiles.forEach((file) => {
         formData.append('clothing_images', file);
       });
 
-      // Use fetch for Server-Sent Events (SSE) streaming
-      const response = await fetch(`${API_URL_FETCH}/api/analyze-clothing`, {
+      // Call the new batch preprocessing endpoint
+      const response = await fetch(`${API_URL_FETCH}/api/preprocess-clothing`, {
         method: 'POST',
         body: formData,
         // Don't set Content-Type header, let browser set it with boundary
       });
 
       if (!response.ok) {
-        throw new Error(`Analysis failed: ${response.statusText}`);
+        const errorData = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(errorData.error || errorData.detail || `Analysis failed: ${response.statusText}`);
       }
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let allAnalyses: AnalyzedItem[] = [];
+      setProgressPercent(80);
+      setAnalysisProgress('Processing results...');
 
-      if (!reader) {
-        throw new Error('No response body');
+      // Parse JSON response
+      const result = await response.json();
+      const processedItems = result.items || [];
+
+      if (processedItems.length === 0) {
+        throw new Error('No items returned from preprocessing');
       }
 
-      while (true) {
-        const { done, value } = await reader.read();
-        
-        if (done) break;
+      setProgressPercent(100);
+      setAnalysisProgress('Analysis complete!');
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+      // Transform backend response to frontend format
+      const allAnalyses: AnalyzedItem[] = processedItems.map((item: any) => ({
+        index: item.index,
+        original_filename: item.original_filename || item.metadata?.original_filename || selectedFiles[item.index]?.name || `item_${item.index}`,
+        analysis: {
+          category: item.analysis?.category || item.category || 'unknown',
+          item_type: item.analysis?.item_type || item.subcategory || '',
+          color: item.analysis?.color || item.color,
+          style: item.analysis?.style || item.style,
+          description: item.analysis?.description || item.analysis?.short_description || item.description || '',
+          detailed_description: item.analysis?.description || item.analysis?.short_description || item.description || '',
+          short_description: item.analysis?.short_description || item.description || '',
+          tags: item.analysis?.tags || item.tags || [],
+          suggested_filename: item.filename || item.recommended_filename || item.saved_filename,
+          metadata: item.metadata || item.analysis || {}
+        },
+        saved_filename: item.filename || item.saved_filename,
+        file_url: item.url || item.file_url,
+        status: item.status || 'success' as const
+      }));
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              
-              if (data.type === 'progress') {
-                setProgressPercent(data.progress);
-                setAnalysisProgress(data.message || `Analyzing ${data.current}/${data.total} items...`);
-                
-                // Update status for current item being analyzed
-                setAnalyzedItems(prev => prev.map((item, idx) => 
-                  idx === data.current - 1 ? { ...item, status: 'analyzing' as const } : item
-                ));
-              } else if (data.type === 'item_complete') {
-                // Update individual item as it completes
-                setProgressPercent(data.progress);
-                const itemData = data.item;
-                const category = itemData.analysis?.category || 'unknown';
-                const itemType = itemData.analysis?.item_type || '';
-                const filename = itemData.saved_filename || itemData.analysis?.suggested_filename || itemData.original_filename;
-                
-                console.log(`Item ${itemData.index + 1} complete:`, {
-                  category,
-                  itemType,
-                  filename,
-                  file_url: itemData.file_url,
-                  saved_filename: itemData.saved_filename,
-                  fullItem: itemData
-                });
-                
-                setAnalysisProgress(data.message || `Completed ${data.current}/${data.total} items: ${category}${itemType ? ` (${itemType})` : ''}`);
-                
-                setAnalyzedItems(prev => prev.map((item, idx) => 
-                  idx === data.item.index ? { 
-                    ...item, 
-                    ...data.item, 
-                    status: data.item.status || (data.item.error ? 'error' : 'success'),
-                    // Ensure all analysis data is properly set
-                    analysis: {
-                      ...item.analysis,
-                      ...data.item.analysis,
-                      category: category,
-                      item_type: itemType
-                    },
-                    saved_filename: filename,
-                    file_url: itemData.file_url || ''
-                  } : item
-                ));
-              } else if (data.type === 'complete') {
-                allAnalyses = data.items as AnalyzedItem[];
-                setProgressPercent(100);
-                setAnalysisProgress('Analysis complete!');
-                
-                // Log analysis results for debugging
-                console.log('Analysis complete. All items:', allAnalyses);
-                allAnalyses.forEach((analysis, idx) => {
-                  if (analysis?.analysis) {
-                    console.log(`Item ${idx + 1}:`, {
-                      category: analysis.analysis.category,
-                      item_type: analysis.analysis.item_type,
-                      filename: analysis.saved_filename || analysis.analysis.suggested_filename,
-                      original: analysis.original_filename
-                    });
-                  }
-                });
-                
-                // Update all items with their final status
-                setAnalyzedItems(prev => prev.map((item, idx) => {
-                  const analysis = allAnalyses[idx];
-                  if (analysis?.error) {
-                    return { ...item, ...analysis, status: 'error' as const };
-                  } else if (analysis?.analysis) {
-                    const category = analysis.analysis.category || 'unknown';
-                    const itemType = analysis.analysis.item_type || '';
-                    const filename = analysis.saved_filename || analysis.analysis?.suggested_filename || analysis.original_filename;
-                    
-                    console.log(`Updating item ${idx + 1} display:`, { category, itemType, filename });
-                    
-                    const fileUrl = analysis.file_url || '';
-                    
-                    // Store the file URL for image display
-                    if (fileUrl) {
-                      setSavedFileUrls(prev => {
-                        const newMap = new Map(prev);
-                        newMap.set(idx, fileUrl);
-                        return newMap;
-                      });
-                    }
-                    
-                    return { 
-                      ...item, 
-                      ...analysis, 
-                      status: 'success' as const,
-                      // Ensure category and item_type are properly set
-                      analysis: {
-                        ...item.analysis,
-                        ...analysis.analysis,
-                        category: category,
-                        item_type: itemType
-                      },
-                      saved_filename: filename,
-                      file_url: fileUrl
-                    };
-                  }
-                  return item;
-                }));
-              } else if (data.type === 'error') {
-                throw new Error(data.error || 'Analysis failed');
-              }
-            } catch (e) {
-              console.warn('Failed to parse SSE data:', e, line);
-            }
-          }
+      console.log('Batch preprocessing complete. All items:', allAnalyses);
+
+      // Update UI with results
+      setAnalyzedItems(allAnalyses);
+
+      // Store file URLs for display
+      allAnalyses.forEach((item, idx) => {
+        if (item.file_url) {
+          setSavedFileUrls(prev => {
+            const newMap = new Map(prev);
+            newMap.set(idx, item.file_url!);
+            return newMap;
+          });
         }
-      }
+      });
 
-      // Use saved files from server if available, otherwise create File objects
+      // Process files for parent component
       const processedFiles: File[] = [];
       const API_URL_PROCESS = API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       
       for (let idx = 0; idx < selectedFiles.length; idx++) {
         const file = selectedFiles[idx];
         const item = allAnalyses[idx];
-        const analysis = item?.analysis;
+        const processedItem = processedItems[idx];
         
-        if (analysis && item?.file_url) {
-          // File was saved on server - fetch it and create File object
+        if (item?.file_url && processedItem) {
+          // File was saved on server - fetch it and create File object with metadata
           try {
             const fileUrl = item.file_url.startsWith('http') 
               ? item.file_url 
@@ -230,43 +154,39 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             
             const response = await fetch(fileUrl);
             const blob = await response.blob();
-            const savedFilename = item.saved_filename || analysis.suggested_filename || file.name;
+            const savedFilename = item.saved_filename || file.name;
             const newFile = new File([blob], savedFilename, { type: blob.type || file.type });
             
-            // Attach metadata to the file object
-            (newFile as any).metadata = analysis.metadata || {};
-            (newFile as any).detailed_description = analysis.detailed_description;
-            (newFile as any).category = analysis.category;
-            (newFile as any).item_type = analysis.item_type;
+            // Attach metadata to the file object for try-on API
+            (newFile as any).metadata = processedItem.metadata || {};
+            (newFile as any).detailed_description = processedItem.description || '';
+            (newFile as any).category = processedItem.category || 'unknown';
+            (newFile as any).item_type = processedItem.subcategory || '';
             (newFile as any).file_url = fileUrl; // Store URL for try-on API
             (newFile as any).saved_filename = savedFilename;
+            (newFile as any).storage_path = processedItem.storage_path;
             
             processedFiles.push(newFile);
           } catch (error) {
             console.warn(`Failed to fetch saved file for ${file.name}, using original:`, error);
             // Fallback to original file
-            const newFile = new File([file], analysis.suggested_filename || file.name, { type: file.type });
-            (newFile as any).metadata = analysis.metadata || {};
-            (newFile as any).detailed_description = analysis.detailed_description;
-            (newFile as any).category = analysis.category;
-            (newFile as any).item_type = analysis.item_type;
+            const newFile = new File([file], item.saved_filename || file.name, { type: file.type });
+            (newFile as any).metadata = processedItem?.metadata || {};
+            (newFile as any).detailed_description = processedItem?.description || '';
+            (newFile as any).category = processedItem?.category || 'unknown';
+            (newFile as any).item_type = processedItem?.subcategory || '';
             processedFiles.push(newFile);
           }
-        } else if (analysis) {
-          // Analysis available but file not saved - create File with suggested name
-          const suggestedName = analysis.suggested_filename || file.name;
-          const newFile = new File([file], suggestedName, { type: file.type });
-          
-          // Attach metadata to the file object
-          (newFile as any).metadata = analysis.metadata || {};
-          (newFile as any).detailed_description = analysis.detailed_description;
-          (newFile as any).category = analysis.category;
-          (newFile as any).item_type = analysis.item_type;
-          
-          processedFiles.push(newFile);
         } else {
-          // No analysis available - use original file
-          processedFiles.push(file);
+          // Use original file with metadata attached
+          const newFile = new File([file], file.name, { type: file.type });
+          if (processedItem) {
+            (newFile as any).metadata = processedItem.metadata || {};
+            (newFile as any).detailed_description = processedItem.description || '';
+            (newFile as any).category = processedItem.category || 'unknown';
+            (newFile as any).item_type = processedItem.subcategory || '';
+          }
+          processedFiles.push(newFile);
         }
       }
 
@@ -299,6 +219,23 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
     const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
     await handleBulkUpload(files);
   }, [handleBulkUpload]);
+
+  const handleRemoveItem = useCallback((index: number) => {
+    const newItems = [...analyzedItems];
+    const newFiles = [...uploadedFiles];
+    newItems.splice(index, 1);
+    newFiles.splice(index, 1);
+    setAnalyzedItems(newItems);
+    setUploadedFiles(newFiles);
+    
+    // Notify parent if handler provided
+    if (onItemRemove) {
+      onItemRemove(index);
+    } else {
+      // Otherwise update parent with remaining files
+      onFilesUploaded(newFiles, newItems);
+    }
+  }, [analyzedItems, uploadedFiles, onItemRemove, onFilesUploaded]);
 
   return (
     <div className="space-y-3 sm:space-y-4">
@@ -379,7 +316,14 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                 `}
               >
                 {(file || item.file_url) && (
-                  <div className="space-y-1.5 sm:space-y-2">
+                  <div className="space-y-1.5 sm:space-y-2 relative">
+                    <button
+                      onClick={() => handleRemoveItem(idx)}
+                      className="absolute top-1 right-1 bg-red-500 hover:bg-red-600 text-white p-1 rounded-full opacity-90 hover:opacity-100 transition-opacity z-10 min-w-[24px] min-h-[24px] flex items-center justify-center"
+                      aria-label={`Remove ${item.saved_filename || item.original_filename}`}
+                    >
+                      <X size={12} />
+                    </button>
                     <img
                       src={
                         item.file_url 
@@ -409,11 +353,56 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                           <p className="text-green-700 font-bold text-[10px] sm:text-xs uppercase">
                             ✓ {item.analysis?.category?.replace(/_/g, ' ') || 'Analyzed'}
                           </p>
+                          
+                          {/* Item type, for example "leather lace up boots" */}
                           {item.analysis?.item_type && (
-                            <p className="text-gray-600 text-[9px] sm:text-[10px] font-medium">
+                            <p className="text-gray-800 text-[9px] sm:text-[10px] font-semibold">
                               {item.analysis.item_type}
                             </p>
                           )}
+                          
+                          {/* Color and style */}
+                          {(item.analysis?.color || item.analysis?.style) && (
+                            <p className="text-gray-600 text-[9px] sm:text-[10px]">
+                              {item.analysis?.color && <span>{item.analysis.color}</span>}
+                              {item.analysis?.color && item.analysis?.style && <span>, </span>}
+                              {item.analysis?.style && <span>{item.analysis.style}</span>}
+                            </p>
+                          )}
+                          
+                          {/* Tags */}
+                          {item.analysis?.tags && Array.isArray(item.analysis.tags) && item.analysis.tags.length > 0 && (
+                            <div className="flex flex-wrap gap-0.5 mt-0.5">
+                              {item.analysis.tags.slice(0, 3).map((tag: string, tagIdx: number) => (
+                                <span
+                                  key={tagIdx}
+                                  className="px-1 py-[1px] rounded-full bg-gray-200 text-[8px] sm:text-[9px] text-gray-700"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                              {item.analysis.tags.length > 3 && (
+                                <span className="text-[8px] sm:text-[9px] text-gray-500">
+                                  +{item.analysis.tags.length - 3}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          
+                          {/* Short description */}
+                          {item.analysis?.short_description && (
+                            <p className="text-gray-500 text-[8px] sm:text-[9px] mt-0.5 line-clamp-2">
+                              {item.analysis.short_description}
+                            </p>
+                          )}
+                          
+                          {/* Fallback to description if short_description not available */}
+                          {!item.analysis?.short_description && item.analysis?.description && (
+                            <p className="text-gray-500 text-[8px] sm:text-[9px] mt-0.5 line-clamp-2">
+                              {item.analysis.description}
+                            </p>
+                          )}
+                          
                           {item.saved_filename && (
                             <p className="text-gray-400 text-[8px] sm:text-[9px] mt-0.5 truncate" title="Saved filename">
                               Saved
