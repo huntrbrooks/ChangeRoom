@@ -111,15 +111,45 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
               } else if (data.type === 'item_complete') {
                 // Update individual item as it completes
                 setProgressPercent(data.progress);
-                setAnalysisProgress(data.message || `Completed ${data.current}/${data.total} items`);
+                const itemData = data.item;
+                const category = itemData.analysis?.category || 'unknown';
+                const itemType = itemData.analysis?.item_type || '';
+                const filename = itemData.saved_filename || itemData.analysis?.suggested_filename || itemData.original_filename;
+                setAnalysisProgress(data.message || `Completed ${data.current}/${data.total} items: ${category}${itemType ? ` (${itemType})` : ''}`);
                 
                 setAnalyzedItems(prev => prev.map((item, idx) => 
-                  idx === data.item.index ? { ...item, ...data.item, status: data.item.status || (data.item.error ? 'error' : 'success') } : item
+                  idx === data.item.index ? { 
+                    ...item, 
+                    ...data.item, 
+                    status: data.item.status || (data.item.error ? 'error' : 'success'),
+                    // Ensure all analysis data is properly set
+                    analysis: {
+                      ...item.analysis,
+                      ...data.item.analysis,
+                      category: category,
+                      item_type: itemType
+                    },
+                    saved_filename: filename,
+                    file_url: data.item.file_url
+                  } : item
                 ));
               } else if (data.type === 'complete') {
                 allAnalyses = data.items as AnalyzedItem[];
                 setProgressPercent(100);
                 setAnalysisProgress('Analysis complete!');
+                
+                // Log analysis results for debugging
+                console.log('Analysis complete. All items:', allAnalyses);
+                allAnalyses.forEach((analysis, idx) => {
+                  if (analysis?.analysis) {
+                    console.log(`Item ${idx + 1}:`, {
+                      category: analysis.analysis.category,
+                      item_type: analysis.analysis.item_type,
+                      filename: analysis.saved_filename || analysis.analysis.suggested_filename,
+                      original: analysis.original_filename
+                    });
+                  }
+                });
                 
                 // Update all items with their final status
                 setAnalyzedItems(prev => prev.map((item, idx) => {
@@ -127,7 +157,26 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                   if (analysis?.error) {
                     return { ...item, ...analysis, status: 'error' as const };
                   } else if (analysis?.analysis) {
-                    return { ...item, ...analysis, status: 'success' as const };
+                    const category = analysis.analysis.category || 'unknown';
+                    const itemType = analysis.analysis.item_type || '';
+                    const filename = analysis.saved_filename || analysis.analysis?.suggested_filename || analysis.original_filename;
+                    
+                    console.log(`Updating item ${idx + 1} display:`, { category, itemType, filename });
+                    
+                    return { 
+                      ...item, 
+                      ...analysis, 
+                      status: 'success' as const,
+                      // Ensure category and item_type are properly set
+                      analysis: {
+                        ...item.analysis,
+                        ...analysis.analysis,
+                        category: category,
+                        item_type: itemType
+                      },
+                      saved_filename: filename,
+                      file_url: analysis.file_url
+                    };
                   }
                   return item;
                 }));
@@ -315,17 +364,31 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                       className="w-full h-32 object-cover rounded"
                     />
                     <div className="text-xs">
-                      <p className="font-medium text-gray-900 truncate" title={item.analysis?.suggested_filename || item.original_filename}>
-                        {item.analysis?.suggested_filename || item.original_filename}
+                      <p className="font-medium text-gray-900 truncate mb-1" title={item.saved_filename || item.analysis?.suggested_filename || item.original_filename}>
+                        {item.saved_filename || item.analysis?.suggested_filename || item.original_filename}
                       </p>
                       {isAnalyzing && (
-                        <p className="text-blue-600 mt-1">Analyzing...</p>
+                        <p className="text-blue-600 mt-1 font-medium">Analyzing...</p>
                       )}
                       {isSuccess && (
-                        <p className="text-green-600 mt-1">✓ {item.analysis?.category || 'Analyzed'}</p>
+                        <div className="mt-1 space-y-0.5">
+                          <p className="text-green-700 font-bold text-xs uppercase">
+                            ✓ {item.analysis?.category?.replace(/_/g, ' ') || 'Analyzed'}
+                          </p>
+                          {item.analysis?.item_type && (
+                            <p className="text-gray-600 text-[10px] font-medium">
+                              {item.analysis.item_type}
+                            </p>
+                          )}
+                          {item.saved_filename && (
+                            <p className="text-gray-400 text-[9px] mt-0.5 truncate" title="Saved filename">
+                              Saved
+                            </p>
+                          )}
+                        </div>
                       )}
                       {isError && (
-                        <p className="text-red-600 mt-1">✗ Failed</p>
+                        <p className="text-red-600 mt-1 font-medium">✗ Failed</p>
                       )}
                     </div>
                   </div>
