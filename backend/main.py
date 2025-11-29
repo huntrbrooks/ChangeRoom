@@ -56,8 +56,16 @@ async def try_on(
         logger.info(f"Try-on completed successfully. Result URL: {result_url}")
         return {"image_url": result_url}
     except Exception as e:
+        error_detail = str(e)
         logger.error(f"Error in try-on endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        # Provide more helpful error messages
+        if "ImportError" in str(type(e)) or "google-genai" in error_detail:
+            error_detail = f"Missing dependency: {error_detail}. Ensure google-genai is installed on Render."
+        elif "REPLICATE_API_TOKEN" in error_detail:
+            error_detail = "Replicate API token not configured. Set REPLICATE_API_TOKEN environment variable."
+        elif "GOOGLE_API_KEY" in error_detail:
+            error_detail = "Google API key not configured. Set GOOGLE_API_KEY environment variable."
+        raise HTTPException(status_code=500, detail=error_detail)
 
 @app.post("/api/identify-products")
 async def identify_products(

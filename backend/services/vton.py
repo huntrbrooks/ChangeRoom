@@ -201,9 +201,16 @@ async def _generate_with_replicate(user_image_file, garment_image_file, category
             logger.info("Using stable VTON model version (default)")
         
         # Run Replicate API call in thread pool to avoid blocking event loop
-        # Replicate accepts file-like objects directly
+        # Replicate accepts file-like objects directly, but we need to ensure they're accessible in thread
         def run_replicate():
             try:
+                # Ensure files are at the beginning
+                if hasattr(user_image_file, 'seek'):
+                    user_image_file.seek(0)
+                if hasattr(garment_image_file, 'seek'):
+                    garment_image_file.seek(0)
+                
+                logger.info(f"Calling Replicate with model: {model_version}")
                 output = replicate.run(
                     model_version,
                     input={
@@ -216,6 +223,7 @@ async def _generate_with_replicate(user_image_file, garment_image_file, category
                         "steps": 30
                     }
                 )
+                logger.info(f"Replicate call completed. Output type: {type(output)}")
                 return output
             except Exception as replicate_error:
                 logger.error(f"Replicate API error: {replicate_error}", exc_info=True)
