@@ -2,7 +2,6 @@ fastapi
 uvicorn
 google-generativeai
 google-genai
-replicate
 requests
 python-multipart
 python-dotenv

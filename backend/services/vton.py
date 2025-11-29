@@ -1,4 +1,3 @@
-import replicate
 import os
 import asyncio
 import logging
@@ -8,7 +7,7 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-# Import new Google GenAI SDK for image generation
+# Import Google GenAI SDK for image generation
 try:
     from google import genai
     from google.genai import types
@@ -19,33 +18,25 @@ except ImportError:
 
 async def generate_try_on(user_image_file, garment_image_file, category="upper_body"):
     """
-    Generates virtual try-on image using either Replicate IDM-VTON or Gemini 3 Pro.
-    Configurable via VTON_ENGINE environment variable.
+    Generates image using Gemini 3 Pro (Nano Banana Pro) image generation.
+    Note: This is text-to-image generation, not true virtual try-on.
     
     Args:
-        user_image_file: File-like object of the user.
-        garment_image_file: File-like object of the garment.
+        user_image_file: File-like object of the user (used for context).
+        garment_image_file: File-like object of the garment (used for context).
         category: Category of the garment (upper_body, lower_body, dresses).
         
     Returns:
-        str: URL or base64 data URL of the generated image.
+        str: Base64 data URL of the generated image.
     """
-    # Check which engine to use
-    vton_engine = os.getenv("VTON_ENGINE", "replicate").lower().strip()
-    
-    if vton_engine == "gemini" or vton_engine == "nano-banana":
-        # Use Gemini 3 Pro (Nano Banana Pro) for image generation
-        return await _generate_with_gemini(user_image_file, garment_image_file, category)
-    else:
-        # Default: Use Replicate IDM-VTON
-        return await _generate_with_replicate(user_image_file, garment_image_file, category)
+    # Always use Gemini 3 Pro for image generation
+    return await _generate_with_gemini(user_image_file, garment_image_file, category)
 
 
 async def _generate_with_gemini(user_image_file, garment_image_file, category="upper_body"):
     """
     Uses Gemini 3 Pro (Nano Banana Pro) for image generation.
-    Note: This is text-to-image, not true virtual try-on.
-    It will generate an image based on description, not combine person + clothing.
+    Analyzes the uploaded images to create a better prompt for generation.
     
     Uses the new google-genai SDK with proper API configuration.
     """
@@ -71,14 +62,39 @@ async def _generate_with_gemini(user_image_file, garment_image_file, category="u
             # Initialize the new Google GenAI client
             client = genai.Client(api_key=api_key)
             
-            # Create a detailed prompt for image generation
-            # Note: This is text-to-image, so we describe what we want rather than combining images
+            # Use Gemini to analyze the images for better prompt generation
+            analysis_model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            # Analyze clothing image
+            garment_image = Image.open(io.BytesIO(garment_image_bytes))
+            garment_prompt = "Describe this clothing item in detail. Include: color, style, type (shirt, jacket, dress, etc.), material, and any distinctive features. Be specific."
+            try:
+                garment_analysis = analysis_model.generate_content([garment_prompt, garment_image])
+                garment_description = garment_analysis.text if hasattr(garment_analysis, 'text') else "clothing item"
+            except Exception as e:
+                logger.warning(f"Could not analyze garment image: {e}. Using generic description.")
+                garment_description = f"{category} clothing item"
+            
+            # Analyze person image for context
+            user_image = Image.open(io.BytesIO(user_image_bytes))
+            person_prompt = "Describe this person briefly: approximate age range, body type, pose, and any notable features. Keep it concise."
+            try:
+                person_analysis = analysis_model.generate_content([person_prompt, user_image])
+                person_description = person_analysis.text if hasattr(person_analysis, 'text') else "a person"
+            except Exception as e:
+                logger.warning(f"Could not analyze person image: {e}. Using generic description.")
+                person_description = "a person"
+            
+            # Create a detailed prompt based on the analysis
             prompt = (
-                f"Generate a photorealistic, high-quality image of a person wearing a {category} clothing item. "
-                "The person should be in a natural, confident pose. The clothing should fit well, look realistic, "
-                "and be clearly visible. The image should have professional lighting and a clean background. "
-                "Make it look like a fashion photography shot."
+                f"Generate a photorealistic, high-quality fashion photography image of {person_description} "
+                f"wearing {garment_description}. The person should be in a natural, confident pose. "
+                f"The clothing should fit well, look realistic, and be clearly visible. "
+                f"The image should have professional studio lighting and a clean, elegant background. "
+                f"Make it look like a high-end fashion photography shot with perfect composition and attention to detail."
             )
+            
+            logger.info(f"Generated prompt: {prompt[:150]}...")
             
             # Model options (try in order of preference)
             model_options = [
@@ -157,106 +173,5 @@ async def _generate_with_gemini(user_image_file, garment_image_file, category="u
         raise e
 
 
-async def _generate_with_replicate(user_image_file, garment_image_file, category="upper_body"):
-    """
-    Uses Replicate IDM-VTON for true virtual try-on.
-    This is the recommended method for virtual try-on.
-    """
-    # Ensure REPLICATE_API_TOKEN is set
-    if not os.getenv("REPLICATE_API_TOKEN"):
-        logger.warning("REPLICATE_API_TOKEN not set. Returning mock URL.")
-        return "https://via.placeholder.com/600x800?text=Mock+VTON+Result"
-
-    try:
-        # Reset file positions to ensure we read from the beginning
-        if hasattr(user_image_file, 'seek'):
-            user_image_file.seek(0)
-        if hasattr(garment_image_file, 'seek'):
-            garment_image_file.seek(0)
-        
-        # IDM-VTON model on Replicate - configurable via environment variable
-        # Set REPLICATE_VTON_MODEL to override default
-        # Options:
-        # - "latest" or empty: uses "yisol/idm-vton" (latest - recommended for best quality)
-        # - "stable": uses specific stable version
-        # - Custom: any valid Replicate model identifier
-        #   Examples: "yisol/idm-vton:210a0f8136f8031240420b668cb1e10895c30945", "levihsu/ootdiffusion"
-        model_override = os.getenv("REPLICATE_VTON_MODEL", "").strip()
-        
-        if model_override and model_override.lower() == "stable":
-            # Use stable specific version
-            model_version = "yisol/idm-vton:210a0f8136f8031240420b668cb1e10895c30945"
-            logger.info("Using stable VTON model version")
-        elif model_override and model_override.lower() == "latest":
-            # Use latest version (may require model name without version)
-            model_version = "yisol/idm-vton"
-            logger.info("Using latest VTON model version")
-        elif model_override:
-            # Use custom model specified in environment variable
-            model_version = model_override
-            logger.info(f"Using custom VTON model: {model_version}")
-        else:
-            # Default: use stable version for reliability
-            model_version = "yisol/idm-vton:210a0f8136f8031240420b668cb1e10895c30945"
-            logger.info("Using stable VTON model version (default)")
-        
-        # Run Replicate API call in thread pool to avoid blocking event loop
-        # Replicate accepts file-like objects directly, but we need to ensure they're accessible in thread
-        def run_replicate():
-            try:
-                # Ensure files are at the beginning
-                if hasattr(user_image_file, 'seek'):
-                    user_image_file.seek(0)
-                if hasattr(garment_image_file, 'seek'):
-                    garment_image_file.seek(0)
-                
-                logger.info(f"Calling Replicate with model: {model_version}")
-                output = replicate.run(
-                    model_version,
-                    input={
-                        "human_img": user_image_file,
-                        "garm_img": garment_image_file,
-                        "garment_des": "clothing item",
-                        "category": category,
-                        "crop": False,
-                        "seed": 42,
-                        "steps": 30
-                    }
-                )
-                logger.info(f"Replicate call completed. Output type: {type(output)}")
-                return output
-            except Exception as replicate_error:
-                logger.error(f"Replicate API error: {replicate_error}", exc_info=True)
-                raise
-        
-        # Execute blocking call in thread pool using run_in_executor for compatibility
-        # Use get_running_loop() in async context (Python 3.7+)
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.get_event_loop()
-        output = await loop.run_in_executor(None, run_replicate)
-        
-        # Handle different response formats from Replicate
-        # Replicate can return: string URL, list of URLs, or iterator
-        if isinstance(output, str):
-            return output
-        elif isinstance(output, list):
-            # If list, return first URL
-            if len(output) > 0:
-                return output[0] if isinstance(output[0], str) else str(output[0])
-            else:
-                raise ValueError("Replicate returned empty list")
-        else:
-            # If iterator or other type, convert to string
-            result = str(output)
-            if result.startswith('http'):
-                return result
-            else:
-                raise ValueError(f"Unexpected Replicate response format: {type(output)}")
-                
-    except Exception as e:
-        logger.error(f"Error in VTON generation: {e}", exc_info=True)
-        raise e
 
 
