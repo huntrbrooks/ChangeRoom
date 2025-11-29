@@ -12,9 +12,11 @@ from google.auth.transport.requests import Request
 import json
 
 # OAuth2 scopes for Generative AI
+# Try cloud-platform first (broader scope, usually works)
+# If that fails, you may need to enable Generative AI API in Google Cloud Console
 SCOPES = [
-    'https://www.googleapis.com/auth/generative-language',
-    'https://www.googleapis.com/auth/cloud-platform'
+    'https://www.googleapis.com/auth/cloud-platform'  # This scope usually works without API enablement
+    # 'https://www.googleapis.com/auth/generative-language',  # Uncomment if cloud-platform works
 ]
 
 def get_refresh_token():
