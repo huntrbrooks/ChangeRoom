@@ -171,10 +171,8 @@ async def try_on(
         error_detail = str(e)
         logger.error(f"Error in try-on endpoint: {e}", exc_info=True)
         # Provide more helpful error messages
-        if "ImportError" in str(type(e)) or "google-genai" in error_detail:
-            error_detail = f"Missing dependency: {error_detail}. Ensure google-genai is installed on Render."
-        elif "GOOGLE_API_KEY" in error_detail:
-            error_detail = "Google API key not configured. Set GOOGLE_API_KEY environment variable."
+        if "GEMINI_API_KEY" in error_detail or "GOOGLE_API_KEY" in error_detail:
+            error_detail = "Gemini API key not configured. Set GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable."
         raise HTTPException(status_code=500, detail=error_detail)
 
 @app.post("/api/identify-products")

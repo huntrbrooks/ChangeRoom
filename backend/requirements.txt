@@ -1,11 +1,8 @@
 fastapi
 uvicorn
-google-generativeai
-google-genai
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-openai
+# Note: google-generativeai kept temporarily for backward compatibility
+# All Gemini API calls now use direct REST API with httpx
+httpx
 requests
 python-multipart
 python-dotenv
