@@ -39,21 +39,35 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
     Uses Gemini API directly via REST for virtual try-on image generation.
     Generates a photorealistic image of the person wearing all clothing items.
     
-    Uses direct REST API calls with API key authentication, bypassing SDKs.
-    Implements the system prompt for virtual try-on API.
+    This function uses direct REST API calls to Gemini API with API key authentication.
+    No SDKs or OAuth2 are required - just set GEMINI_API_KEY environment variable.
+    
+    API Endpoint: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+    Authentication: API key passed as query parameter (?key={api_key})
+    Request Format: JSON with images as base64 inline_data
+    
+    Args:
+        user_image_file: File-like object of the person image
+        garment_image_files: List of file-like objects of clothing images
+        category: Category of the garment (for metadata)
+        garment_metadata: Optional styling instructions dict
+        
+    Returns:
+        str: Base64 data URL of the generated image (format: data:image/png;base64,...)
     """
+    # Get API key from environment (prefer GEMINI_API_KEY, fallback to GOOGLE_API_KEY)
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     
     if not api_key:
         raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY environment variable is required")
     
     try:
-        # Read user image
+        # Read user image bytes
         if hasattr(user_image_file, 'seek'):
             user_image_file.seek(0)
         user_image_bytes = user_image_file.read() if hasattr(user_image_file, 'read') else user_image_file
         
-        # Read all clothing images
+        # Read all clothing images into list
         garment_image_bytes_list = []
         for garment_file in garment_image_files:
             if hasattr(garment_file, 'seek'):
@@ -61,14 +75,18 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
             garment_bytes = garment_file.read() if hasattr(garment_file, 'read') else garment_file
             garment_image_bytes_list.append(garment_bytes)
         
-        # Limit to 5 clothing items (Gemini API limit)
+        # Limit to 5 clothing items (Gemini API supports up to 5 images per request)
         limited_garments = garment_image_bytes_list[:5]
         if len(garment_image_bytes_list) > 5:
             logger.warning(f"Limiting to 5 clothing items (received {len(garment_image_bytes_list)})")
         
-        # Convert images to base64
+        # Convert images to base64 for API request
+        # Gemini API requires images as base64-encoded inline_data
         def image_to_base64(image_bytes):
-            # Try to detect format from bytes, default to PNG
+            """
+            Convert image bytes to base64 string for Gemini API.
+            Detects image format and converts to PNG for consistency.
+            """
             try:
                 img = Image.open(io.BytesIO(image_bytes))
                 format_map = {
@@ -77,7 +95,7 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
                     'WEBP': 'image/webp'
                 }
                 mime_type = format_map.get(img.format, 'image/png')
-                # Convert to PNG for consistency
+                # Convert to PNG for consistency (Gemini handles PNG well)
                 buffer = io.BytesIO()
                 img.save(buffer, format='PNG')
                 return base64.b64encode(buffer.getvalue()).decode('utf-8'), 'image/png'
@@ -251,17 +269,19 @@ Output:
         logger.info(f"Sending {len(parts)} content parts: {len(limited_garments) + 1} images + 1 text")
         
         # Try multiple models in order of preference
+        # These models support image generation via REST API with API key authentication
         model_options = [
-            "gemini-2.0-flash-exp",
-            "gemini-2.5-flash-image",
-            "gemini-1.5-flash",
+            "gemini-2.0-flash-exp",      # Latest experimental model with image generation
+            "gemini-2.5-flash-image",     # Image-specific model
+            "gemini-1.5-flash",          # Fallback: reliable text+image model
         ]
         
         base_url = "https://generativelanguage.googleapis.com/v1beta/models"
         last_error = None
         
         # Make async HTTP request with fallback models
-        async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minute timeout
+        # Using httpx for async REST API calls (no SDK required)
+        async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minute timeout for image generation
             for model_name in model_options:
                 try:
                     endpoint = f"{base_url}/{model_name}:generateContent"

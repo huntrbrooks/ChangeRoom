@@ -13,7 +13,21 @@ async def analyze_garment(image_bytes):
     """
     Uses Gemini API directly via REST to analyze a garment image.
     Returns a dictionary with search terms and estimated price.
+    
+    This function uses direct REST API calls to Gemini API with API key authentication.
+    No SDKs or OAuth2 are required - just set GEMINI_API_KEY environment variable.
+    
+    API Endpoint: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+    Authentication: API key passed as query parameter (?key={api_key})
+    Request Format: JSON with image as base64 inline_data + text prompt
+    
+    Args:
+        image_bytes: Raw bytes of the clothing image to analyze
+        
+    Returns:
+        dict: Contains search_query, estimated_price, and description
     """
+    # Get API key from environment (prefer GEMINI_API_KEY, fallback to GOOGLE_API_KEY)
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
         logger.warning("GEMINI_API_KEY or GOOGLE_API_KEY not set. Returning mock data.")
@@ -24,10 +38,11 @@ async def analyze_garment(image_bytes):
         }
 
     try:
-        # Convert image to base64
+        # Convert image to base64 for API request
+        # Gemini API requires images as base64-encoded inline_data
         image = Image.open(io.BytesIO(image_bytes))
         buffer = io.BytesIO()
-        # Save as PNG for consistency
+        # Save as PNG for consistency (Gemini handles PNG well)
         image.save(buffer, format='PNG')
         image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
         
@@ -46,9 +61,10 @@ async def analyze_garment(image_bytes):
         """
         
         # Use Gemini 1.5 Flash for speed/quality balance
+        # This model supports text+image analysis via REST API with API key
         endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
         
-        # Make async HTTP request
+        # Make async HTTP request using httpx (no SDK required)
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 f"{endpoint}?key={api_key}",
