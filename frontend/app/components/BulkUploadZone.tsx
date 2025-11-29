@@ -301,27 +301,27 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
   }, [handleBulkUpload]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3 sm:space-y-4">
       <div
         onDragOver={(e) => e.preventDefault()}
         onDrop={handleBulkDrop}
         className={`
-          border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
+          border-2 border-dashed rounded-lg p-4 sm:p-6 md:p-8 text-center cursor-pointer transition-colors touch-manipulation
           ${isAnalyzing 
             ? 'border-blue-500 bg-blue-50' 
-            : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
+            : 'border-gray-300 hover:border-gray-400 active:border-gray-500 hover:bg-gray-50'
           }
         `}
       >
         {isAnalyzing ? (
           <div className="flex flex-col items-center w-full">
-            <Loader2 className="h-8 w-8 text-blue-500 animate-spin mb-4" />
-            <p className="text-sm font-medium text-gray-700 mb-4">{analysisProgress}</p>
+            <Loader2 className="h-7 w-7 sm:h-8 sm:w-8 text-blue-500 animate-spin mb-3 sm:mb-4" />
+            <p className="text-xs sm:text-sm font-medium text-gray-700 mb-3 sm:mb-4 px-2">{analysisProgress}</p>
             {/* Progress Bar - Enhanced visibility */}
-            <div className="w-full max-w-md px-4">
-              <div className="w-full bg-gray-200 rounded-full h-3 mb-2 shadow-inner">
+            <div className="w-full max-w-md px-2 sm:px-4">
+              <div className="w-full bg-gray-200 rounded-full h-2.5 sm:h-3 mb-2 shadow-inner">
                 <div 
-                  className="bg-blue-500 h-3 rounded-full transition-all duration-500 ease-out shadow-md"
+                  className="bg-blue-500 h-2.5 sm:h-3 rounded-full transition-all duration-500 ease-out shadow-md"
                   style={{ 
                     width: `${Math.max(progressPercent, 5)}%`,
                     minWidth: progressPercent > 0 ? '8px' : '0px'
@@ -335,13 +335,13 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             </div>
           </div>
         ) : (
-          <label className="cursor-pointer block">
-            <Upload className="mx-auto h-12 w-12 text-gray-400" />
-            <span className="mt-4 block text-base font-medium text-gray-900">
+          <label className="cursor-pointer block touch-manipulation">
+            <Upload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-gray-400" />
+            <span className="mt-3 sm:mt-4 block text-sm sm:text-base font-medium text-gray-900 px-2">
               Upload 1-5 clothing items at once
             </span>
-            <span className="mt-2 block text-sm text-gray-500">
-              Drag and drop images here or click to select. Items will be analyzed and categorized automatically.
+            <span className="mt-2 block text-xs sm:text-sm text-gray-500 px-2">
+              Drag and drop images here or tap to select. Items will be analyzed and categorized automatically.
             </span>
             <input
               type="file"
@@ -356,7 +356,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
 
       {/* Display analyzed items horizontally */}
       {analyzedItems.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 sm:gap-3 md:gap-4">
           {analyzedItems.map((item, idx) => {
             const file = uploadedFiles[idx];
             const isSuccess = item.status === 'success' && item.analysis;
@@ -367,7 +367,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
               <div
                 key={idx}
                 className={`
-                  border-2 rounded-lg p-3 transition-all
+                  border-2 rounded-lg p-2 sm:p-3 transition-all
                   ${isSuccess 
                     ? 'border-green-500 bg-green-50' 
                     : isError 
@@ -379,7 +379,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                 `}
               >
                 {(file || item.file_url) && (
-                  <div className="space-y-2">
+                  <div className="space-y-1.5 sm:space-y-2">
                     <img
                       src={
                         item.file_url 
@@ -389,7 +389,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                           : (file ? URL.createObjectURL(file) : '')
                       }
                       alt={item.saved_filename || item.analysis?.suggested_filename || item.original_filename}
-                      className="w-full h-32 object-cover rounded"
+                      className="w-full h-24 sm:h-32 object-cover rounded"
                       onError={(e) => {
                         // Fallback to original file if saved URL fails
                         if (item.file_url && file) {
@@ -398,31 +398,31 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                       }}
                     />
                     <div className="text-xs">
-                      <p className="font-medium text-gray-900 truncate mb-1" title={item.saved_filename || item.analysis?.suggested_filename || item.original_filename}>
+                      <p className="font-medium text-gray-900 truncate mb-0.5 sm:mb-1 text-[10px] sm:text-xs" title={item.saved_filename || item.analysis?.suggested_filename || item.original_filename}>
                         {item.saved_filename || item.analysis?.suggested_filename || item.original_filename}
                       </p>
                       {isAnalyzing && (
-                        <p className="text-blue-600 mt-1 font-medium">Analyzing...</p>
+                        <p className="text-blue-600 mt-0.5 sm:mt-1 font-medium text-[10px] sm:text-xs">Analyzing...</p>
                       )}
                       {isSuccess && (
-                        <div className="mt-1 space-y-0.5">
-                          <p className="text-green-700 font-bold text-xs uppercase">
+                        <div className="mt-0.5 sm:mt-1 space-y-0.5">
+                          <p className="text-green-700 font-bold text-[10px] sm:text-xs uppercase">
                             ✓ {item.analysis?.category?.replace(/_/g, ' ') || 'Analyzed'}
                           </p>
                           {item.analysis?.item_type && (
-                            <p className="text-gray-600 text-[10px] font-medium">
+                            <p className="text-gray-600 text-[9px] sm:text-[10px] font-medium">
                               {item.analysis.item_type}
                             </p>
                           )}
                           {item.saved_filename && (
-                            <p className="text-gray-400 text-[9px] mt-0.5 truncate" title="Saved filename">
+                            <p className="text-gray-400 text-[8px] sm:text-[9px] mt-0.5 truncate" title="Saved filename">
                               Saved
                             </p>
                           )}
                         </div>
                       )}
                       {isError && (
-                        <p className="text-red-600 mt-1 font-medium">✗ Failed</p>
+                        <p className="text-red-600 mt-0.5 sm:mt-1 font-medium text-[10px] sm:text-xs">✗ Failed</p>
                       )}
                     </div>
                   </div>

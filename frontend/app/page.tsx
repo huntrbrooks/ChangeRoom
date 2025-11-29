@@ -206,13 +206,13 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-white text-black font-sans">
       {/* Header */}
-      <header className="border-b border-gray-100 sticky top-0 bg-white/80 backdrop-blur-md z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+      <header className="border-b border-gray-100 sticky top-0 bg-white/95 backdrop-blur-md z-50">
+        <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-black text-white flex items-center justify-center rounded-full">
-              <Shirt size={20} />
+            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-black text-white flex items-center justify-center rounded-full">
+              <Shirt size={18} className="sm:w-5 sm:h-5" />
             </div>
-            <h1 className="text-xl font-bold tracking-tight">Change Room</h1>
+            <h1 className="text-lg sm:text-xl font-bold tracking-tight">Change Room</h1>
           </div>
           <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-gray-600">
             <a href="#" className="hover:text-black">How it Works</a>
@@ -222,22 +222,22 @@ export default function Home() {
         </div>
       </header>
 
-      <div className="container mx-auto px-4 py-8">
+      <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 md:py-8">
         
         {error && (
-          <div className="bg-red-50 text-red-600 p-4 rounded-lg mb-6 border border-red-100">
+          <div className="bg-red-50 text-red-600 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 border border-red-100 text-sm sm:text-base">
             {error}
           </div>
         )}
 
-        <div className="grid lg:grid-cols-12 gap-8">
+        <div className="grid lg:grid-cols-12 gap-4 sm:gap-6 lg:gap-8">
           
           {/* Left Column: Inputs */}
-          <div className="lg:col-span-7 space-y-8">
+          <div className="lg:col-span-7 space-y-4 sm:space-y-6 md:space-y-8">
             
             <section>
-              <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <span className="bg-black text-white w-6 h-6 flex items-center justify-center rounded-full text-xs">1</span>
+              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2">
+                <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs">1</span>
                 Upload Yourself
               </h2>
               <UploadZone 
@@ -248,8 +248,8 @@ export default function Home() {
             </section>
 
             <section>
-              <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <span className="bg-black text-white w-6 h-6 flex items-center justify-center rounded-full text-xs">2</span>
+              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2">
+                <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs">2</span>
                 Choose Wardrobe
               </h2>
               <BulkUploadZone onFilesUploaded={handleBulkUpload} />
@@ -259,31 +259,32 @@ export default function Home() {
               onClick={handleGenerate}
               disabled={isGenerating}
               className={`
-                w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-3 transition-all
+                w-full py-3.5 sm:py-4 rounded-xl font-bold text-base sm:text-lg flex items-center justify-center gap-2 sm:gap-3 transition-all
+                min-h-[48px] touch-manipulation
                 ${isGenerating 
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                  : 'bg-black text-white hover:bg-gray-900 hover:shadow-lg active:scale-[0.99] shadow-blue-500/20'
+                  : 'bg-black text-white hover:bg-gray-900 active:bg-gray-800 hover:shadow-lg active:scale-[0.98] shadow-blue-500/20'
                 }
-                shadow-[0_0_15px_rgba(0,0,255,0.15)] // Neon hint
+                shadow-[0_0_15px_rgba(0,0,255,0.15)]
               `}
             >
               {isGenerating ? (
                 <>Thinking...</>
               ) : (
                 <>
-                  <Sparkles size={20} className="text-yellow-300" />
-                  Try On & Shop Look
+                  <Sparkles size={18} className="sm:w-5 sm:h-5 text-yellow-300" />
+                  <span>Try On & Shop Look</span>
                 </>
               )}
             </button>
           </div>
 
           {/* Right Column: Results */}
-          <div className="lg:col-span-5 space-y-8">
+          <div className="lg:col-span-5 space-y-4 sm:space-y-6 md:space-y-8">
             
             <section>
-              <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <span className="bg-black text-white w-6 h-6 flex items-center justify-center rounded-full text-xs">3</span>
+              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2">
+                <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs">3</span>
                 Virtual Mirror
               </h2>
               <VirtualMirror imageUrl={generatedImage} isLoading={isGenerating} />
@@ -291,11 +292,11 @@ export default function Home() {
 
             {products.length > 0 && (
               <section>
-                <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
-                  <Search size={20} />
+                <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2">
+                  <Search size={18} className="sm:w-5 sm:h-5" />
                   Shop the Look
                 </h2>
-                <div className="space-y-4">
+                <div className="space-y-3 sm:space-y-4">
                   {products.map((product, idx) => (
                     <ProductCard key={idx} product={product} />
                   ))}
