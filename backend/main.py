@@ -12,6 +12,14 @@ import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
 
+# Ensure UTF-8 encoding for all string operations
+import locale
+import io
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+if sys.stderr.encoding != 'utf-8':
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 # Add current directory to path to find services module
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -77,9 +85,20 @@ async def try_on(
         if garment_metadata:
             try:
                 import json
-                metadata = json.loads(garment_metadata)
+                # Handle both string and dict inputs, ensure UTF-8 encoding
+                if isinstance(garment_metadata, str):
+                    metadata = json.loads(garment_metadata)
+                else:
+                    metadata = garment_metadata
             except Exception as e:
                 logger.warning(f"Could not parse garment_metadata: {e}")
+                # Try to clean smart quotes if present
+                try:
+                    if isinstance(garment_metadata, str):
+                        cleaned = garment_metadata.replace('\u201c', '"').replace('\u201d', '"').replace('\u2018', "'").replace('\u2019', "'")
+                        metadata = json.loads(cleaned)
+                except:
+                    logger.error(f"Failed to clean and parse metadata: {e}")
         
         # Handle clothing image - use saved file if URL provided, otherwise use uploaded file
         clothing_file_handle = None
@@ -386,6 +405,11 @@ async def shop_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
+    # Set UTF-8 encoding environment variables
+    os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+    os.environ.setdefault('LANG', 'en_US.UTF-8')
+    os.environ.setdefault('LC_ALL', 'en_US.UTF-8')
+    
     uvicorn.run(
         "main:app", 
         host="0.0.0.0", 

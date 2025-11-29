@@ -185,7 +185,8 @@ Output:
             if garment_metadata:
                 # Format metadata as JSON string for the prompt
                 import json
-                metadata_str = json.dumps(garment_metadata, indent=2)
+                # Use ensure_ascii=False to handle Unicode characters properly
+                metadata_str = json.dumps(garment_metadata, indent=2, ensure_ascii=False)
                 user_prompt += f"\n\nMETADATA:\n{metadata_str}"
                 logger.info(f"Using metadata: {list(garment_metadata.keys())}")
             

@@ -603,7 +603,8 @@ def embed_metadata_in_image(image_bytes: bytes, metadata: Dict[str, Any]) -> byt
         image = Image.open(io.BytesIO(image_bytes))
         
         # Convert metadata to JSON string for embedding
-        metadata_json = json.dumps(metadata, indent=2)
+        # Use ensure_ascii=False to handle Unicode characters properly
+        metadata_json = json.dumps(metadata, indent=2, ensure_ascii=False)
         
         # Create a new image with embedded metadata
         output = io.BytesIO()
