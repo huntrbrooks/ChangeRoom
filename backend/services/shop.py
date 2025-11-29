@@ -1,5 +1,8 @@
 import requests
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 def search_products(query, budget=None):
     """
@@ -7,13 +10,14 @@ def search_products(query, budget=None):
     """
     api_key = os.getenv("SERPAPI_API_KEY")
     if not api_key:
-        print("Warning: SERPAPI_API_KEY not set.")
+        logger.warning("SERPAPI_API_KEY not set. Returning mock data.")
         return [
             {
                 "title": f"Mock Result for {query}",
                 "price": "$45.00",
                 "link": "#",
-                "thumbnail": "https://via.placeholder.com/150"
+                "thumbnail": "https://via.placeholder.com/150",
+                "source": "Mock"
             }
         ]
 
@@ -25,33 +29,49 @@ def search_products(query, budget=None):
     }
     
     if budget:
-        # simple filter string, though serpapi handles it differently usually
+        # Simple filter string, though serpapi handles it differently usually
         # Better to filter results post-fetch or use specific syntax if supported
-        pass
+        logger.info(f"Budget filter requested: ${budget}")
 
     try:
-        response = requests.get("https://serpapi.com/search", params=params)
+        logger.info(f"Searching products with query: {query}")
+        response = requests.get("https://serpapi.com/search", params=params, timeout=30)
+        response.raise_for_status()  # Raise exception for bad status codes
         results = response.json()
         
         shopping_results = results.get("shopping_results", [])
         
+        if not shopping_results:
+            logger.warning(f"No shopping results found for query: {query}")
+            return []
+        
         # Parse to a cleaner format
         parsed_results = []
         for item in shopping_results:
-            price_raw = item.get("price", "$0")
-            # Basic budget filtering (very rough)
-            parsed_results.append({
-                "title": item.get("title"),
-                "price": item.get("price"),
-                "link": item.get("link"),
-                "thumbnail": item.get("thumbnail"),
-                "source": item.get("source")
-            })
+            try:
+                parsed_item = {
+                    "title": item.get("title", "Unknown"),
+                    "price": item.get("price", "N/A"),
+                    "link": item.get("link", "#"),
+                    "thumbnail": item.get("thumbnail", ""),
+                    "source": item.get("source", "Unknown")
+                }
+                parsed_results.append(parsed_item)
+            except Exception as item_error:
+                logger.warning(f"Error parsing shopping result item: {item_error}")
+                continue
             
+        logger.info(f"Successfully parsed {len(parsed_results)} products")
         return parsed_results
 
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request error searching products: {e}", exc_info=True)
+        return []
+    except ValueError as e:
+        logger.error(f"JSON parsing error in product search: {e}", exc_info=True)
+        return []
     except Exception as e:
-        print(f"Error searching products: {e}")
+        logger.error(f"Unexpected error searching products: {e}", exc_info=True)
         return []
 
 
