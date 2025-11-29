@@ -67,7 +67,21 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
     def run_analysis():
         client = OpenAI(api_key=api_key)
         
-        # Encode image to base64 for OpenAI API
+        # Detect image format and encode to base64 for OpenAI API
+        try:
+            image = Image.open(io.BytesIO(image_bytes))
+            # Determine MIME type based on image format
+            format_map = {
+                'JPEG': 'jpeg',
+                'PNG': 'png',
+                'WEBP': 'webp',
+                'GIF': 'gif'
+            }
+            mime_type = format_map.get(image.format, 'jpeg')
+        except Exception:
+            # Default to jpeg if format detection fails
+            mime_type = 'jpeg'
+        
         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
         
         prompt = """
@@ -102,7 +116,7 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": f"data:image/jpeg;base64,{image_base64}"
+                                "url": f"data:image/{mime_type};base64,{image_base64}"
                             }
                         }
                     ]
