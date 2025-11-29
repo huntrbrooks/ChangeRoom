@@ -12,9 +12,18 @@ try:
     from google import genai
     from google.genai import types
     GEMINI_IMAGE_SDK_AVAILABLE = True
+    NEW_SDK_AVAILABLE = True
 except ImportError:
     GEMINI_IMAGE_SDK_AVAILABLE = False
+    NEW_SDK_AVAILABLE = False
     logger.warning("google-genai package not installed. Install with: pip install google-genai")
+
+# Also try the older SDK as fallback
+try:
+    import google.generativeai as genai_old
+    OLD_SDK_AVAILABLE = True
+except ImportError:
+    OLD_SDK_AVAILABLE = False
 
 async def generate_try_on(user_image_file, garment_image_files, category="upper_body", garment_metadata=None):
     """
@@ -69,8 +78,36 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
             garment_image_bytes_list.append(garment_bytes)
         
         def run_gemini_image_generation():
-            # Initialize the new Google GenAI client
-            client = genai.Client(api_key=api_key)
+            # The new google-genai SDK requires API key to be set as environment variable
+            # Set it temporarily for this request
+            original_key = os.environ.get('GOOGLE_API_KEY')
+            os.environ['GOOGLE_API_KEY'] = api_key
+            
+            try:
+                # Create client - it will use GOOGLE_API_KEY from environment
+                # The new SDK should automatically pick up the environment variable
+                client = genai.Client()
+                logger.info("Initialized Google GenAI client with API key from environment")
+                use_new_sdk = True
+            except Exception as e:
+                logger.error(f"Failed to initialize Google GenAI client: {e}")
+                # Try alternative: pass API key directly if supported
+                try:
+                    # Some versions might support direct API key parameter
+                    client = genai.Client(api_key=api_key)
+                    logger.info("Initialized Google GenAI client with direct API key")
+                    use_new_sdk = True
+                except Exception as e2:
+                    logger.error(f"Direct API key also failed: {e2}")
+                    raise ValueError(f"Failed to authenticate with Google GenAI SDK: {e2}. Please check your GOOGLE_API_KEY.")
+            finally:
+                # Restore original key if it existed
+                if original_key:
+                    os.environ['GOOGLE_API_KEY'] = original_key
+                elif 'GOOGLE_API_KEY' in os.environ:
+                    # Only delete if we set it (check if it was the same)
+                    if os.environ.get('GOOGLE_API_KEY') == api_key:
+                        del os.environ['GOOGLE_API_KEY']
             
             # Load user image
             user_image = Image.open(io.BytesIO(user_image_bytes))
@@ -193,10 +230,11 @@ Output:
             logger.info(f"Generating image with {len(garment_images)} clothing item(s)...")
             
             # Model options for image generation (try in order of preference)
+            # Note: These model names may need to be updated based on Google's current offerings
             model_options = [
+                "gemini-2.0-flash-exp",        # Try this first as it's more stable
                 "gemini-3-pro-image-preview",  # Nano Banana Pro (Gemini 3 Pro Image)
                 "gemini-3-pro-preview",        # Alternative model name
-                "gemini-2.0-flash-exp",        # Fallback option
             ]
             
             last_error = None
@@ -278,6 +316,17 @@ Output:
                     
                 except Exception as e:
                     last_error = e
+                    error_msg = str(e)
+                    # Check if it's an authentication error
+                    if "401" in error_msg or "UNAUTHENTICATED" in error_msg or "CREDENTIALS" in error_msg:
+                        logger.error(f"Authentication error with model {model_name}: {e}")
+                        logger.error("This might indicate:")
+                        logger.error("1. API key is invalid or expired")
+                        logger.error("2. API key doesn't have permissions for this API")
+                        logger.error("3. The new google-genai SDK requires OAuth2 instead of API keys")
+                        logger.error("4. The API endpoint doesn't support API key authentication")
+                        # Don't try other models if it's an auth error - they'll all fail
+                        raise ValueError(f"Authentication failed: {e}. Please check your GOOGLE_API_KEY configuration.")
                     logger.warning(f"Model {model_name} failed: {e}. Trying next model...")
                     continue
             
