@@ -195,6 +195,87 @@ async def analyze_clothing_items(
         logger.error(f"Error in analyze-clothing endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/analyze-and-save-clothing")
+async def analyze_and_save_clothing_items(
+    clothing_images: List[UploadFile] = File(...),
+    save_files: bool = Form(True),
+    output_dir: str = Form("uploads")
+):
+    """
+    Analyzes clothing items, embeds metadata, and saves them with proper naming.
+    Returns analysis results with file paths.
+    """
+    try:
+        logger.info(f"Analyze and save request received for {len(clothing_images)} items")
+        
+        if len(clothing_images) > 5:
+            raise HTTPException(status_code=400, detail="Maximum 5 clothing items allowed")
+        
+        results = []
+        for idx, clothing_image in enumerate(clothing_images):
+            try:
+                contents = await clothing_image.read()
+                original_filename = clothing_image.filename or f"item_{idx + 1}"
+                
+                logger.info(f"Processing item {idx + 1}: {original_filename}")
+                result = await analyze_clothing.analyze_and_save_clothing_item(
+                    contents,
+                    original_filename,
+                    output_dir,
+                    save_files
+                )
+                
+                results.append({
+                    "index": idx,
+                    "original_filename": original_filename,
+                    "analysis": result,
+                    "status": "success"
+                })
+                
+            except Exception as e:
+                logger.error(f"Error processing item {idx + 1}: {e}", exc_info=True)
+                results.append({
+                    "index": idx,
+                    "original_filename": clothing_image.filename or f"item_{idx + 1}",
+                    "error": str(e),
+                    "status": "error"
+                })
+        
+        return {"items": results, "total": len(results)}
+        
+    except Exception as e:
+        logger.error(f"Error in analyze-and-save-clothing endpoint: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/read-image-metadata")
+async def read_image_metadata(image_path: str):
+    """
+    Reads embedded metadata from a saved image file.
+    
+    Args:
+        image_path: Path to the image file (relative to uploads directory or absolute)
+    """
+    try:
+        # If relative path, assume it's in uploads directory
+        if not os.path.isabs(image_path):
+            image_path = os.path.join("uploads", image_path)
+        
+        if not os.path.exists(image_path):
+            raise HTTPException(status_code=404, detail="Image file not found")
+        
+        metadata = analyze_clothing.read_metadata_from_image(image_path)
+        
+        if metadata is None:
+            return {"message": "No metadata found in image", "image_path": image_path}
+        
+        return {"metadata": metadata, "image_path": image_path}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reading image metadata: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/shop")
 async def shop_endpoint(
     query: str = Form(...),
