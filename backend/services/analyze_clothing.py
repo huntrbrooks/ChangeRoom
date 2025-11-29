@@ -13,6 +13,98 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+
+def _extract_specific_item_type(description: str, category: str) -> str:
+    """
+    Extracts specific item type from description for better filename generation.
+    Returns user-friendly names like 'boots', 'shirt', 'hat', 'pants', 'shorts', 'dress', 'skirt'.
+    """
+    description_lower = description.lower()
+    
+    # Map to specific item types based on category and description
+    if category == "shoes":
+        if any(word in description_lower for word in ["boot", "combat boot", "hiking boot", "work boot"]):
+            return "boots"
+        elif any(word in description_lower for word in ["sneaker", "trainer", "athletic shoe", "running shoe"]):
+            return "sneakers"
+        elif any(word in description_lower for word in ["sandal", "flip-flop"]):
+            return "sandals"
+        elif any(word in description_lower for word in ["heel", "pump", "stiletto"]):
+            return "heels"
+        elif any(word in description_lower for word in ["flat", "ballet flat"]):
+            return "flats"
+        elif any(word in description_lower for word in ["loafer", "oxford"]):
+            return "loafers"
+        else:
+            return "shoes"
+    
+    elif category == "lower_body":
+        if any(word in description_lower for word in ["short", "bermuda", "cargo short"]):
+            return "shorts"
+        elif any(word in description_lower for word in ["skirt", "mini skirt", "pencil skirt", "a-line skirt"]):
+            return "skirt"
+        elif any(word in description_lower for word in ["jean", "denim"]):
+            return "jeans"
+        elif any(word in description_lower for word in ["pant", "trouser", "slack"]):
+            return "pants"
+        elif any(word in description_lower for word in ["legging", "yoga pant"]):
+            return "leggings"
+        else:
+            return "pants"
+    
+    elif category == "upper_body":
+        if any(word in description_lower for word in ["t-shirt", "tee", "tshirt"]):
+            return "tshirt"
+        elif any(word in description_lower for word in ["shirt", "button-down", "dress shirt"]):
+            return "shirt"
+        elif any(word in description_lower for word in ["blouse"]):
+            return "blouse"
+        elif any(word in description_lower for word in ["sweater", "pullover"]):
+            return "sweater"
+        elif any(word in description_lower for word in ["tank top", "camisole"]):
+            return "tank"
+        elif any(word in description_lower for word in ["polo"]):
+            return "polo"
+        else:
+            return "shirt"
+    
+    elif category == "accessories":
+        if any(word in description_lower for word in ["hat", "cap", "baseball cap", "beanie"]):
+            return "hat"
+        elif any(word in description_lower for word in ["bag", "purse", "backpack", "handbag"]):
+            return "bag"
+        elif any(word in description_lower for word in ["belt"]):
+            return "belt"
+        elif any(word in description_lower for word in ["scarf"]):
+            return "scarf"
+        else:
+            return "accessory"
+    
+    elif category == "dresses":
+        if any(word in description_lower for word in ["dress", "gown", "frock"]):
+            return "dress"
+        elif any(word in description_lower for word in ["jumpsuit"]):
+            return "jumpsuit"
+        elif any(word in description_lower for word in ["romper"]):
+            return "romper"
+        else:
+            return "dress"
+    
+    elif category == "outerwear":
+        if any(word in description_lower for word in ["jacket", "bomber", "denim jacket"]):
+            return "jacket"
+        elif any(word in description_lower for word in ["coat", "trench coat", "overcoat"]):
+            return "coat"
+        elif any(word in description_lower for word in ["blazer"]):
+            return "blazer"
+        elif any(word in description_lower for word in ["hoodie", "hoody"]):
+            return "hoodie"
+        else:
+            return "jacket"
+    
+    return "unknown"
+
+
 # Try to import piexif for better EXIF support
 try:
     import piexif
@@ -97,18 +189,70 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
         
         prompt = """
-        Analyze this clothing item image thoroughly and extract comprehensive metadata. Pay special attention to the item type and all visual characteristics.
+        You are a clothing classification expert. Analyze this image and classify the clothing item with EXTREME ACCURACY.
         
-        CATEGORY CLASSIFICATION RULES (CRITICAL - be accurate):
-        - "shoes": Any footwear (boots, sneakers, sandals, heels, flats, etc.) - even if only part of the shoe is visible
-        - "lower_body": Pants, jeans, shorts, skirts, leggings, trousers - anything worn on legs/waist down
-        - "upper_body": Shirts, t-shirts, blouses, tops, sweaters, hoodies - anything worn on torso/upper body
-        - "outerwear": Jackets, coats, blazers, cardigans worn over other clothing
-        - "dresses": Full-body garments (dresses, jumpsuits, rompers)
-        - "accessories": Hats, caps, bags, belts, jewelry, scarves, gloves
+        CRITICAL CLASSIFICATION RULES - FOLLOW THESE EXACTLY:
         
-        IMPORTANT: Look carefully at what the item actually is. If you see boots, shoes, or any footwear, use "shoes". 
-        If you see pants, jeans, or legwear, use "lower_body". Do NOT default to "upper_body" unless it's actually a top/shirt.
+        1. "shoes" - Use ONLY for footwear:
+           - Boots (hiking boots, work boots, combat boots, ankle boots, etc.)
+           - Sneakers, athletic shoes, running shoes, trainers
+           - Sandals, flip-flops, slides
+           - Heels, pumps, flats, loafers, oxfords
+           - ANY item that goes on feet, even if only partially visible
+           - If you see laces, soles, heels, or any shoe structure → "shoes"
+        
+        2. "lower_body" - Use for leg/waist garments:
+           - Pants, trousers, jeans, slacks
+           - Shorts (any length)
+           - Skirts (mini, midi, maxi, pencil, A-line, etc.)
+           - Leggings, tights, yoga pants
+           - Sweatpants, joggers
+           - ANY item worn from waist down
+           - If you see waistband, leg openings, or pant structure → "lower_body"
+        
+        3. "accessories" - Use for non-garment items:
+           - Hats, caps, beanies, berets
+           - Bags, purses, backpacks
+           - Belts, watches, jewelry
+           - Scarves, gloves, mittens
+           - Sunglasses, ties, bow ties
+           - If it's worn but not a garment → "accessories"
+        
+        4. "upper_body" - Use ONLY for torso garments:
+           - T-shirts, shirts, blouses, tops
+           - Sweaters, pullovers, cardigans (if not outerwear)
+           - Tank tops, camisoles
+           - Hoodies (if not outerwear)
+           - Polo shirts, button-down shirts
+           - ONLY items worn on torso/chest area
+        
+        5. "outerwear" - Use for garments worn OVER other clothing:
+           - Jackets (denim, leather, bomber, etc.)
+           - Coats (winter coats, trench coats, etc.)
+           - Blazers, suit jackets
+           - Hoodies that are clearly outerwear
+           - Vests, gilets
+           - Windbreakers, rain jackets
+        
+        6. "dresses" - Use for full-body garments:
+           - Dresses (any style)
+           - Jumpsuits, rompers
+           - Overalls (if full-body)
+        
+        CLASSIFICATION PROCESS:
+        1. FIRST, identify what the item IS (boots? pants? hat? shirt?)
+        2. THEN, match it to the correct category above
+        3. DO NOT default to "upper_body" - it's the most common mistake
+        4. If you see boots/shoes → "shoes" (even if other items are visible)
+        5. If you see pants/trousers → "lower_body" (even if other items are visible)
+        6. If you see a hat/cap → "accessories" (not upper_body!)
+        
+        EXAMPLES:
+        - Brown leather boots with laces → "shoes" (NOT upper_body)
+        - Black baseball cap → "accessories" (NOT upper_body)
+        - Blue cargo pants with pockets → "lower_body" (NOT upper_body)
+        - Red t-shirt with graphic print → "upper_body" (CORRECT)
+        - Zip-up hoodie → "outerwear" or "upper_body" (depends on style)
         
         Provide comprehensive information in JSON format:
         {
@@ -179,31 +323,105 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
                 raise ValueError("Could not parse JSON from response")
         
         # Generate suggested filename based on category and metadata
-        category = analysis.get("category", "unknown")
+        category = analysis.get("category", "unknown").strip().lower()
         
-        # Validate and correct category if needed (fallback logic)
+        # Get description for validation
+        description_lower = analysis.get("detailed_description", "").lower()
+        description_lower += " " + analysis.get("material", "").lower()
+        description_lower += " " + analysis.get("style", "").lower()
+        
+        # Comprehensive category validation and correction
         valid_categories = ["upper_body", "lower_body", "dresses", "outerwear", "accessories", "shoes"]
+        original_category = category
+        corrected = False
+        
+        # Define comprehensive keyword sets for each category
+        shoes_keywords = [
+            "boot", "shoe", "sneaker", "heel", "sandal", "footwear", "lace-up", "oxford", 
+            "loafer", "pump", "flat", "slipper", "moccasin", "trainer", "athletic shoe",
+            "sole", "tread", "outsole", "insole", "toe cap", "heel counter", "eyelets"
+        ]
+        
+        lower_body_keywords = [
+            "pant", "jean", "trouser", "short", "skirt", "legging", "sweatpant", "jogger",
+            "cargo", "chino", "khaki", "waistband", "crotch", "inseam", "outseam",
+            "pant leg", "trouser leg", "hem", "cuff", "zipper fly", "button fly"
+        ]
+        
+        accessories_keywords = [
+            "hat", "cap", "beanie", "beret", "baseball cap", "bag", "purse", "backpack",
+            "belt", "scarf", "glove", "mitten", "watch", "jewelry", "necklace", "bracelet",
+            "sunglass", "tie", "bow tie", "headband", "bandana"
+        ]
+        
+        outerwear_keywords = [
+            "jacket", "coat", "blazer", "cardigan", "windbreaker", "rain jacket",
+            "bomber", "parka", "trench coat", "overcoat", "vest", "gilet"
+        ]
+        
+        dresses_keywords = [
+            "dress", "jumpsuit", "romper", "overall", "gown", "frock"
+        ]
+        
+        upper_body_keywords = [
+            "shirt", "t-shirt", "blouse", "top", "sweater", "pullover", "tank top",
+            "camisole", "polo", "button-down", "henley", "turtleneck"
+        ]
+        
+        # First check: if category is invalid, try to infer
         if category not in valid_categories:
-            # Try to infer from description if category is invalid
-            description_lower = analysis.get("detailed_description", "").lower()
-            if any(word in description_lower for word in ["boot", "shoe", "sneaker", "heel", "sandal", "footwear"]):
+            logger.warning(f"Invalid category '{category}' for {original_filename}, attempting correction...")
+            corrected = True
+        
+        # Second check: Always validate category against description (even if category seems valid)
+        # This catches cases where model returns wrong category
+        if category == "upper_body":
+            # Check if it's actually shoes, pants, or accessories
+            if any(keyword in description_lower for keyword in shoes_keywords):
                 category = "shoes"
-                logger.info(f"Corrected category to 'shoes' based on description for {original_filename}")
-            elif any(word in description_lower for word in ["pant", "jean", "trouser", "short", "skirt", "legging"]):
+                corrected = True
+                logger.info(f"Corrected '{original_category}' → 'shoes' for {original_filename} (detected footwear)")
+            elif any(keyword in description_lower for keyword in lower_body_keywords):
                 category = "lower_body"
-                logger.info(f"Corrected category to 'lower_body' based on description for {original_filename}")
-            elif any(word in description_lower for word in ["dress", "jumpsuit", "romper"]):
-                category = "dresses"
-                logger.info(f"Corrected category to 'dresses' based on description for {original_filename}")
-            elif any(word in description_lower for word in ["jacket", "coat", "blazer", "cardigan"]):
-                category = "outerwear"
-                logger.info(f"Corrected category to 'outerwear' based on description for {original_filename}")
-            elif any(word in description_lower for word in ["hat", "cap", "bag", "belt", "scarf", "glove"]):
+                corrected = True
+                logger.info(f"Corrected '{original_category}' → 'lower_body' for {original_filename} (detected legwear)")
+            elif any(keyword in description_lower for keyword in accessories_keywords):
                 category = "accessories"
-                logger.info(f"Corrected category to 'accessories' based on description for {original_filename}")
+                corrected = True
+                logger.info(f"Corrected '{original_category}' → 'accessories' for {original_filename} (detected accessory)")
+        
+        # If category is still invalid or needs correction, use keyword matching
+        if category not in valid_categories or corrected:
+            if any(keyword in description_lower for keyword in shoes_keywords):
+                category = "shoes"
+                logger.info(f"Set category to 'shoes' based on description for {original_filename}")
+            elif any(keyword in description_lower for keyword in lower_body_keywords):
+                category = "lower_body"
+                logger.info(f"Set category to 'lower_body' based on description for {original_filename}")
+            elif any(keyword in description_lower for keyword in accessories_keywords):
+                category = "accessories"
+                logger.info(f"Set category to 'accessories' based on description for {original_filename}")
+            elif any(keyword in description_lower for keyword in outerwear_keywords):
+                category = "outerwear"
+                logger.info(f"Set category to 'outerwear' based on description for {original_filename}")
+            elif any(keyword in description_lower for keyword in dresses_keywords):
+                category = "dresses"
+                logger.info(f"Set category to 'dresses' based on description for {original_filename}")
+            elif any(keyword in description_lower for keyword in upper_body_keywords):
+                category = "upper_body"
+                logger.info(f"Set category to 'upper_body' based on description for {original_filename}")
             else:
-                category = "upper_body"  # Default fallback
-                logger.warning(f"Using default category 'upper_body' for {original_filename}")
+                # Last resort: default to upper_body but log warning
+                category = "upper_body"
+                logger.warning(f"Could not determine category for {original_filename}, defaulting to 'upper_body'. Description: {description_lower[:100]}")
+        
+        # Final validation
+        if category not in valid_categories:
+            category = "unknown"
+            logger.error(f"Failed to determine valid category for {original_filename}")
+        
+        # Extract specific item type from description for better filename
+        item_type = _extract_specific_item_type(description_lower, category)
         
         color = analysis.get("color", "unknown").lower().replace(" ", "_").replace("/", "_")
         style = analysis.get("style", "unknown").lower().replace(" ", "_").replace("/", "_")
@@ -211,14 +429,21 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
         # Create a clean filename (remove special characters)
         color = re.sub(r'[^a-z0-9_]', '', color)
         style = re.sub(r'[^a-z0-9_]', '', style)
+        item_type = re.sub(r'[^a-z0-9_]', '', item_type)
         
         # Use a simple hash for uniqueness
         filename_hash = hashlib.md5(original_filename.encode()).hexdigest()[:8]
-        suggested_filename = f"{category}_{color}_{style}_{filename_hash}.jpg"
+        
+        # Build filename with specific item type if available
+        if item_type and item_type != "unknown":
+            suggested_filename = f"{category}_{item_type}_{color}_{filename_hash}.jpg"
+        else:
+            suggested_filename = f"{category}_{color}_{style}_{filename_hash}.jpg"
         
         # Create comprehensive metadata for Gemini 3 Pro and embedding
         metadata = {
             "category": category,
+            "item_type": item_type,  # Specific type like "boots", "shirt", "hat", "pants", etc.
             "color": analysis.get("color", "unknown"),
             "style": analysis.get("style", "unknown"),
             "material": analysis.get("material", "unknown"),
@@ -234,11 +459,13 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
             "texture": analysis.get("texture", "unknown"),
             "details": analysis.get("details", "none"),
             "condition": analysis.get("condition", "unknown"),
-            "original_filename": original_filename
+            "original_filename": original_filename,
+            "classification_corrected": corrected  # Flag indicating if category was corrected
         }
         
         return {
             "category": category,
+            "item_type": item_type,  # User-friendly specific type
             "detailed_description": analysis.get("detailed_description", "clothing item"),
             "color": analysis.get("color", "unknown"),
             "style": analysis.get("style", "unknown"),
@@ -246,7 +473,8 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
             "fit": analysis.get("fit", "regular"),
             "metadata": metadata,
             "suggested_filename": suggested_filename,
-            "full_analysis": analysis
+            "full_analysis": analysis,
+            "classification_corrected": corrected
         }
 
     except Exception as e:
