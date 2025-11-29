@@ -18,25 +18,25 @@ except ImportError:
 
 async def generate_try_on(user_image_file, garment_image_file, category="upper_body"):
     """
-    Generates image using Gemini 3 Pro (Nano Banana Pro) image generation.
-    Note: This is text-to-image generation, not true virtual try-on.
+    Uses Gemini 3 Pro (Nano Banana Pro) image editing to combine person and clothing images.
+    Edits the person image to add/change the clothing item.
     
     Args:
-        user_image_file: File-like object of the user (used for context).
-        garment_image_file: File-like object of the garment (used for context).
+        user_image_file: File-like object of the person image (base image to edit).
+        garment_image_file: File-like object of the clothing image (reference for editing).
         category: Category of the garment (upper_body, lower_body, dresses).
         
     Returns:
-        str: Base64 data URL of the generated image.
+        str: Base64 data URL of the edited image.
     """
-    # Always use Gemini 3 Pro for image generation
+    # Use Gemini 3 Pro for image editing
     return await _generate_with_gemini(user_image_file, garment_image_file, category)
 
 
 async def _generate_with_gemini(user_image_file, garment_image_file, category="upper_body"):
     """
-    Uses Gemini 3 Pro (Nano Banana Pro) for image generation.
-    Analyzes the uploaded images to create a better prompt for generation.
+    Uses Gemini 3 Pro (Nano Banana Pro) for image editing.
+    Takes the person image and edits it to add/change the clothing item.
     
     Uses the new google-genai SDK with proper API configuration.
     """
@@ -58,45 +58,36 @@ async def _generate_with_gemini(user_image_file, garment_image_file, category="u
         user_image_bytes = user_image_file.read() if hasattr(user_image_file, 'read') else user_image_file
         garment_image_bytes = garment_image_file.read() if hasattr(garment_image_file, 'read') else garment_image_file
         
-        def run_gemini_image_gen():
+        def run_gemini_image_edit():
             # Initialize the new Google GenAI client
             client = genai.Client(api_key=api_key)
             
-            # Use Gemini to analyze the images for better prompt generation
-            analysis_model = genai.GenerativeModel('gemini-1.5-flash')
-            
-            # Analyze clothing image
+            # Load images
+            user_image = Image.open(io.BytesIO(user_image_bytes))
             garment_image = Image.open(io.BytesIO(garment_image_bytes))
-            garment_prompt = "Describe this clothing item in detail. Include: color, style, type (shirt, jacket, dress, etc.), material, and any distinctive features. Be specific."
+            
+            # Use Gemini to analyze the clothing image for better editing instructions
+            analysis_model = genai.GenerativeModel('gemini-1.5-flash')
+            garment_prompt = "Describe this clothing item in detail. Include: color, style, type, material, and distinctive features. Be specific about how it should look when worn."
             try:
                 garment_analysis = analysis_model.generate_content([garment_prompt, garment_image])
-                garment_description = garment_analysis.text if hasattr(garment_analysis, 'text') else "clothing item"
+                garment_description = garment_analysis.text if hasattr(garment_analysis, 'text') else "this clothing item"
             except Exception as e:
                 logger.warning(f"Could not analyze garment image: {e}. Using generic description.")
-                garment_description = f"{category} clothing item"
+                garment_description = f"a {category} clothing item"
             
-            # Analyze person image for context
-            user_image = Image.open(io.BytesIO(user_image_bytes))
-            person_prompt = "Describe this person briefly: approximate age range, body type, pose, and any notable features. Keep it concise."
-            try:
-                person_analysis = analysis_model.generate_content([person_prompt, user_image])
-                person_description = person_analysis.text if hasattr(person_analysis, 'text') else "a person"
-            except Exception as e:
-                logger.warning(f"Could not analyze person image: {e}. Using generic description.")
-                person_description = "a person"
-            
-            # Create a detailed prompt based on the analysis
-            prompt = (
-                f"Generate a photorealistic, high-quality fashion photography image of {person_description} "
-                f"wearing {garment_description}. The person should be in a natural, confident pose. "
-                f"The clothing should fit well, look realistic, and be clearly visible. "
-                f"The image should have professional studio lighting and a clean, elegant background. "
-                f"Make it look like a high-end fashion photography shot with perfect composition and attention to detail."
+            # Create editing prompt - instruct Gemini to edit the person image
+            edit_prompt = (
+                f"Edit this person image to show them wearing {garment_description}. "
+                f"Replace or add the clothing item to match the reference clothing image. "
+                f"The clothing should fit naturally on the person, maintain their pose and body shape, "
+                f"and look realistic. Keep the person's face, body proportions, and background the same. "
+                f"Only modify the clothing to match the reference garment."
             )
             
-            logger.info(f"Generated prompt: {prompt[:150]}...")
+            logger.info(f"Editing image with prompt: {edit_prompt[:150]}...")
             
-            # Model options (try in order of preference)
+            # Model options for image editing (try in order of preference)
             model_options = [
                 "gemini-3-pro-image-preview",  # Nano Banana Pro (Gemini 3 Pro Image)
                 "gemini-3-pro-preview",        # Alternative model name
@@ -106,20 +97,54 @@ async def _generate_with_gemini(user_image_file, garment_image_file, category="u
             last_error = None
             for model_name in model_options:
                 try:
-                    logger.info(f"Attempting to use model: {model_name}")
+                    logger.info(f"Attempting to use model: {model_name} for image editing")
                     
-                    # Generate image with proper configuration
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            response_modalities=['IMAGE'],  # Request image output
-                            image_config=types.ImageConfig(
-                                aspect_ratio="2:3",  # Portrait orientation for fashion
-                                image_size="2K"      # 2K resolution (options: "1K", "2K", "4K")
+                    # Edit image using person image as base and garment as reference
+                    # Convert PIL Images to bytes for API compatibility
+                    user_img_bytes = io.BytesIO()
+                    user_image.save(user_img_bytes, format='PNG')
+                    user_img_bytes.seek(0)
+                    
+                    garment_img_bytes = io.BytesIO()
+                    garment_image.save(garment_img_bytes, format='PNG')
+                    garment_img_bytes.seek(0)
+                    
+                    # Pass both images: person image as the base to edit, garment as reference
+                    # The API accepts images in various formats - try PIL Image first, then bytes if needed
+                    try:
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=[
+                                edit_prompt,
+                                user_image,  # Base image to edit (PIL Image)
+                                garment_image  # Reference clothing image (PIL Image)
+                            ],
+                            config=types.GenerateContentConfig(
+                                response_modalities=['IMAGE'],  # Request image output
+                                image_config=types.ImageConfig(
+                                    aspect_ratio="2:3",  # Portrait orientation for fashion
+                                    image_size="2K"      # 2K resolution (options: "1K", "2K", "4K")
+                                )
                             )
                         )
-                    )
+                    except Exception as img_format_error:
+                        # If PIL Images don't work, try with bytes
+                        logger.warning(f"PIL Image format failed, trying bytes: {img_format_error}")
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=[
+                                edit_prompt,
+                                user_img_bytes.getvalue(),  # Base image as bytes
+                                garment_img_bytes.getvalue()  # Reference image as bytes
+                            ],
+                            config=types.GenerateContentConfig(
+                                response_modalities=['IMAGE'],
+                                image_config=types.ImageConfig(
+                                    aspect_ratio="2:3",
+                                    image_size="2K"
+                                )
+                            )
+                        )
                     
                     # Extract image from response
                     if hasattr(response, 'contents') and response.contents:
@@ -150,7 +175,7 @@ async def _generate_with_gemini(user_image_file, garment_image_file, category="u
                     continue
             
             # If all models failed, raise the last error
-            raise last_error or ValueError("All Gemini image generation models failed")
+            raise last_error or ValueError("All Gemini image editing models failed")
         
         # Execute in thread pool
         try:
@@ -158,7 +183,7 @@ async def _generate_with_gemini(user_image_file, garment_image_file, category="u
         except RuntimeError:
             loop = asyncio.get_event_loop()
         
-        image_data = await loop.run_in_executor(None, run_gemini_image_gen)
+        image_data = await loop.run_in_executor(None, run_gemini_image_edit)
         
         # Convert to base64 data URL for frontend compatibility
         if isinstance(image_data, bytes):
@@ -169,7 +194,7 @@ async def _generate_with_gemini(user_image_file, garment_image_file, category="u
             return str(image_data)
             
     except Exception as e:
-        logger.error(f"Error in Gemini 3 Pro image generation: {e}", exc_info=True)
+        logger.error(f"Error in Gemini 3 Pro image editing: {e}", exc_info=True)
         raise e
 
 
