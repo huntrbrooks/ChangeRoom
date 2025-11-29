@@ -1,10 +1,13 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from typing import List, Optional
 import uvicorn
 import os
 import sys
 import logging
+import json
+import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -103,25 +106,25 @@ async def identify_products(
         logger.error(f"Error in identify-products endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/analyze-clothing")
-async def analyze_clothing_items(
-    clothing_images: List[UploadFile] = File(...)
-):
+async def analyze_clothing_stream(clothing_images: List[UploadFile]):
     """
-    Analyzes multiple clothing items, categorizes them, and extracts metadata.
-    Returns analyzed items with suggested filenames and metadata for Gemini 3 Pro.
+    Generator function that yields progress updates as items are analyzed.
     """
+    total_items = len(clothing_images)
+    
     try:
-        logger.info(f"Clothing analysis request received for {len(clothing_images)} items")
-        
-        if len(clothing_images) > 5:
-            raise HTTPException(status_code=400, detail="Maximum 5 clothing items allowed")
+        # Send initial progress
+        yield f"data: {json.dumps({'type': 'progress', 'progress': 0, 'current': 0, 'total': total_items, 'message': 'Starting analysis...'})}\n\n"
         
         analyzed_items = []
         for idx, clothing_image in enumerate(clothing_images):
             try:
                 contents = await clothing_image.read()
                 original_filename = clothing_image.filename or f"item_{idx + 1}"
+                
+                # Update progress: starting item analysis
+                progress = int((idx / total_items) * 100)
+                yield f"data: {json.dumps({'type': 'progress', 'progress': progress, 'current': idx + 1, 'total': total_items, 'message': f'Analyzing item {idx + 1}/{total_items}: {original_filename}...'})}\n\n"
                 
                 logger.info(f"Analyzing item {idx + 1}: {original_filename}")
                 analysis = await analyze_clothing.analyze_clothing_item(contents, original_filename)
@@ -131,6 +134,10 @@ async def analyze_clothing_items(
                     "original_filename": original_filename,
                     "analysis": analysis
                 })
+                
+                # Update progress: item completed
+                progress = int(((idx + 1) / total_items) * 100)
+                yield f"data: {json.dumps({'type': 'progress', 'progress': progress, 'current': idx + 1, 'total': total_items, 'message': f'Completed item {idx + 1}/{total_items}'})}\n\n"
                 
             except Exception as e:
                 logger.error(f"Error analyzing item {idx + 1}: {e}", exc_info=True)
@@ -144,10 +151,40 @@ async def analyze_clothing_items(
                         "suggested_filename": f"unknown_item_{idx + 1}.jpg"
                     }
                 })
+                # Still update progress even on error
+                progress = int(((idx + 1) / total_items) * 100)
+                yield f"data: {json.dumps({'type': 'progress', 'progress': progress, 'current': idx + 1, 'total': total_items, 'message': f'Error analyzing item {idx + 1}'})}\n\n"
         
-        logger.info(f"Analysis completed for {len(analyzed_items)} items")
-        return {"items": analyzed_items}
+        # Send final result
+        yield f"data: {json.dumps({'type': 'complete', 'items': analyzed_items})}\n\n"
         
+    except Exception as e:
+        logger.error(f"Error in analyze-clothing stream: {e}", exc_info=True)
+        yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+@app.post("/api/analyze-clothing")
+async def analyze_clothing_items(
+    clothing_images: List[UploadFile] = File(...)
+):
+    """
+    Analyzes multiple clothing items with real-time progress updates.
+    Returns a streaming response with progress and final results.
+    """
+    try:
+        logger.info(f"Clothing analysis request received for {len(clothing_images)} items")
+        
+        if len(clothing_images) > 5:
+            raise HTTPException(status_code=400, detail="Maximum 5 clothing items allowed")
+        
+        return StreamingResponse(
+            analyze_clothing_stream(clothing_images),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"  # Disable buffering for nginx
+            }
+        )
     except Exception as e:
         logger.error(f"Error in analyze-clothing endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

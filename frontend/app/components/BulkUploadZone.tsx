@@ -25,6 +25,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
 }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<string>('');
+  const [progressPercent, setProgressPercent] = useState<number>(0);
 
   const handleBulkUpload = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
@@ -38,6 +39,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
 
     setIsAnalyzing(true);
     setAnalysisProgress('Uploading and analyzing clothing items...');
+    setProgressPercent(0);
 
     try {
       // Create FormData with all files
@@ -46,14 +48,57 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         formData.append('clothing_images', file);
       });
 
-      // Send to analysis endpoint
-      const response = await axios.post(`${API_URL}/api/analyze-clothing`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 300000, // 5 minutes for analysis
+      // Use fetch for Server-Sent Events (SSE) streaming
+      const response = await fetch(`${API_URL}/api/analyze-clothing`, {
+        method: 'POST',
+        body: formData,
+        // Don't set Content-Type header, let browser set it with boundary
       });
 
-      const analyses = response.data.items as AnalyzedItem[];
-      
+      if (!response.ok) {
+        throw new Error(`Analysis failed: ${response.statusText}`);
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let analyses: AnalyzedItem[] = [];
+
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.type === 'progress') {
+                setProgressPercent(data.progress);
+                setAnalysisProgress(data.message || `Analyzing ${data.current}/${data.total} items...`);
+              } else if (data.type === 'complete') {
+                analyses = data.items as AnalyzedItem[];
+                setProgressPercent(100);
+                setAnalysisProgress('Analysis complete!');
+              } else if (data.type === 'error') {
+                throw new Error(data.error || 'Analysis failed');
+              }
+            } catch (e) {
+              console.warn('Failed to parse SSE data:', e, line);
+            }
+          }
+        }
+      }
+
       // Create new File objects with suggested names and attach metadata
       const processedFiles: File[] = [];
       selectedFiles.forEach((file, idx) => {
@@ -76,10 +121,10 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
 
       // Call the upload handler
       onFilesUploaded(processedFiles, analyses);
-      setAnalysisProgress('Analysis complete!');
     } catch (error: any) {
       console.error('Error analyzing clothing items:', error);
-      setAnalysisProgress(`Error: ${error.response?.data?.detail || error.message}`);
+      setAnalysisProgress(`Error: ${error.message || 'Analysis failed'}`);
+      setProgressPercent(0);
       // Still allow files to be added even if analysis fails
       onFilesUploaded(selectedFiles, []);
     } finally {
@@ -113,9 +158,19 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
       `}
     >
       {isAnalyzing ? (
-        <div className="flex flex-col items-center">
-          <Loader2 className="h-8 w-8 text-blue-500 animate-spin mb-2" />
-          <p className="text-sm text-gray-600">{analysisProgress}</p>
+        <div className="flex flex-col items-center w-full">
+          <Loader2 className="h-8 w-8 text-blue-500 animate-spin mb-4" />
+          <p className="text-sm text-gray-600 mb-3">{analysisProgress}</p>
+          {/* Progress Bar */}
+          <div className="w-full max-w-md">
+            <div className="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+              <div 
+                className="bg-blue-500 h-2.5 rounded-full transition-all duration-300 ease-out"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+            <p className="text-xs text-gray-500 text-center">{progressPercent}%</p>
+          </div>
         </div>
       ) : (
         <label className="cursor-pointer block">
