@@ -6,6 +6,8 @@ import re
 import logging
 import hashlib
 from typing import Dict, Any
+from PIL import Image
+import io
 
 logger = logging.getLogger(__name__)
 
