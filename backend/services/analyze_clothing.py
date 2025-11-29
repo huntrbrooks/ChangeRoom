@@ -285,7 +285,7 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
         """
         
         response = client.chat.completions.create(
-            model="gpt-4o",  # Use more powerful model for better accuracy
+            model="gpt-4o",  # Latest and most capable vision model - best for image classification
             messages=[
                 {
                     "role": "system",
@@ -302,14 +302,14 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
                             "type": "image_url",
                             "image_url": {
                                 "url": f"data:image/{mime_type};base64,{image_base64}",
-                                "detail": "high"  # Use high detail for better image analysis
+                                "detail": "high"  # High detail mode for maximum image analysis accuracy
                             }
                         }
                     ]
                 }
             ],
-            max_tokens=1500,  # Increased for more detailed descriptions
-            temperature=0.1,  # Lower temperature for more consistent classification
+            max_tokens=2000,  # Increased for comprehensive descriptions
+            temperature=0.0,  # Zero temperature for most deterministic and consistent classification
             response_format={"type": "json_object"}
         )
         
