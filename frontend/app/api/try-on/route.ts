@@ -130,11 +130,12 @@ The result should look like a professional fashion photograph of the person wear
     console.warn("Could not list available models:", e);
   }
 
-  // Try Imagen 4 models first, then fall back to any available image generation models
+  // Try Imagen 4 Ultra first (highest quality), then other variants
   const imagenModels = [
-    "imagen-4.0-generate-001",      // Standard Imagen 4
-    "imagen-4.0-fast-generate-001", // Fast variant
-    "imagen-3.0-generate-001",      // Imagen 3 fallback
+    "imagen-4.0-ultra-generate-001", // Ultra variant - highest quality
+    "imagen-4.0-generate-001",       // Standard Imagen 4
+    "imagen-4.0-fast-generate-001",  // Fast variant
+    "imagen-3.0-generate-001",       // Imagen 3 fallback
     ...(availableModels.filter((m: string) => 
       m.toLowerCase().includes("imagen") && 
       m.toLowerCase().includes("generate")

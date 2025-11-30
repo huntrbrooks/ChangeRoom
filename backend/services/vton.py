@@ -303,11 +303,12 @@ Output:
         except Exception as e:
             logger.warning(f"Could not list available models: {e}")
         
-        # Try Imagen models first, then fall back to any available image models
+        # Try Imagen 4 Ultra first (highest quality), then other variants
         model_options = [
-            "imagen-4.0-generate-001",
-            "imagen-4.0-fast-generate-001",
-            "imagen-3.0-generate-001",
+            "imagen-4.0-ultra-generate-001",  # Ultra variant - highest quality
+            "imagen-4.0-generate-001",        # Standard Imagen 4
+            "imagen-4.0-fast-generate-001",   # Fast variant
+            "imagen-3.0-generate-001",        # Imagen 3 fallback
         ]
         
         # Add any discovered models that might support image generation
