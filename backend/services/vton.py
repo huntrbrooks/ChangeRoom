@@ -275,113 +275,113 @@ Output:
         # Optimized model selection for best image generation quality
         # Models ordered by quality and image generation capability
         # Priority: Best quality first, then fallback to reliable alternatives
-        # Updated model options - using models that support image generation
-        # Order: Try image-specific models first, then general models
-        model_options = [
-            "gemini-2.5-flash-image",    # Image generation model (same as frontend)
-            "gemini-2.0-flash-exp",      # Latest experimental model
-            "gemini-1.5-pro",            # Pro model with image capabilities
-        ]
-        
         logger.info(f"🚀 Starting virtual try-on generation")
         logger.info(f"   Person image: {len(user_img_base64)} chars (base64)")
         logger.info(f"   Clothing items: {len(limited_garments)}")
         logger.info(f"   Total content parts: {len(parts)} ({len(limited_garments) + 1} images + 1 text)")
-        logger.info(f"   Trying models in quality order: {', '.join(model_options)}")
         
-        # Try v1beta first (supports newer models), then v1 as fallback
-        base_urls = [
-            "https://generativelanguage.googleapis.com/v1beta/models",
-            "https://generativelanguage.googleapis.com/v1/models",
-        ]
+        # IMPORTANT: Standard Gemini models (gemini-1.5-flash, gemini-1.5-pro) don't generate images
+        # They can analyze images but cannot create new images
+        # For image generation, you need:
+        # - Google Imagen API
+        # - OpenAI DALL-E
+        # - Or a specialized virtual try-on service
+        # 
+        # We'll try gemini-1.5-flash as a last resort, but it likely won't return images
+        model_options = ["gemini-1.5-flash"]
+        base_url = "https://generativelanguage.googleapis.com/v1beta/models"
         last_error = None
         successful_model = None
         
-        # Make async HTTP request with fallback models and API versions
+        # Make async HTTP request
         # Using httpx for async REST API calls (no SDK required)
         async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minute timeout for image generation
-            for base_url in base_urls:
-                for model_name in model_options:
-                    try:
-                        endpoint = f"{base_url}/{model_name}:generateContent"
-                        logger.info(f"Attempting to use model: {model_name} with API: {base_url.split('/')[-2]}")
+            for model_name in model_options:
+                try:
+                    endpoint = f"{base_url}/{model_name}:generateContent"
+                    logger.info(f"Attempting to use model: {model_name} with API: v1beta")
                         
-                        response = await client.post(
-                            f"{endpoint}?key={api_key}",
-                            headers={
-                                "Content-Type": "application/json",
-                            },
-                            json={
-                                "contents": [
-                                    {
-                                        "role": "user",
-                                        "parts": parts,
-                                    }
-                                ],
-                            },
-                        )
-                        
-                        if not response.is_success:
-                            error_text = response.text
-                            logger.warning(f"Model {model_name} with {base_url.split('/')[-2]} failed: {response.status_code} - {error_text}")
-                            # Only set as last_error if this is the last attempt
-                            if base_url == base_urls[-1] and model_name == model_options[-1]:
-                                last_error = ValueError(f"Gemini API error: {response.status_code} - {error_text}")
-                            continue
-                        
-                        data = response.json()
-                        
-                        # Extract image from response
-                        parts_out = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                        
-                        image_part = None
-                        for part in parts_out:
-                            if "inline_data" in part:
-                                image_part = part["inline_data"]
-                                break
-                        
-                        if not image_part:
-                            logger.warning(f"Model {model_name} returned no image. Trying next model...")
-                            last_error = ValueError("No image returned from Gemini")
-                            continue
-                        
-                        image_base64 = image_part.get("data")
-                        mime_type = image_part.get("mime_type", "image/png")
-                        
-                        if not image_base64:
-                            logger.warning(f"Model {model_name} returned empty image data. Trying next model...")
-                            last_error = ValueError("Image data is empty in Gemini response")
-                            continue
-                        
-                        successful_model = f"{model_name} ({base_url.split('/')[-2]})"
-                        logger.info(f"✅ Successfully generated image using model: {successful_model}")
-                        logger.info(f"   Image size: {len(image_base64)} characters (base64), MIME type: {mime_type}")
-                        # Return as data URL
-                        return f"data:{mime_type};base64,{image_base64}"
-                        
-                    except httpx.TimeoutException as e:
-                        logger.error(f"Timeout calling model {model_name}: {e}")
-                        last_error = e
+                    response = await client.post(
+                        f"{endpoint}?key={api_key}",
+                        headers={
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "contents": [
+                                {
+                                    "role": "user",
+                                    "parts": parts,
+                                }
+                            ],
+                        },
+                    )
+                    
+                    if not response.is_success:
+                        error_text = response.text
+                        logger.warning(f"Model {model_name} failed: {response.status_code} - {error_text}")
+                        last_error = ValueError(f"Gemini API error: {response.status_code} - {error_text}")
                         continue
-                    except Exception as e:
-                        logger.warning(f"Error calling model {model_name}: {e}. Trying next model...")
-                        last_error = e
+                    
+                    data = response.json()
+                    
+                    # Extract image from response
+                    parts_out = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    
+                    image_part = None
+                    for part in parts_out:
+                        if "inline_data" in part:
+                            image_part = part["inline_data"]
+                            break
+                    
+                    if not image_part:
+                        logger.warning(f"Model {model_name} returned no image in response")
+                        last_error = ValueError("No image returned from Gemini - model may not support image generation")
                         continue
+                    
+                    image_base64 = image_part.get("data")
+                    mime_type = image_part.get("mime_type", "image/png")
+                    
+                    if not image_base64:
+                        logger.warning(f"Model {model_name} returned empty image data")
+                        last_error = ValueError("Image data is empty in Gemini response")
+                        continue
+                    
+                    successful_model = f"{model_name} (v1beta)"
+                    logger.info(f"✅ Successfully generated image using model: {successful_model}")
+                    logger.info(f"   Image size: {len(image_base64)} characters (base64), MIME type: {mime_type}")
+                    # Return as data URL
+                    return f"data:{mime_type};base64,{image_base64}"
+                    
+                except httpx.TimeoutException as e:
+                    logger.error(f"Timeout calling model {model_name}: {e}")
+                    last_error = e
+                    continue
+                except Exception as e:
+                    logger.warning(f"Error calling model {model_name}: {e}")
+                    last_error = e
+                    continue
             
             # If all models failed, raise the last error with helpful context
             if last_error:
                 error_msg = str(last_error)
                 if "404" in error_msg or "NOT_FOUND" in error_msg or "not found" in error_msg.lower():
                     raise ValueError(
-                        f"Gemini API: Model not found. This may indicate:\n"
-                        f"1. Your API key doesn't have access to image generation models\n"
-                        f"2. The model names have changed in the API\n"
-                        f"3. You need to enable Generative AI API in Google Cloud Console\n"
-                        f"Tried models: {', '.join(model_options)}\n"
+                        f"Gemini API: Model not found.\n\n"
+                        f"IMPORTANT: Standard Gemini models (gemini-1.5-flash, gemini-1.5-pro) don't generate images - "
+                        f"they analyze them. For image generation, consider:\n"
+                        f"- Google Imagen API (for image generation)\n"
+                        f"- OpenAI DALL-E\n"
+                        f"- Stable Diffusion\n"
+                        f"- Or a specialized virtual try-on service\n\n"
+                        f"Troubleshooting:\n"
+                        f"1. Verify your API key has access to the model\n"
+                        f"2. Enable Generative AI API in Google Cloud Console\n"
+                        f"3. Check that the model name is correct\n\n"
+                        f"Tried model: {', '.join(model_options)}\n"
                         f"Original error: {error_msg}"
                     )
                 raise last_error
-            raise ValueError("All Gemini models failed to generate image. No successful response from any model.")
+            raise ValueError("Gemini model failed to generate image. Standard Gemini models don't support image generation.")
             
     except Exception as e:
         logger.error(f"Error in Gemini image generation: {e}", exc_info=True)
