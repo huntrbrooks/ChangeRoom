@@ -1,4 +1,4 @@
-import { ai } from "./googleClient";
+import { geminiConfig } from "./config";
 
 type TryOnArgs = {
   baseImage: string;        // base64, no data URL prefix
@@ -15,6 +15,11 @@ export async function generateTryOnWithGemini3ProImage({
 }: TryOnArgs): Promise<string> {
   if (!baseImage) throw new Error("Missing baseImage");
   if (!clothingImages.length) throw new Error("No clothing images");
+
+  const apiKey = geminiConfig.apiKey;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not set");
+  }
 
   // Build the user message parts: instructions + base image + clothing images
   const parts: any[] = [
@@ -44,24 +49,47 @@ export async function generateTryOnWithGemini3ProImage({
     });
   }
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3-pro-image-preview",
-    contents: [{ role: "user", parts }],
-    generationConfig: {
-      // Required for Gemini image models: must return both text and image 
-      responseModalities: ["TEXT", "IMAGE"],
+  // Use REST API directly to avoid TypeScript type issues
+  const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models";
+  const modelName = "gemini-3-pro-image-preview";
+  const endpoint = `${baseUrl}/${modelName}:generateContent?key=${apiKey}`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: "user",
+          parts,
+        },
+      ],
+      generationConfig: {
+        // Required for Gemini image models: must return both text and image
+        responseModalities: ["TEXT", "IMAGE"],
+      },
+    }),
   });
 
-  const candidates = response.candidates ?? [];
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  const candidates = data.candidates ?? [];
   if (!candidates.length) {
     throw new Error("No candidates returned from Gemini 3 Pro Image");
   }
 
-  const contentParts = candidates[0].content.parts ?? [];
+  const contentParts = candidates[0].content?.parts ?? [];
 
   // Find the first image in the response
-  const imagePart = contentParts.find((p: any) => p.inlineData && p.inlineData.data);
+  const imagePart = contentParts.find(
+    (p: any) => p.inlineData && p.inlineData.data
+  );
   if (!imagePart) {
     throw new Error("No image part in Gemini response");
   }
