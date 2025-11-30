@@ -95,21 +95,40 @@ export default function Home() {
         const tryOnFormData = new FormData();
         tryOnFormData.append('user_image', userImage);
         
-        // Use metadata if available (from analysis)
-        // Transform to format expected by system prompt: background, style, framing, pose, camera, extras
-        const firstItem = activeItems[0] as any;
+        // Limit to 5 items for try-on
+        const itemsToTryOn = activeItems.slice(0, 5);
+        const fileUrls: string[] = [];
+        const filesToUpload: File[] = [];
         
-        // Use saved file URL if available, otherwise upload the file
-        if (firstItem?.file_url) {
-          // Use saved file from server
-          tryOnFormData.append('clothing_file_url', firstItem.file_url);
-          console.log("Using saved file URL for try-on:", firstItem.file_url);
-        } else {
-          // Upload file directly
-          tryOnFormData.append('clothing_image', activeItems[0]); // MVP: First item only for VTON
+        // Collect all items - separate those with file URLs from those that need upload
+        for (const item of itemsToTryOn) {
+          const itemData = item as any;
+          if (itemData?.file_url) {
+            fileUrls.push(itemData.file_url);
+          } else if (item instanceof File) {
+            filesToUpload.push(item);
+          }
         }
         
-        if (firstItem.metadata || firstItem.category || firstItem.detailed_description) {
+        // Send file URLs if we have any
+        if (fileUrls.length > 0) {
+          tryOnFormData.append('clothing_file_urls', fileUrls.join(','));
+          console.log(`Using ${fileUrls.length} saved file URL(s) for try-on`);
+        }
+        
+        // Send uploaded files if we have any
+        for (const file of filesToUpload) {
+          tryOnFormData.append('clothing_images', file);
+        }
+        if (filesToUpload.length > 0) {
+          console.log(`Uploading ${filesToUpload.length} file(s) for try-on`);
+        }
+        
+        console.log(`Trying on ${itemsToTryOn.length} item(s): ${fileUrls.length} from URLs, ${filesToUpload.length} uploaded`);
+        
+        // Use metadata from first item if available
+        const firstItem = itemsToTryOn[0] as any;
+        if (firstItem?.metadata || firstItem?.category || firstItem?.detailed_description) {
           // Build metadata in the format expected by the system prompt
           const metadata: any = {};
           
@@ -289,7 +308,7 @@ export default function Home() {
               {wardrobeItems.filter(item => item !== null).length > 1 && (
                 <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                   <p className="text-sm text-blue-800">
-                    💡 <strong>Note:</strong> Currently trying on the first item. Multi-item try-on coming soon!
+                    💡 <strong>Tip:</strong> You can try on up to 5 items at once for a complete outfit!
                   </p>
                 </div>
               )}

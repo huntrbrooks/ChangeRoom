@@ -62,24 +62,78 @@ async def root():
 @app.post("/api/try-on")
 async def try_on(
     user_image: UploadFile = File(...),
-    clothing_image: Optional[UploadFile] = File(None),  # Optional - can use clothing_file_url instead
+    clothing_images: Optional[List[UploadFile]] = File(None),  # Multiple clothing images (up to 5)
+    clothing_image: Optional[UploadFile] = File(None),  # Single image for backward compatibility
     category: Optional[str] = Form(None),
     garment_metadata: Optional[str] = Form(None),  # JSON string of metadata
-    clothing_file_url: Optional[str] = Form(None)  # URL to saved clothing file (alternative to upload)
+    clothing_file_urls: Optional[str] = Form(None),  # Comma-separated URLs to saved files
+    clothing_file_url: Optional[str] = Form(None)  # Single URL for backward compatibility
 ):
     """
-    Virtual try-on endpoint. Accepts user image and clothing image(s).
-    Can accept either uploaded file or URL to saved file.
-    For multiple clothing items, send multiple requests or update to accept list.
-    Currently supports single clothing image for backward compatibility.
+    Virtual try-on endpoint. Accepts user image and clothing image(s) (up to 5).
+    Can accept either uploaded files or URLs to saved files.
+    Supports multiple clothing items for full outfit try-on.
     """
     try:
+        # Collect all clothing images from various sources
+        clothing_image_files = []
+        
+        # Handle multiple uploaded images (new format)
+        if clothing_images:
+            for img in clothing_images:
+                clothing_image_files.append(img.file)
+        
+        # Handle single uploaded image (backward compatibility)
+        if clothing_image:
+            clothing_image_files.append(clothing_image.file)
+        
+        # Handle multiple file URLs (new format - comma-separated)
+        if clothing_file_urls:
+            urls = [url.strip() for url in clothing_file_urls.split(",") if url.strip()]
+            for url in urls:
+                try:
+                    filename = url.split("/")[-1].split("?")[0]
+                    if "/uploads/" in url:
+                        filename = url.split("/uploads/")[-1].split("?")[0]
+                    file_path = UPLOADS_DIR / filename
+                    if file_path.exists():
+                        clothing_image_files.append(open(file_path, 'rb'))
+                        logger.info(f"Loaded saved file from URL: {filename}")
+                    else:
+                        logger.warning(f"File not found for URL: {filename}")
+                except Exception as e:
+                    logger.warning(f"Could not load file from URL {url}: {e}")
+        
+        # Handle single file URL (backward compatibility)
+        if clothing_file_url:
+            try:
+                filename = clothing_file_url.split("/")[-1].split("?")[0]
+                if "/uploads/" in clothing_file_url:
+                    filename = clothing_file_url.split("/uploads/")[-1].split("?")[0]
+                file_path = UPLOADS_DIR / filename
+                if file_path.exists():
+                    clothing_image_files.append(open(file_path, 'rb'))
+                    logger.info(f"Loaded saved file from URL: {filename}")
+                else:
+                    logger.warning(f"File not found for URL: {filename}")
+            except Exception as e:
+                logger.warning(f"Could not load file from URL {clothing_file_url}: {e}")
+        
         # Validate that at least one clothing source is provided
-        if not clothing_image and not clothing_file_url:
+        if not clothing_image_files:
             raise HTTPException(
                 status_code=422, 
-                detail="Either 'clothing_image' or 'clothing_file_url' must be provided"
+                detail="At least one clothing image or clothing_file_url must be provided"
             )
+        
+        # Limit to 5 items
+        if len(clothing_image_files) > 5:
+            logger.warning(f"Received {len(clothing_image_files)} clothing items, limiting to 5")
+            # Close extra files
+            for extra_file in clothing_image_files[5:]:
+                if hasattr(extra_file, 'close'):
+                    extra_file.close()
+            clothing_image_files = clothing_image_files[:5]
         
         # Parse metadata if provided
         metadata = None
@@ -101,48 +155,6 @@ async def try_on(
                 except:
                     logger.error(f"Failed to clean and parse metadata: {e}")
         
-        # Handle clothing image - use saved file if URL provided, otherwise use uploaded file
-        clothing_file_handle = None
-        if clothing_file_url:
-            # Load file from saved location
-            try:
-                # Extract filename from URL - handle both relative and absolute URLs
-                # Remove query parameters and fragments
-                url_path = clothing_file_url.split("?")[0].split("#")[0]
-                # Extract just the filename (last part after /)
-                filename = url_path.split("/")[-1]
-                # Remove /uploads/ prefix if present in the path
-                if "/uploads/" in url_path:
-                    filename = url_path.split("/uploads/")[-1]
-                
-                file_path = UPLOADS_DIR / filename
-                logger.info(f"Attempting to load file: {file_path} (from URL: {clothing_file_url}, extracted filename: {filename})")
-                
-                if file_path.exists():
-                    clothing_file_handle = open(file_path, 'rb')
-                    clothing_image_files = [clothing_file_handle]
-                    logger.info(f"Successfully loaded saved file: {file_path}")
-                else:
-                    # List available files for debugging
-                    available_files = list(UPLOADS_DIR.glob("*")) if UPLOADS_DIR.exists() else []
-                    logger.error(f"File not found: {file_path}")
-                    logger.error(f"Available files in uploads: {[f.name for f in available_files]}")
-                    raise HTTPException(
-                        status_code=404, 
-                        detail=f"Clothing file not found: {filename}. Available files: {[f.name for f in available_files[:5]]}"
-                    )
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.error(f"Error loading saved clothing file: {e}", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"Could not load saved clothing file: {str(e)}")
-        elif clothing_image:
-            # Use uploaded file
-            clothing_image_files = [clothing_image.file]
-        else:
-            # This shouldn't happen due to validation above, but just in case
-            raise HTTPException(status_code=422, detail="No clothing image provided")
-        
         # Use category from metadata if available, otherwise use provided or default
         final_category = category or (metadata.get('category') if metadata else None) or "upper_body"
         
@@ -150,20 +162,22 @@ async def try_on(
         if metadata:
             logger.info(f"Using metadata: {list(metadata.keys())}")
         
-        result_url = await vton.generate_try_on(
-            user_image.file, 
-            clothing_image_files, 
-            final_category,
-            metadata
-        )
-        logger.info(f"Try-on completed successfully. Result URL: {result_url}")
-        
-        # Close file if we opened it
-        if clothing_file_handle:
-            try:
-                clothing_file_handle.close()
-            except:
-                pass
+        try:
+            result_url = await vton.generate_try_on(
+                user_image.file, 
+                clothing_image_files, 
+                final_category,
+                metadata
+            )
+            logger.info(f"Try-on completed successfully. Result URL: {result_url}")
+        finally:
+            # Close any files we opened from URLs
+            for file_handle in clothing_image_files:
+                if hasattr(file_handle, 'close') and file_handle != user_image.file:
+                    try:
+                        file_handle.close()
+                    except:
+                        pass
         
         return {"image_url": result_url}
     except HTTPException:

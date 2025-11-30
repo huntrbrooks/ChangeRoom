@@ -81,7 +81,7 @@ export default function HowItWorks() {
                 <li>Prepare items for virtual try-on</li>
               </ul>
               <p className="text-sm text-blue-600 mt-4 font-medium">
-                💡 Currently, we try on the first item. Multi-item try-on coming soon!
+                💡 Try on up to 5 items at once for a complete outfit!
               </p>
             </div>
           </div>
