@@ -9,6 +9,9 @@ import axios from 'axios';
 import { stripeConfig, appConfig } from '@/lib/config';
 import { PaywallModal } from '../components/PaywallModal';
 
+// Force dynamic rendering to prevent static generation issues with Clerk
+export const dynamic = 'force-dynamic';
+
 interface BillingInfo {
   plan: 'free' | 'standard' | 'pro';
   creditsAvailable: number;
@@ -16,7 +19,7 @@ interface BillingInfo {
   trialUsed?: boolean;
 }
 
-export default function BillingPage() {
+function BillingPageContent() {
   const { user, isLoaded } = useUser();
   const router = useRouter();
   const [billing, setBilling] = useState<BillingInfo | null>(null);
@@ -87,7 +90,7 @@ export default function BillingPage() {
     return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   };
 
-  const isOnTrial = billing && !billing.trialUsed;
+  const isOnTrial = billing && !billing.trialUsed ? true : false;
 
   if (!isLoaded) {
     return (
@@ -290,5 +293,22 @@ export default function BillingPage() {
       )}
     </div>
   );
+}
+
+export default function BillingPage() {
+  // During build/SSR, Clerk might not be available
+  // Return a loading state that will be replaced at runtime
+  if (typeof window === 'undefined') {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-black mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+  
+  return <BillingPageContent />;
 }
 

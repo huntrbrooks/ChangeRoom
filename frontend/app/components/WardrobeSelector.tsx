@@ -130,7 +130,7 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
     // Create a synthetic event to reuse the upload handler
     const syntheticEvent = {
       target: { files: files, value: '' }
-    } as React.ChangeEvent<HTMLInputElement>;
+    } as unknown as React.ChangeEvent<HTMLInputElement>;
     
     await handleBulkUpload(syntheticEvent);
   }, [handleBulkUpload]);

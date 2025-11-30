@@ -142,9 +142,27 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         file_url?: string;
         saved_filename?: string;
         saved_file?: string;
-      }, idx: number) => ({
+        metadata?: Record<string, unknown>;
+        body_region?: string;
+        category?: string;
+        subcategory?: string;
+        color?: string;
+        style?: string;
+        description?: string;
+        tags?: string[];
+        filename?: string;
+        recommended_filename?: string;
+        url?: string;
+      }, idx: number) => {
+        const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+        const originalFilename = item.original_filename || 
+          (metadata && 'original_filename' in metadata ? String(metadata.original_filename) : undefined) ||
+          filesToAnalyze[idx]?.name || 
+          `item_${startIndex + idx}`;
+        
+        return {
         index: startIndex + idx,
-        original_filename: item.original_filename || item.metadata?.original_filename || filesToAnalyze[idx]?.name || `item_${startIndex + idx}`,
+        original_filename: originalFilename,
         analysis: {
           body_region: item.analysis?.body_region || item.body_region || item.analysis?.category || item.category || 'unknown',
           category: item.analysis?.body_region || item.body_region || item.analysis?.category || item.category || 'unknown',  // For backward compatibility
@@ -156,12 +174,13 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
           short_description: item.analysis?.short_description || item.description || '',
           tags: item.analysis?.tags || item.tags || [],
           suggested_filename: item.filename || item.recommended_filename || item.saved_filename,
-          metadata: item.metadata || item.analysis || {}
+          metadata: metadata || item.analysis || {}
         },
         saved_filename: item.filename || item.saved_filename,
         file_url: item.url || item.file_url,
-        status: item.status || 'success' as const
-      }));
+        status: (item.status === 'error' ? 'error' : item.status === 'analyzing' ? 'analyzing' : 'success') as 'analyzing' | 'success' | 'error'
+      };
+      });
 
       console.log('Batch preprocessing complete. New items:', allAnalyses);
 
@@ -175,44 +194,41 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
       });
 
       // Initialize wearing styles map - preserve existing or set defaults
-      // Build local map first, then update state using functional update to get current state
-      let localWearingStyles: Map<number, string>;
-      setWearingStyles(prev => {
-        localWearingStyles = new Map(prev);
-        allAnalyses.forEach((item, idx) => {
-          const actualIdx = startIndex + idx;
-          // Initialize wearing style if options are available
-          if (item.analysis) {
-            const category = item.analysis.category || item.analysis.body_region || '';
-            const itemType = item.analysis.item_type || '';
-            if (hasWearingStyleOptions(category, itemType)) {
-              // Check if file already has a wearing style
-              const existingFile = filesToAnalyze[idx];
-              const existingStyle = existingFile ? (existingFile as FileWithMetadata).wearing_style : null;
-              
-              // Use existing style if valid, otherwise use default
-              if (existingStyle) {
-                const styleOptions = getWearingStyleOptions(category, itemType);
-                const isValidStyle = styleOptions.some(opt => opt.value === existingStyle);
-                if (isValidStyle) {
-                  localWearingStyles.set(actualIdx, existingStyle);
-                } else {
-                  const defaultStyle = getDefaultWearingStyle(category, itemType);
-                  if (defaultStyle) {
-                    localWearingStyles.set(actualIdx, defaultStyle);
-                  }
-                }
+      const localWearingStyles = new Map<number, string>(wearingStyles);
+      allAnalyses.forEach((item, idx) => {
+        const actualIdx = startIndex + idx;
+        // Initialize wearing style if options are available
+        if (item.analysis) {
+          const category = item.analysis.category || item.analysis.body_region || '';
+          const itemType = item.analysis.item_type || '';
+          if (hasWearingStyleOptions(category, itemType)) {
+            // Check if file already has a wearing style
+            const existingFile = filesToAnalyze[idx];
+            const existingStyle = existingFile ? (existingFile as FileWithMetadata).wearing_style : null;
+            
+            // Use existing style if valid, otherwise use default
+            if (existingStyle) {
+              const styleOptions = getWearingStyleOptions(category, itemType);
+              const isValidStyle = styleOptions.some(opt => opt.value === existingStyle);
+              if (isValidStyle) {
+                localWearingStyles.set(actualIdx, existingStyle);
               } else {
                 const defaultStyle = getDefaultWearingStyle(category, itemType);
                 if (defaultStyle) {
                   localWearingStyles.set(actualIdx, defaultStyle);
                 }
               }
+            } else {
+              const defaultStyle = getDefaultWearingStyle(category, itemType);
+              if (defaultStyle) {
+                localWearingStyles.set(actualIdx, defaultStyle);
+              }
             }
           }
-        });
-        return localWearingStyles;
+        }
       });
+      // Update state with the new map
+      setWearingStyles(localWearingStyles);
 
       // Process files for parent component
       const processedFiles: File[] = [];

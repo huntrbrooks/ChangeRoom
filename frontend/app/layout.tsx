@@ -47,7 +47,7 @@ export default function RootLayout({
   const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   const hasValidKey = publishableKey && publishableKey.startsWith('pk_') && publishableKey.length > 10;
   
-  // If no valid key, render without Clerk (will work at runtime when env vars are set)
+  // If no valid key during build, render without ClerkProvider (will work at runtime)
   if (!hasValidKey) {
     return (
       <html lang="en">

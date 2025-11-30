@@ -12,6 +12,9 @@ import { PaywallModal } from './components/PaywallModal';
 import { Sparkles, Search, Loader2, CreditCard, Zap } from 'lucide-react';
 import { getWearingStylePromptText } from '@/lib/wearingStyles';
 
+// Force dynamic rendering to prevent static generation issues with Clerk
+export const dynamic = 'force-dynamic';
+
 // Define types locally for now
 interface Product {
   title: string;
@@ -28,7 +31,7 @@ interface BillingInfo {
   trialUsed?: boolean;
 }
 
-export default function Home() {
+function HomeContent() {
   const { user, isLoaded } = useUser();
   const [userImage, setUserImage] = useState<File | null>(null);
   
@@ -650,4 +653,21 @@ export default function Home() {
       )}
     </main>
   );
+}
+
+export default function Home() {
+  // During build/SSR, Clerk might not be available
+  // Return a loading state that will be replaced at runtime
+  if (typeof window === 'undefined') {
+    return (
+      <main className="min-h-screen bg-black text-white font-sans flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500 mx-auto"></div>
+          <p className="mt-4 text-cyan-400">Loading...</p>
+        </div>
+      </main>
+    );
+  }
+  
+  return <HomeContent />;
 }

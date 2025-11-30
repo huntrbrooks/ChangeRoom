@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import OpenAI from "openai";
+import type { ChatCompletionContentPart } from "openai/resources/chat/completions";
 import { openaiConfig } from "@/lib/config";
 import { insertClothingItems } from "@/lib/db-access";
 
@@ -40,11 +41,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const contentParts: Array<{
-      type: string;
-      text?: string;
-      image_url?: { url: string };
-    }> = [
+    const contentParts: ChatCompletionContentPart[] = [
       {
         type: "text",
         text: `
