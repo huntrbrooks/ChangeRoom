@@ -38,8 +38,26 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // During build, Clerk keys might not be available
+  const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const hasValidKey = publishableKey && publishableKey.startsWith('pk_') && publishableKey.length > 10;
+  
+  // If no valid key, render without Clerk (will work at runtime when env vars are set)
+  if (!hasValidKey) {
+    return (
+      <html lang="en">
+        <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+          <header className="flex justify-end items-center p-4 gap-4 h-16">
+            {/* Clerk components won't work during build, but that's OK */}
+          </header>
+          {children}
+        </body>
+      </html>
+    );
+  }
+  
   return (
-    <ClerkProvider>
+    <ClerkProvider publishableKey={publishableKey}>
       <html lang="en">
         <body
           className={`${geistSans.variable} ${geistMono.variable} antialiased`}

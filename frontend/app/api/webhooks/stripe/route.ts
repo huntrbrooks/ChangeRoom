@@ -7,9 +7,12 @@ import {
   updateUserBillingCredits,
 } from "@/lib/db-access";
 
-const stripe = new Stripe(stripeConfig.secretKey, {
-  apiVersion: "2025-02-24.acacia",
-});
+// Lazy Stripe client initialization (only created when route handler runs, not during build)
+function getStripe() {
+  return new Stripe(stripeConfig.secretKey, {
+    apiVersion: "2025-02-24.acacia",
+  });
+}
 
 /**
  * POST /api/webhooks/stripe
@@ -35,7 +38,7 @@ export async function POST(req: NextRequest) {
   let event: Stripe.Event;
 
   try {
-    event = stripe.webhooks.constructEvent(
+    event = getStripe().webhooks.constructEvent(
       body,
       signature,
       stripeConfig.webhookSecret

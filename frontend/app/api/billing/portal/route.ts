@@ -4,9 +4,12 @@ import Stripe from "stripe";
 import { stripeConfig, appConfig } from "@/lib/config";
 import { getOrCreateUserBilling } from "@/lib/db-access";
 
-const stripe = new Stripe(stripeConfig.secretKey, {
-  apiVersion: "2025-02-24.acacia",
-});
+// Lazy Stripe client initialization (only created when route handler runs, not during build)
+function getStripe() {
+  return new Stripe(stripeConfig.secretKey, {
+    apiVersion: "2025-02-24.acacia",
+  });
+}
 
 /**
  * POST /api/billing/portal
@@ -29,7 +32,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const session = await stripe.billingPortal.sessions.create({
+    const session = await getStripe().billingPortal.sessions.create({
       customer: billing.stripe_customer_id,
       return_url: `${appConfig.appUrl}/`,
     });

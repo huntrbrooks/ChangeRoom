@@ -8,9 +8,12 @@ import {
   getUserBillingByStripeCustomer,
 } from "@/lib/db-access";
 
-const stripe = new Stripe(stripeConfig.secretKey, {
-  apiVersion: "2025-02-24.acacia",
-});
+// Lazy Stripe client initialization (only created when route handler runs, not during build)
+function getStripe() {
+  return new Stripe(stripeConfig.secretKey, {
+    apiVersion: "2025-02-24.acacia",
+  });
+}
 
 /**
  * POST /api/billing/create-checkout-session
@@ -53,7 +56,7 @@ export async function POST(req: NextRequest) {
     let customerId = billing.stripe_customer_id;
 
     if (!customerId) {
-      const customer = await stripe.customers.create({
+      const customer = await getStripe().customers.create({
         metadata: {
           clerkUserId: userId,
         },
@@ -75,7 +78,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Create checkout session
-    const session = await stripe.checkout.sessions.create({
+    const session = await getStripe().checkout.sessions.create({
       customer: customerId,
       mode,
       line_items: [
