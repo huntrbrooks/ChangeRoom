@@ -169,6 +169,27 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
         base_url = "https://generativelanguage.googleapis.com/v1beta/models"
         model_name = "gemini-3-pro-image-preview"
         
+        # First, verify the model is available
+        try:
+            list_endpoint = f"{base_url}?key={api_key}"
+            async with httpx.AsyncClient(timeout=10.0) as list_client:
+                list_response = await list_client.get(list_endpoint)
+                if list_response.is_success:
+                    list_data = list_response.json()
+                    available_models = [m.get("name", "").split("/")[-1] for m in list_data.get("models", [])]
+                    logger.info(f"Available models (sample): {', '.join(available_models[:20])}")
+                    
+                    # Check if our model is available
+                    if model_name not in available_models:
+                        # Try to find similar models
+                        image_models = [m for m in available_models if "gemini" in m.lower() and "image" in m.lower()]
+                        logger.warning(f"Model {model_name} not found. Available image models: {image_models}")
+                        if image_models:
+                            model_name = image_models[0]
+                            logger.info(f"Trying alternative model: {model_name}")
+        except Exception as e:
+            logger.warning(f"Could not verify model availability: {e}")
+        
         # Make async HTTP request using Gemini 3 Pro Image
         async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minute timeout for image generation
             try:
