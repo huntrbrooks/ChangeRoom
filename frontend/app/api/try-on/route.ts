@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { r2, getPublicUrl } from "@/lib/r2";
-import { r2Config, geminiConfig } from "@/lib/config";
+import { r2Config } from "@/lib/config";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import {
   getPersonImageById,
@@ -12,6 +12,7 @@ import {
   updateTryOnSessionResult,
 } from "@/lib/db-access";
 import { randomUUID } from "crypto";
+import { generateTryOnWithGemini3ProImage } from "@/lib/tryOnGemini3";
 
 /**
  * Fetch image from R2 and convert to base64
@@ -56,178 +57,10 @@ async function uploadToR2(
   await r2.send(command);
 }
 
-/**
- * Generate try-on image using Imagen 4 via Gemini API
- * Uses @google/genai SDK with Imagen 4 model for image generation
- */
-async function generateTryOnWithImagen4(
-  personImageBase64: string,
-  personMimeType: string,
-  clothingImages: Array<{ base64: string; mimeType: string }>
-): Promise<{ base64: string; mimeType: string }> {
-  // Build parts array with images and text prompt
-  const parts: any[] = [
-    {
-      inlineData: {
-        data: personImageBase64,
-        mimeType: personMimeType,
-      },
-    },
-  ];
-
-  // Add clothing images
-  for (const clothing of clothingImages) {
-    parts.push({
-      inlineData: {
-        data: clothing.base64,
-        mimeType: clothing.mimeType,
-      },
-    });
-  }
-
-  // Create detailed prompt for virtual try-on
-  const prompt = `Generate a photorealistic image of the person in the first image wearing all the clothing items shown in the following images. 
-
-Requirements:
-- Keep the person's face, body shape, and pose consistent with the first image
-- Accurately place and fit all clothing items on the person
-- Maintain realistic lighting and shadows
-- Preserve the person's identity and appearance
-- Do not add extra logos, text, or clothing items beyond what is shown
-- Ensure the clothing fits naturally and looks realistic
-- Generate a high-quality, professional-looking result
-
-The result should look like a professional fashion photograph of the person wearing the complete outfit.`;
-
-  parts.push({
-    text: prompt,
-  });
-
-  // First, try to list available models to see what's actually available
-  let availableModels: string[] = [];
-  try {
-    const listResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${geminiConfig.apiKey}`
-    );
-    if (listResponse.ok) {
-      const listData = await listResponse.json();
-      availableModels = (listData.models || []).map((m: any) => {
-        // Extract just the model name from the full path
-        const name = m.name || "";
-        return name.includes("/") ? name.split("/").pop() : name;
-      });
-      console.log(`Available models (first 10):`, availableModels.slice(0, 10));
-      
-      // Look for any models that mention "imagen" or "image" generation
-      const imageModels = availableModels.filter((name: string) =>
-        name.toLowerCase().includes("imagen") || 
-        name.toLowerCase().includes("image") ||
-        name.toLowerCase().includes("generate")
-      );
-      console.log(`Image generation models found:`, imageModels);
-    }
-  } catch (e) {
-    console.warn("Could not list available models:", e);
-  }
-
-  // Try Imagen 4 Ultra first (highest quality), then other variants
-  const imagenModels = [
-    "imagen-4.0-ultra-generate-001", // Ultra variant - highest quality
-    "imagen-4.0-generate-001",       // Standard Imagen 4
-    "imagen-4.0-fast-generate-001",  // Fast variant
-    "imagen-3.0-generate-001",       // Imagen 3 fallback
-    ...(availableModels.filter((m: string) => 
-      m.toLowerCase().includes("imagen") && 
-      m.toLowerCase().includes("generate")
-    )),
-  ].filter((m, i, arr) => arr.indexOf(m) === i); // Remove duplicates
-
-  // If no Imagen models found, try Gemini models that might support image generation
-  if (imagenModels.length <= 2) {
-    imagenModels.push(
-      "gemini-2.0-flash-exp",
-      "gemini-2.5-flash-exp",
-      ...(availableModels.filter((m: string) => 
-        m.toLowerCase().includes("gemini") && 
-        (m.toLowerCase().includes("flash") || m.toLowerCase().includes("exp"))
-      )),
-    );
-  }
-
-  console.log(`Trying models in order:`, imagenModels);
-
-  let lastError: Error | null = null;
-
-  for (const modelName of imagenModels) {
-    try {
-      console.log(`Attempting to generate image with ${modelName}...`);
-
-      // Use REST API directly for Imagen 4 (via Gemini API endpoint)
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiConfig.apiKey}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                role: "user",
-                parts: parts,
-              },
-            ],
-            generationConfig: {
-              responseModalities: ["IMAGE"],
-            },
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Imagen API error: ${response.status} - ${errorText}`);
-      }
-
-      const data = await response.json();
-
-      // Extract image from response
-      const candidates = data.candidates || [];
-      if (candidates.length === 0) {
-        throw new Error("No candidates in response");
-      }
-
-      const content = candidates[0].content;
-      const parts_out = content?.parts || [];
-
-      // Find image part
-      const imagePart = parts_out.find((p: any) => p.inlineData);
-
-      if (!imagePart || !imagePart.inlineData) {
-        throw new Error("No image data in response");
-      }
-
-      console.log(`✅ Successfully generated image using ${modelName}`);
-
-      return {
-        base64: imagePart.inlineData.data,
-        mimeType: imagePart.inlineData.mimeType || "image/png",
-      };
-    } catch (error: any) {
-      console.warn(`Failed with ${modelName}:`, error.message);
-      lastError = error;
-      // Continue to next model
-      continue;
-    }
-  }
-
-  // If all models failed, throw the last error
-  throw lastError || new Error("All Imagen 4 models failed");
-}
 
 /**
  * POST /api/try-on
- * Generates a try-on image using Imagen 4 via Gemini API
+ * Generates a try-on image using Gemini 3 Pro Image
  * Requires: personImageId, clothingItemIds (1-5 items)
  * Checks and decrements credits before processing
  */
@@ -319,22 +152,31 @@ export async function POST(req: NextRequest) {
       clothing.map((c) => getR2ObjectBase64(c.storage_key))
     );
 
-    // Generate try-on image using Imagen 4 via Gemini API
-    const result = await generateTryOnWithImagen4(
-      personData.base64,
-      personData.mimeType,
-      clothingData.map((d) => ({
-        base64: d.base64,
-        mimeType: d.mimeType,
-      }))
-    );
+    // Generate try-on image using Gemini 3 Pro Image
+    // The function returns a data URL, so we need to extract the base64 part
+    const imageDataUrl = await generateTryOnWithGemini3ProImage({
+      baseImage: personData.base64,
+      baseImageMimeType: personData.mimeType,
+      clothingImages: clothingData.map((d) => d.base64),
+      clothingMimeTypes: clothingData.map((d) => d.mimeType),
+    });
+
+    // Extract base64 from data URL (format: data:image/png;base64,<base64> or data:image/jpeg;base64,<base64>)
+    const base64Match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!base64Match) {
+      throw new Error("Invalid image data URL format from Gemini");
+    }
+
+    const [, fullMimeType, base64Data] = base64Match;
+    // Extract file extension from mime type (e.g., "image/png" -> "png")
+    const fileExtension = fullMimeType.split("/")[1] || "png";
 
     // Convert base64 to buffer
-    const imageBuffer = Buffer.from(result.base64, "base64");
+    const imageBuffer = Buffer.from(base64Data, "base64");
 
     // Save result to R2
-    const resultKey = `tryon/user_${userId}/${randomUUID()}.png`;
-    await uploadToR2(resultKey, imageBuffer, result.mimeType);
+    const resultKey = `tryon/user_${userId}/${randomUUID()}.${fileExtension}`;
+    await uploadToR2(resultKey, imageBuffer, fullMimeType);
     const resultPublicUrl = getPublicUrl(resultKey);
 
     // Update session with result
@@ -345,8 +187,8 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({
-      imageBase64: result.base64,
-      mimeType: result.mimeType,
+      imageBase64: base64Data,
+      mimeType: fullMimeType,
       publicUrl: resultPublicUrl,
     });
   } catch (err: any) {
