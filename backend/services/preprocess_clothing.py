@@ -40,13 +40,81 @@ from .storage import get_storage_backend
 
 logger = logging.getLogger(__name__)
 
-# Valid categories - these match what the frontend expects
-VALID_CATEGORIES = {
-    "UPPER_BODY", "LOWER_BODY", "FOOTWEAR", "ACCESSORY", "FULL_BODY",
-    "upper_body", "lower_body", "footwear", "accessory", "full_body"
+# Valid body_regions - these match what the frontend expects
+VALID_BODY_REGIONS = {
+    "UPPER_BODY", "LOWER_BODY", "SHOES", "ACCESSORIES", "FULL_BODY",
+    "upper_body", "lower_body", "shoes", "accessories", "full_body",
+    # Legacy support
+    "FOOTWEAR", "ACCESSORY", "footwear", "accessory"
 }
 
 CLOTHING_UPLOAD_SUBDIR = "clothing"
+
+
+def normalize_clothing_classification(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Fix obviously wrong categories using simple keyword rules.
+    
+    This uses the item_type and description text that the model provides
+    to override obviously wrong body_region classifications.
+    """
+    body = (data.get("body_region") or data.get("category") or "").upper().strip()
+    item_type = (data.get("item_type") or "").lower()
+    desc = (data.get("short_description") or "").lower()
+    text = f"{item_type} {desc}"
+    
+    def contains(words):
+        """Check if any of the words appear in the text."""
+        return any(w in text for w in words)
+    
+    # Strongest constraints first - use keyword matching to force correct category
+    
+    # Shoes vocabulary - strongest keywords
+    if contains(["boot", "boots", "shoe", "shoes", "sneaker", "sneakers",
+                 "trainer", "trainers", "heel", "heels", "sandal", "sandals",
+                 "loafer", "loafers", "high heel", "high-heels", "footwear",
+                 "lace-up", "lace up", "sole", "soles"]):
+        body = "SHOES"
+        logger.info(f"Keyword correction: forced body_region to SHOES based on text: '{text[:100]}'")
+    
+    # Lower body vocabulary
+    elif contains(["jean", "jeans", "trouser", "trousers", "pant", "pants",
+                   "chino", "chinos", "shorts", "skirt", "skirts", "leggings",
+                   "cargo", "waistband", "inseam", "hem"]):
+        body = "LOWER_BODY"
+        logger.info(f"Keyword correction: forced body_region to LOWER_BODY based on text: '{text[:100]}'")
+    
+    # Upper body vocabulary
+    elif contains(["t shirt", "t-shirt", "tshirt", "tee", "tees", "shirt", "shirts",
+                   "blouse", "top", "tops", "hoodie", "hoodies", "sweatshirt",
+                   "jumper", "sweater", "jacket", "jackets", "coat", "coats",
+                   "cardigan", "pullover", "henley", "polo"]):
+        body = "UPPER_BODY"
+        logger.info(f"Keyword correction: forced body_region to UPPER_BODY based on text: '{text[:100]}'")
+    
+    # Accessories vocabulary
+    elif contains(["hat", "hats", "cap", "caps", "beanie", "beanies", "beret",
+                   "belt", "belts", "scarf", "scarves", "bag", "bags",
+                   "backpack", "handbag", "tie", "ties", "sunglasses"]):
+        body = "ACCESSORIES"
+        logger.info(f"Keyword correction: forced body_region to ACCESSORIES based on text: '{text[:100]}'")
+    
+    # Full body vocabulary
+    elif contains(["dress", "dresses", "jumpsuit", "jumpsuits", "playsuit",
+                   "overall", "overalls", "romper", "rompers"]):
+        body = "FULL_BODY"
+        logger.info(f"Keyword correction: forced body_region to FULL_BODY based on text: '{text[:100]}'")
+    
+    # Fall back if model gave some garbage
+    valid = {"UPPER_BODY", "LOWER_BODY", "SHOES", "ACCESSORIES", "FULL_BODY"}
+    if body not in valid:
+        logger.warning(f"Invalid body_region '{body}', defaulting to UPPER_BODY")
+        body = "UPPER_BODY"
+    
+    data["body_region"] = body
+    # Keep category for backward compatibility
+    data["category"] = body
+    return data
 
 
 async def analyze_single_clothing_image(
@@ -58,6 +126,7 @@ async def analyze_single_clothing_image(
     Call OpenAI on a single image and return structured clothing metadata.
     
     This processes ONE image independently to ensure accurate categorization.
+    Uses improved prompt and rule-based correction layer.
     
     Args:
         image_bytes: Image file bytes
@@ -65,7 +134,7 @@ async def analyze_single_clothing_image(
         original_filename: Original filename for context
         
     Returns:
-        Dictionary with category, item_type, color, style, tags, etc.
+        Dictionary with body_region, item_type, color, style, tags, etc.
     """
     client = AsyncOpenAI(api_key=api_key)
     
@@ -85,36 +154,37 @@ async def analyze_single_clothing_image(
     # Convert to base64
     image_base64 = base64.b64encode(image_bytes).decode('utf-8')
     
-    # Build prompt with strict category rules
-    system_prompt = """You are a fashion classifier. Identify which body region this clothing item belongs to and return STRICT JSON.
+    # Improved system prompt with explicit definitions
+    system_prompt = """You are a fashion classifier for a virtual try on app.
+There is exactly ONE primary clothing item in each image. Ignore any background or secondary items.
 
-Valid categories (use EXACTLY these):
-- UPPER_BODY (shirts, hoodies, jackets, tops, t-shirts, blouses, sweaters)
-- LOWER_BODY (pants, shorts, skirts, jeans, trousers, leggings)
-- FOOTWEAR (shoes, boots, sneakers, sandals, heels, any item worn on feet)
-- ACCESSORY (hats, caps, bags, belts, scarves, jewelry, sunglasses)
-- FULL_BODY (dresses, jumpsuits, overalls, rompers)
+You must decide which part of the human body this item belongs to.
 
-⚠️ CRITICAL RULES:
-- Boots/shoes → FOOTWEAR (NOT UPPER_BODY)
-- Pants/jeans → LOWER_BODY (NOT UPPER_BODY)
-- Hats/caps → ACCESSORY (NOT UPPER_BODY)
-- Look at what the item ACTUALLY IS before classifying
+Allowed body_region values:
+  - UPPER_BODY  (t shirts, shirts, hoodies, jumpers, jackets, coats, tops)
+  - LOWER_BODY  (jeans, trousers, pants, shorts, skirts, leggings)
+  - SHOES       (shoes, boots, sneakers, heels, sandals, trainers, loafers)
+  - ACCESSORIES (hats, caps, beanies, belts, scarves, bags, backpacks, ties)
+  - FULL_BODY   (dresses, jumpsuits, overalls, two piece sets that must be worn together)
 
-Respond with JSON only, no commentary."""
+Never label shirts, t shirts, hoodies or jackets as LOWER_BODY or SHOES.
+Never label jeans, pants, or skirts as SHOES.
+Boots, sneakers and heels are always SHOES.
+
+Return ONLY valid JSON, no text before or after."""
     
-    user_prompt = """Classify this clothing item and extract metadata. 
-
-Return JSON with these exact fields:
-- category: One of UPPER_BODY, LOWER_BODY, FOOTWEAR, ACCESSORY, FULL_BODY
-- item_type: Specific type (e.g., "brown leather lace up boots", "black baseball cap", "blue cargo pants")
-- color: Primary color(s)
-- style: Style description (casual, formal, streetwear, vintage, etc.)
-- tags: Array of 3-10 useful tags
-- short_description: One clear sentence describing the item
-- suggested_filename: snake_case filename (e.g., "brown_leather_boots", "black_baseball_cap")
-
-Return ONLY valid JSON, no markdown, no code blocks."""
+    user_prompt = """Look carefully at the image and identify the one main clothing item.
+Respond with JSON using exactly these keys:
+{
+  "body_region": "UPPER_BODY | LOWER_BODY | SHOES | ACCESSORIES | FULL_BODY",
+  "item_type": "short plain english name e.g. 'brown leather boots'",
+  "color": "main color or colors, e.g. 'dark brown'",
+  "style": "short style summary, e.g. 'casual workwear'",
+  "tags": ["tag1", "tag2", ...],
+  "short_description": "one sentence description",
+  "suggested_filename": "snake_case_filename_without_extension"
+}
+The body_region must strictly match the definitions above."""
     
     messages = [
         {
@@ -142,7 +212,7 @@ Return ONLY valid JSON, no markdown, no code blocks."""
     try:
         # Call OpenAI with JSON mode
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",  # Cost-effective and accurate
+            model="gpt-4o-mini",  # Cost-effective and accurate (can bump to gpt-4o if still misbehaves)
             messages=messages,
             response_format={"type": "json_object"},  # Ensures valid JSON
             temperature=0.0,  # Deterministic
@@ -156,42 +226,38 @@ Return ONLY valid JSON, no markdown, no code blocks."""
         # Parse JSON
         data = json.loads(json_text)
         
-        # Guard rails: validate category
-        category = data.get("category", "").strip().upper()
+        # Apply rule-based correction layer to fix obvious misclassifications
+        data = normalize_clothing_classification(data)
         
-        # Map common variations to standard categories
-        category_map = {
-            "SHOES": "FOOTWEAR",
-            "SHOE": "FOOTWEAR",
-            "BOOT": "FOOTWEAR",
-            "BOOTS": "FOOTWEAR",
-            "UPPER_BODY": "UPPER_BODY",
-            "LOWER_BODY": "LOWER_BODY",
-            "ACCESSORY": "ACCESSORY",
-            "ACCESSORIES": "ACCESSORY",
-            "FULL_BODY": "FULL_BODY",
-            "DRESS": "FULL_BODY"
-        }
-        
-        if category in category_map:
-            category = category_map[category]
-        
-        # Validate category
-        if category not in VALID_CATEGORIES:
-            logger.warning(f"Invalid category '{category}' for {original_filename}, defaulting to UPPER_BODY")
-            category = "UPPER_BODY"
-        
-        data["category"] = category
-        
-        logger.info(f"Analysis result for {original_filename}: category={category}, item_type={data.get('item_type', 'unknown')}")
+        # Log what we got after normalization
+        body_region = data.get("body_region", "").upper()
+        item_type = data.get("item_type", "")
+        logger.info(f"Final analysis for {original_filename}: body_region={body_region}, item_type='{item_type}'")
         
         return data
         
     except Exception as e:
         logger.error(f"OpenAI analysis failed for {original_filename}: {e}", exc_info=True)
-        # Return safe defaults
+        # Try to infer body_region from filename as last resort
+        filename_lower = original_filename.lower()
+        inferred_body_region = None
+        
+        if any(kw in filename_lower for kw in ["boot", "shoe", "sneaker", "footwear", "heel"]):
+            inferred_body_region = "SHOES"
+        elif any(kw in filename_lower for kw in ["pant", "jean", "short", "skirt", "trouser", "legging"]):
+            inferred_body_region = "LOWER_BODY"
+        elif any(kw in filename_lower for kw in ["hat", "cap", "bag", "belt", "scarf"]):
+            inferred_body_region = "ACCESSORIES"
+        elif any(kw in filename_lower for kw in ["dress", "jumpsuit", "overall"]):
+            inferred_body_region = "FULL_BODY"
+        else:
+            inferred_body_region = "UPPER_BODY"  # Default fallback
+        
+        logger.warning(f"Using inferred body_region '{inferred_body_region}' from filename for {original_filename} due to OpenAI error")
+        
         return {
-            "category": "UPPER_BODY",
+            "body_region": inferred_body_region,
+            "category": inferred_body_region,  # For backward compatibility
             "item_type": "clothing item",
             "color": "unknown",
             "style": "casual",
@@ -258,8 +324,8 @@ async def preprocess_clothing_batch(
             
             logger.info(f"Analysis result for image {index} ({original_name}): {json.dumps(analysis, indent=2)}")
             
-            # Get category (validated in analyze_single_clothing_image)
-            category = analysis.get("category", "UPPER_BODY").upper()
+            # Get body_region (normalized and validated in analyze_single_clothing_image + normalize function)
+            body_region = analysis.get("body_region", analysis.get("category", "UPPER_BODY")).upper()
             
             # Build filename from analysis
             suggested_filename = analysis.get("suggested_filename", "")
@@ -285,10 +351,21 @@ async def preprocess_clothing_batch(
                 ext = ".jpg"
             ext = ext.lower()
             
-            # Create unique filename: category_base_name_uniqueid.ext
-            # Example: footwear_brown_leather_boots_abc12345.jpg
+            # Create unique filename: body_region_base_name_uniqueid.ext
+            # Example: shoes_brown_leather_boots_abc12345.jpg or upper_body_hoodie_def67890.jpg
+            # Map SHOES to "shoes" for filename (instead of "footwear")
+            filename_category_map = {
+                "SHOES": "shoes",
+                "FOOTWEAR": "shoes",
+                "UPPER_BODY": "upper_body",
+                "LOWER_BODY": "lower_body",
+                "ACCESSORIES": "accessories",
+                "ACCESSORY": "accessories",
+                "FULL_BODY": "full_body"
+            }
+            category_for_filename = filename_category_map.get(body_region, body_region.lower())
             unique_suffix = uuid.uuid4().hex[:8]
-            saved_filename = f"{category.lower()}_{base_name}_{unique_suffix}{ext}"
+            saved_filename = f"{category_for_filename}_{base_name}_{unique_suffix}{ext}"
             
             # Limit filename length
             if len(saved_filename) > 200:
@@ -332,21 +409,22 @@ async def preprocess_clothing_batch(
             logger.info(f"Saved image {index} to: {storage_path} -> {public_url}")
             
             # Build metadata dict for response
+            item_type = analysis.get("item_type", "")
+            short_description = analysis.get("short_description", "")
+            
             metadata = {
-                "category": category,
-                "item_type": analysis.get("item_type", ""),
+                "body_region": body_region,
+                "category": body_region,  # For backward compatibility
+                "item_type": item_type,
                 "color": analysis.get("color", "unknown"),
                 "style": analysis.get("style", "casual"),
-                "short_description": analysis.get("short_description", ""),
-                "description": analysis.get("short_description", ""),  # Alias for compatibility
+                "short_description": short_description,
+                "description": short_description,  # Alias for compatibility
                 "tags": analysis.get("tags", []),
                 "original_filename": original_name,
             }
             
             # Build response matching frontend expectations
-            item_type = analysis.get("item_type", "")
-            short_description = analysis.get("short_description", "")
-            
             return {
                 "status": "success",
                 "index": index,
@@ -357,7 +435,8 @@ async def preprocess_clothing_batch(
                 "url": public_url,  # Alias for compatibility
                 "storage_path": storage_path,
                 # Top-level fields that frontend expects
-                "category": category,
+                "body_region": body_region,
+                "category": body_region,  # For backward compatibility
                 "subcategory": item_type,  # Frontend maps this to analysis.item_type
                 "description": short_description,
                 "color": analysis.get("color", "unknown"),
@@ -366,7 +445,8 @@ async def preprocess_clothing_batch(
                 "recommended_filename": analysis.get("suggested_filename", ""),
                 # Full analysis object (for detailed metadata)
                 "analysis": {
-                    "category": category,
+                    "body_region": body_region,
+                    "category": body_region,  # For backward compatibility
                     "item_type": item_type,
                     "color": analysis.get("color", "unknown"),
                     "style": analysis.get("style", "casual"),
@@ -380,15 +460,33 @@ async def preprocess_clothing_batch(
             
         except Exception as e:
             logger.error(f"Error processing image {index} ({original_name}): {e}", exc_info=True)
+            # Try to infer body_region from filename even on error
+            filename_lower = original_name.lower()
+            inferred_body_region = "UPPER_BODY"  # Default fallback
+            
+            if any(kw in filename_lower for kw in ["boot", "shoe", "sneaker", "footwear", "heel"]):
+                inferred_body_region = "SHOES"
+            elif any(kw in filename_lower for kw in ["pant", "jean", "short", "skirt", "trouser", "legging"]):
+                inferred_body_region = "LOWER_BODY"
+            elif any(kw in filename_lower for kw in ["hat", "cap", "bag", "belt", "scarf"]):
+                inferred_body_region = "ACCESSORIES"
+            elif any(kw in filename_lower for kw in ["dress", "jumpsuit", "overall"]):
+                inferred_body_region = "FULL_BODY"
+            
+            logger.warning(f"Using inferred body_region '{inferred_body_region}' for failed image {original_name}")
+            
             return {
                 "status": "error",
                 "index": index,
                 "original_filename": original_name,
                 "error": str(e),
+                "body_region": inferred_body_region,
+                "category": inferred_body_region,  # For backward compatibility
                 "analysis": {
-                    "category": "UPPER_BODY",  # Safe fallback
+                    "body_region": inferred_body_region,
+                    "category": inferred_body_region,
                     "item_type": "unknown",
-                    "description": "Failed to analyze",
+                    "description": f"Failed to analyze: {str(e)}",
                 }
             }
     
@@ -402,8 +500,8 @@ async def preprocess_clothing_batch(
     
     logger.info(f"Batch preprocessing complete: {len(results)} items processed")
     
-    # Log summary of categories
-    categories = [r.get("analysis", {}).get("category", "unknown") for r in results if r.get("status") == "success"]
-    logger.info(f"Categories detected: {categories}")
+    # Log summary of body_regions
+    body_regions = [r.get("body_region") or r.get("analysis", {}).get("body_region") or r.get("category", "unknown") for r in results if r.get("status") == "success"]
+    logger.info(f"Body regions detected: {body_regions}")
     
     return results

@@ -436,6 +436,14 @@ async def preprocess_clothing_batch(
         
         logger.info(f"Batch preprocessing complete: {len(processed_items)} items processed")
         
+        # Log body_regions for debugging
+        for idx, item in enumerate(processed_items):
+            if item.get("status") == "success":
+                body_region = item.get("body_region") or item.get("analysis", {}).get("body_region") or item.get("category", "MISSING")
+                logger.info(f"Item {idx} body_region: {body_region}")
+            else:
+                logger.warning(f"Item {idx} failed: {item.get('error', 'Unknown error')}")
+        
         return {
             "items": processed_items,
             "total": len(processed_items)

@@ -42,7 +42,13 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
     This function uses direct REST API calls to Gemini API with API key authentication.
     No SDKs or OAuth2 are required - just set GEMINI_API_KEY environment variable.
     
-    API Endpoint: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+    Model Selection Strategy:
+    - Prioritizes gemini-1.5-pro for best quality output
+    - Falls back to gemini-2.0-flash-exp for latest features
+    - Uses gemini-1.5-flash as reliable fallback
+    - Tries v1 API first, then v1beta for compatibility
+    
+    API Endpoint: https://generativelanguage.googleapis.com/v1/models/{model}:generateContent
     Authentication: API key passed as query parameter (?key={api_key})
     Request Format: JSON with images as base64 inline_data
     
@@ -266,23 +272,28 @@ Output:
         # Add text prompt
         parts.append({"text": user_prompt})
         
-        logger.info(f"Sending {len(parts)} content parts: {len(limited_garments) + 1} images + 1 text")
+        logger.info(f"🚀 Starting virtual try-on generation")
+        logger.info(f"   Person image: {len(user_img_base64)} chars (base64)")
+        logger.info(f"   Clothing items: {len(limited_garments)}")
+        logger.info(f"   Total content parts: {len(parts)} ({len(limited_garments) + 1} images + 1 text)")
+        logger.info(f"   Trying models in quality order: {', '.join(model_options)}")
         
-        # Try multiple models in order of preference
-        # These models support image generation via REST API with API key authentication
-        # Using v1 API version for better model availability
+        # Optimized model selection for best image generation quality
+        # Models ordered by quality and image generation capability
+        # Priority: Best quality first, then fallback to reliable alternatives
         model_options = [
-            "gemini-2.0-flash-exp",      # Latest experimental model with image generation
-            "gemini-1.5-pro",            # Pro model with image support
-            "gemini-1.5-flash",          # Flash model with image support
+            "gemini-1.5-pro",            # Best quality: Pro model with excellent image generation
+            "gemini-2.0-flash-exp",      # Latest experimental: Great quality, fast
+            "gemini-1.5-flash",          # Reliable fallback: Fast and stable
         ]
         
-        # Try v1 API first, fallback to v1beta if needed
+        # Try v1 API first (more stable), fallback to v1beta if needed
         base_urls = [
             "https://generativelanguage.googleapis.com/v1/models",
             "https://generativelanguage.googleapis.com/v1beta/models",
         ]
         last_error = None
+        successful_model = None
         
         # Make async HTTP request with fallback models and API versions
         # Using httpx for async REST API calls (no SDK required)
@@ -340,7 +351,9 @@ Output:
                             last_error = ValueError("Image data is empty in Gemini response")
                             continue
                         
-                        logger.info(f"Successfully generated image using model: {model_name}")
+                        successful_model = f"{model_name} ({base_url.split('/')[-2]})"
+                        logger.info(f"✅ Successfully generated image using model: {successful_model}")
+                        logger.info(f"   Image size: {len(image_base64)} characters (base64), MIME type: {mime_type}")
                         # Return as data URL
                         return f"data:{mime_type};base64,{image_base64}"
                         
@@ -353,10 +366,19 @@ Output:
                         last_error = e
                         continue
             
-            # If all models failed, raise the last error
+            # If all models failed, raise the last error with helpful context
             if last_error:
+                error_msg = str(last_error)
+                if "404" in error_msg or "NOT_FOUND" in error_msg:
+                    raise ValueError(
+                        f"Gemini API: Model not found. This may indicate:\n"
+                        f"1. Your API key doesn't have access to image generation models\n"
+                        f"2. The model names have changed in the API\n"
+                        f"3. You need to enable Generative AI API in Google Cloud Console\n"
+                        f"Original error: {error_msg}"
+                    )
                 raise last_error
-            raise ValueError("All Gemini models failed to generate image")
+            raise ValueError("All Gemini models failed to generate image. No successful response from any model.")
             
     except Exception as e:
         logger.error(f"Error in Gemini image generation: {e}", exc_info=True)

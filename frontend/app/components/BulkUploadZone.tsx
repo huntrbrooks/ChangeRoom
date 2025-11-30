@@ -104,7 +104,8 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         index: item.index,
         original_filename: item.original_filename || item.metadata?.original_filename || selectedFiles[item.index]?.name || `item_${item.index}`,
         analysis: {
-          category: item.analysis?.category || item.category || 'unknown',
+          body_region: item.analysis?.body_region || item.body_region || item.analysis?.category || item.category || 'unknown',
+          category: item.analysis?.body_region || item.body_region || item.analysis?.category || item.category || 'unknown',  // For backward compatibility
           item_type: item.analysis?.item_type || item.subcategory || '',
           color: item.analysis?.color || item.color,
           style: item.analysis?.style || item.style,
@@ -351,7 +352,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                       {isSuccess && (
                         <div className="mt-0.5 sm:mt-1 space-y-0.5">
                           <p className="text-green-700 font-bold text-[10px] sm:text-xs uppercase">
-                            ✓ {item.analysis?.category?.replace(/_/g, ' ') || 'Analyzed'}
+                            ✓ {item.analysis?.body_region?.replace(/_/g, ' ') || item.analysis?.category?.replace(/_/g, ' ') || 'Analyzed'}
                           </p>
                           
                           {/* Item type, for example "leather lace up boots" */}
