@@ -200,22 +200,62 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
                 
                 data = response.json()
                 
+                # Log response structure for debugging
+                logger.info(f"Gemini API response keys: {list(data.keys())}")
+                
                 # Extract image from response
                 candidates = data.get("candidates", [])
                 if not candidates:
+                    logger.error(f"No candidates in response. Full response: {json.dumps(data, indent=2)[:1000]}")
                     raise ValueError("No candidates returned from Gemini 3 Pro Image")
                 
-                content_parts = candidates[0].get("content", {}).get("parts", [])
+                candidate = candidates[0]
+                logger.info(f"Candidate keys: {list(candidate.keys())}")
+                
+                # Check for safety ratings or finish reasons
+                if "safetyRatings" in candidate:
+                    logger.warning(f"Safety ratings: {candidate.get('safetyRatings')}")
+                if "finishReason" in candidate:
+                    finish_reason = candidate.get("finishReason")
+                    logger.info(f"Finish reason: {finish_reason}")
+                    if finish_reason and finish_reason != "STOP":
+                        logger.warning(f"Unexpected finish reason: {finish_reason}")
+                
+                content = candidate.get("content", {})
+                logger.info(f"Content keys: {list(content.keys())}")
+                
+                content_parts = content.get("parts", [])
+                logger.info(f"Number of parts in response: {len(content_parts)}")
+                
+                # Log part types for debugging
+                for i, part in enumerate(content_parts):
+                    logger.info(f"Part {i} keys: {list(part.keys())}")
+                    if "text" in part:
+                        logger.info(f"Part {i} has text: {str(part.get('text', ''))[:100]}")
                 
                 # Find the first image in the response
+                # Check both snake_case (inline_data) and camelCase (inlineData)
                 image_part = None
                 for part in content_parts:
-                    if "inline_data" in part and part["inline_data"].get("data"):
-                        image_part = part["inline_data"]
-                        break
+                    # Try snake_case first (Python API format)
+                    if "inline_data" in part:
+                        inline_data = part["inline_data"]
+                        if inline_data.get("data"):
+                            image_part = inline_data
+                            logger.info(f"Found image in part with inline_data (snake_case)")
+                            break
+                    # Try camelCase (JavaScript API format)
+                    elif "inlineData" in part:
+                        inline_data = part["inlineData"]
+                        if inline_data.get("data"):
+                            image_part = inline_data
+                            logger.info(f"Found image in part with inlineData (camelCase)")
+                            break
                 
                 if not image_part:
-                    raise ValueError("No image part in Gemini 3 Pro Image response")
+                    # Log full response structure for debugging
+                    logger.error(f"No image part found. Response structure: {json.dumps(data, indent=2)[:2000]}")
+                    raise ValueError("No image part in Gemini 3 Pro Image response. Check logs for response structure.")
                 
                 image_base64 = image_part.get("data")
                 mime_type = image_part.get("mime_type", "image/png")
