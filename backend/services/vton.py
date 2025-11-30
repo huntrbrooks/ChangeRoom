@@ -272,12 +272,6 @@ Output:
         # Add text prompt
         parts.append({"text": user_prompt})
         
-        logger.info(f"🚀 Starting virtual try-on generation")
-        logger.info(f"   Person image: {len(user_img_base64)} chars (base64)")
-        logger.info(f"   Clothing items: {len(limited_garments)}")
-        logger.info(f"   Total content parts: {len(parts)} ({len(limited_garments) + 1} images + 1 text)")
-        logger.info(f"   Trying models in quality order: {', '.join(model_options)}")
-        
         # Optimized model selection for best image generation quality
         # Models ordered by quality and image generation capability
         # Priority: Best quality first, then fallback to reliable alternatives
@@ -286,6 +280,12 @@ Output:
             "gemini-2.0-flash-exp",      # Latest experimental: Great quality, fast
             "gemini-1.5-flash",          # Reliable fallback: Fast and stable
         ]
+        
+        logger.info(f"🚀 Starting virtual try-on generation")
+        logger.info(f"   Person image: {len(user_img_base64)} chars (base64)")
+        logger.info(f"   Clothing items: {len(limited_garments)}")
+        logger.info(f"   Total content parts: {len(parts)} ({len(limited_garments) + 1} images + 1 text)")
+        logger.info(f"   Trying models in quality order: {', '.join(model_options)}")
         
         # Try v1 API first (more stable), fallback to v1beta if needed
         base_urls = [
