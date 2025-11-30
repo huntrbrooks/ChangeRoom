@@ -36,21 +36,20 @@ async def generate_try_on(user_image_file, garment_image_files, category="upper_
 
 async def _generate_with_gemini(user_image_file, garment_image_files, category="upper_body", garment_metadata=None):
     """
-    Uses Gemini API directly via REST for virtual try-on image generation.
+    Uses Imagen 4 via Gemini API for virtual try-on image generation.
     Generates a photorealistic image of the person wearing all clothing items.
     
-    This function uses direct REST API calls to Gemini API with API key authentication.
+    This function uses direct REST API calls to Gemini API with Imagen 4 models.
+    Imagen 4 models are accessed through the Gemini API endpoint.
     No SDKs or OAuth2 are required - just set GEMINI_API_KEY environment variable.
     
     Model Selection Strategy:
-    - Prioritizes gemini-1.5-pro for best quality output
-    - Falls back to gemini-2.0-flash-exp for latest features
-    - Uses gemini-1.5-flash as reliable fallback
-    - Tries v1 API first, then v1beta for compatibility
+    - Uses imagen-4.0-generate-001 for high quality output
+    - Falls back to imagen-4.0-fast-generate-001 for faster generation
     
-    API Endpoint: https://generativelanguage.googleapis.com/v1/models/{model}:generateContent
+    API Endpoint: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
     Authentication: API key passed as query parameter (?key={api_key})
-    Request Format: JSON with images as base64 inline_data
+    Request Format: JSON with images as base64 inline_data and responseModalities: ["IMAGE"]
     
     Args:
         user_image_file: File-like object of the person image
@@ -275,20 +274,17 @@ Output:
         # Optimized model selection for best image generation quality
         # Models ordered by quality and image generation capability
         # Priority: Best quality first, then fallback to reliable alternatives
-        logger.info(f"🚀 Starting virtual try-on generation")
+        logger.info(f"🚀 Starting virtual try-on generation with Imagen 4")
         logger.info(f"   Person image: {len(user_img_base64)} chars (base64)")
         logger.info(f"   Clothing items: {len(limited_garments)}")
         logger.info(f"   Total content parts: {len(parts)} ({len(limited_garments) + 1} images + 1 text)")
         
-        # IMPORTANT: Standard Gemini models (gemini-1.5-flash, gemini-1.5-pro) don't generate images
-        # They can analyze images but cannot create new images
-        # For image generation, you need:
-        # - Google Imagen API
-        # - OpenAI DALL-E
-        # - Or a specialized virtual try-on service
-        # 
-        # We'll try gemini-1.5-flash as a last resort, but it likely won't return images
-        model_options = ["gemini-1.5-flash"]
+        # Use Imagen 4 models for image generation via Gemini API
+        # Imagen 4 models are available through the Gemini API endpoint
+        model_options = [
+            "imagen-4.0-generate-001",      # Standard Imagen 4 - high quality
+            "imagen-4.0-fast-generate-001", # Fast variant - faster generation
+        ]
         base_url = "https://generativelanguage.googleapis.com/v1beta/models"
         last_error = None
         successful_model = None
@@ -299,7 +295,7 @@ Output:
             for model_name in model_options:
                 try:
                     endpoint = f"{base_url}/{model_name}:generateContent"
-                    logger.info(f"Attempting to use model: {model_name} with API: v1beta")
+                    logger.info(f"Attempting to use Imagen 4 model: {model_name} with API: v1beta")
                         
                     response = await client.post(
                         f"{endpoint}?key={api_key}",
@@ -313,6 +309,9 @@ Output:
                                     "parts": parts,
                                 }
                             ],
+                            "generationConfig": {
+                                "responseModalities": ["IMAGE"],
+                            },
                         },
                     )
                     
@@ -366,25 +365,20 @@ Output:
                 error_msg = str(last_error)
                 if "404" in error_msg or "NOT_FOUND" in error_msg or "not found" in error_msg.lower():
                     raise ValueError(
-                        f"Gemini API: Model not found.\n\n"
-                        f"IMPORTANT: Standard Gemini models (gemini-1.5-flash, gemini-1.5-pro) don't generate images - "
-                        f"they analyze them. For image generation, consider:\n"
-                        f"- Google Imagen API (for image generation)\n"
-                        f"- OpenAI DALL-E\n"
-                        f"- Stable Diffusion\n"
-                        f"- Or a specialized virtual try-on service\n\n"
+                        f"Imagen 4 API: Model not found.\n\n"
                         f"Troubleshooting:\n"
-                        f"1. Verify your API key has access to the model\n"
+                        f"1. Verify your API key has access to Imagen 4 models\n"
                         f"2. Enable Generative AI API in Google Cloud Console\n"
-                        f"3. Check that the model name is correct\n\n"
-                        f"Tried model: {', '.join(model_options)}\n"
+                        f"3. Ensure Imagen API is enabled for your project\n"
+                        f"4. Check that the model names are correct\n\n"
+                        f"Tried models: {', '.join(model_options)}\n"
                         f"Original error: {error_msg}"
                     )
                 raise last_error
-            raise ValueError("Gemini model failed to generate image. Standard Gemini models don't support image generation.")
+            raise ValueError("Imagen 4 failed to generate image. Please check your API key has access to Imagen models.")
             
     except Exception as e:
-        logger.error(f"Error in Gemini image generation: {e}", exc_info=True)
+        logger.error(f"Error in Imagen 4 image generation: {e}", exc_info=True)
         raise e
 
 

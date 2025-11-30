@@ -57,13 +57,15 @@ async function uploadToR2(
 }
 
 /**
- * Call Gemini API using REST (not SDK) for try-on generation
+ * Generate try-on image using Imagen 4 via Gemini API
+ * Uses @google/genai SDK with Imagen 4 model for image generation
  */
-async function generateTryOnWithGemini(
+async function generateTryOnWithImagen4(
   personImageBase64: string,
   personMimeType: string,
   clothingImages: Array<{ base64: string; mimeType: string }>
 ): Promise<{ base64: string; mimeType: string }> {
+  // Build parts array with images and text prompt
   const parts: any[] = [
     {
       inlineData: {
@@ -83,54 +85,103 @@ async function generateTryOnWithGemini(
     });
   }
 
-  // Add instruction text
+  // Create detailed prompt for virtual try-on
+  const prompt = `Generate a photorealistic image of the person in the first image wearing all the clothing items shown in the following images. 
+
+Requirements:
+- Keep the person's face, body shape, and pose consistent with the first image
+- Accurately place and fit all clothing items on the person
+- Maintain realistic lighting and shadows
+- Preserve the person's identity and appearance
+- Do not add extra logos, text, or clothing items beyond what is shown
+- Ensure the clothing fits naturally and looks realistic
+- Generate a high-quality, professional-looking result
+
+The result should look like a professional fashion photograph of the person wearing the complete outfit.`;
+
   parts.push({
-    text: `
-First image is the person. Following images are clothing items. Generate one photorealistic image of the same person wearing all the clothing items. Keep pose and identity consistent. Do not add extra logos or text beyond what is visible on the clothing.
-    `.trim(),
+    text: prompt,
   });
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${geminiConfig.apiKey}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts,
+  // Use Imagen 4 model via REST API for image generation
+  // Try different Imagen 4 variants in order of preference
+  const imagenModels = [
+    "imagen-4.0-generate-001",      // Standard Imagen 4
+    "imagen-4.0-fast-generate-001", // Fast variant
+  ];
+
+  let lastError: Error | null = null;
+
+  for (const modelName of imagenModels) {
+    try {
+      console.log(`Attempting to generate image with ${modelName}...`);
+
+      // Use REST API directly for Imagen 4 (via Gemini API endpoint)
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiConfig.apiKey}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
           },
-        ],
-      }),
+          body: JSON.stringify({
+            contents: [
+              {
+                role: "user",
+                parts: parts,
+              },
+            ],
+            generationConfig: {
+              responseModalities: ["IMAGE"],
+            },
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Imagen API error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+
+      // Extract image from response
+      const candidates = data.candidates || [];
+      if (candidates.length === 0) {
+        throw new Error("No candidates in response");
+      }
+
+      const content = candidates[0].content;
+      const parts_out = content?.parts || [];
+
+      // Find image part
+      const imagePart = parts_out.find((p: any) => p.inlineData);
+
+      if (!imagePart || !imagePart.inlineData) {
+        throw new Error("No image data in response");
+      }
+
+      console.log(`✅ Successfully generated image using ${modelName}`);
+
+      return {
+        base64: imagePart.inlineData.data,
+        mimeType: imagePart.inlineData.mimeType || "image/png",
+      };
+    } catch (error: any) {
+      console.warn(`Failed with ${modelName}:`, error.message);
+      lastError = error;
+      // Continue to next model
+      continue;
     }
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
   }
 
-  const data = await response.json();
-  const imagePart = data.candidates?.[0]?.content?.parts?.find(
-    (p: any) => p.inlineData
-  );
-
-  if (!imagePart) {
-    throw new Error("No image returned from Gemini");
-  }
-
-  return {
-    base64: imagePart.inlineData.data,
-    mimeType: imagePart.inlineData.mimeType || "image/png",
-  };
+  // If all models failed, throw the last error
+  throw lastError || new Error("All Imagen 4 models failed");
 }
 
 /**
  * POST /api/try-on
- * Generates a try-on image using Gemini
+ * Generates a try-on image using Imagen 4 via Gemini API
  * Requires: personImageId, clothingItemIds (1-5 items)
  * Checks and decrements credits before processing
  */
@@ -222,8 +273,8 @@ export async function POST(req: NextRequest) {
       clothing.map((c) => getR2ObjectBase64(c.storage_key))
     );
 
-    // Generate try-on image using Gemini REST API
-    const result = await generateTryOnWithGemini(
+    // Generate try-on image using Imagen 4 via Gemini API
+    const result = await generateTryOnWithImagen4(
       personData.base64,
       personData.mimeType,
       clothingData.map((d) => ({
