@@ -275,10 +275,12 @@ Output:
         # Optimized model selection for best image generation quality
         # Models ordered by quality and image generation capability
         # Priority: Best quality first, then fallback to reliable alternatives
+        # Updated model options - using models that support image generation
+        # Order: Try image-specific models first, then general models
         model_options = [
-            "gemini-1.5-pro",            # Best quality: Pro model with excellent image generation
-            "gemini-2.0-flash-exp",      # Latest experimental: Great quality, fast
-            "gemini-1.5-flash",          # Reliable fallback: Fast and stable
+            "gemini-2.5-flash-image",    # Image generation model (same as frontend)
+            "gemini-2.0-flash-exp",      # Latest experimental model
+            "gemini-1.5-pro",            # Pro model with image capabilities
         ]
         
         logger.info(f"🚀 Starting virtual try-on generation")
@@ -287,10 +289,10 @@ Output:
         logger.info(f"   Total content parts: {len(parts)} ({len(limited_garments) + 1} images + 1 text)")
         logger.info(f"   Trying models in quality order: {', '.join(model_options)}")
         
-        # Try v1 API first (more stable), fallback to v1beta if needed
+        # Try v1beta first (supports newer models), then v1 as fallback
         base_urls = [
-            "https://generativelanguage.googleapis.com/v1/models",
             "https://generativelanguage.googleapis.com/v1beta/models",
+            "https://generativelanguage.googleapis.com/v1/models",
         ]
         last_error = None
         successful_model = None
@@ -369,12 +371,13 @@ Output:
             # If all models failed, raise the last error with helpful context
             if last_error:
                 error_msg = str(last_error)
-                if "404" in error_msg or "NOT_FOUND" in error_msg:
+                if "404" in error_msg or "NOT_FOUND" in error_msg or "not found" in error_msg.lower():
                     raise ValueError(
                         f"Gemini API: Model not found. This may indicate:\n"
                         f"1. Your API key doesn't have access to image generation models\n"
                         f"2. The model names have changed in the API\n"
                         f"3. You need to enable Generative AI API in Google Cloud Console\n"
+                        f"Tried models: {', '.join(model_options)}\n"
                         f"Original error: {error_msg}"
                     )
                 raise last_error
