@@ -39,7 +39,7 @@ export default function About() {
           <section className="mb-12">
             <h2 className="text-2xl font-bold mb-4">Our Mission</h2>
             <p className="text-gray-700 leading-relaxed">
-              Change Room was created to solve a fundamental problem in online shopping: you can't try on clothes before buying them. 
+              Change Room was created to solve a fundamental problem in online shopping: you can&apos;t try on clothes before buying them. 
               We use advanced AI and machine learning to create realistic virtual try-on experiences, helping you make confident 
               fashion choices from the comfort of your home.
             </p>
@@ -77,7 +77,7 @@ export default function About() {
                   <h3 className="text-xl font-bold">Privacy First</h3>
                 </div>
                 <p className="text-gray-600">
-                  Your photos and data are processed securely. We don't store your images permanently and respect your privacy.
+                  Your photos and data are processed securely. We don&apos;t store your images permanently and respect your privacy.
                 </p>
               </div>
               <div className="p-6 bg-gray-50 rounded-lg">
@@ -109,7 +109,7 @@ export default function About() {
           <section className="mb-12">
             <h2 className="text-2xl font-bold mb-4">Future Features</h2>
             <p className="text-gray-700 leading-relaxed mb-4">
-              We're constantly improving. Coming soon:
+              We&apos;re constantly improving. Coming soon:
             </p>
             <ul className="list-disc list-inside space-y-2 text-gray-700 ml-4">
               <li>Multi-item try-on (combine multiple clothing pieces)</li>

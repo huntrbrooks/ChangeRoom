@@ -22,7 +22,13 @@ export async function generateTryOnWithGemini3ProImage({
   }
 
   // Build the user message parts: instructions + base image + clothing images
-  const parts: any[] = [
+  const parts: Array<{
+    text?: string;
+    inlineData?: {
+      mimeType: string;
+      data: string;
+    };
+  }> = [
     {
       text:
         "You are a fashion virtual try on engine. " +
@@ -88,7 +94,7 @@ export async function generateTryOnWithGemini3ProImage({
 
   // Find the first image in the response
   const imagePart = contentParts.find(
-    (p: any) => p.inlineData && p.inlineData.data
+    (p: { inlineData?: { data?: string; mimeType?: string } }) => p.inlineData && p.inlineData.data
   );
   if (!imagePart) {
     throw new Error("No image part in Gemini response");

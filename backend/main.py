@@ -38,19 +38,46 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Change Room API")
 
 # Configure CORS
-# Note: allow_origins=["*"] with allow_credentials=True is invalid
-# For production, specify exact origins. For now, remove credentials.
+# For production, specify exact origins in ALLOWED_ORIGINS environment variable
+# Format: comma-separated list, e.g., "https://app.example.com,https://www.example.com"
+allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "")
+if allowed_origins_str:
+    allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",") if origin.strip()]
+else:
+    # Development default: allow localhost
+    allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
-    allow_credentials=False,  # Cannot use credentials with wildcard origins
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=allowed_origins,  # Specific origins for production
+    allow_credentials=True,  # Can enable when origins are specific
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
 # Create uploads directory if it doesn't exist
 UPLOADS_DIR = Path("uploads")
 UPLOADS_DIR.mkdir(exist_ok=True)
+
+# File upload security limits
+MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 10 * 1024 * 1024))  # 10MB default
+MAX_TOTAL_SIZE = int(os.getenv("MAX_TOTAL_SIZE", 50 * 1024 * 1024))  # 50MB default
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+
+def validate_image_file(file: UploadFile) -> tuple[bool, str]:
+    """Validate that uploaded file is a valid image"""
+    if not file.content_type or file.content_type.lower() not in ALLOWED_IMAGE_TYPES:
+        return False, f"Invalid file type. Allowed types: {', '.join(ALLOWED_IMAGE_TYPES)}"
+    
+    if not file.filename:
+        return False, "Filename is required"
+    
+    file_ext = Path(file.filename).suffix.lower()
+    if file_ext not in ALLOWED_EXTENSIONS:
+        return False, f"Invalid file extension. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"
+    
+    return True, ""
 
 # Mount static files for serving uploaded images
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
@@ -75,19 +102,71 @@ async def try_on(
     Supports multiple clothing items for full outfit try-on.
     """
     try:
+        # Validate user image
+        is_valid, error_msg = validate_image_file(user_image)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+        
+        # Read and validate user image size
+        user_image_bytes = await user_image.read()
+        if len(user_image_bytes) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413, 
+                detail=f"User image too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB"
+            )
+        user_image.file.seek(0)  # Reset file pointer
+        
+        total_size = len(user_image_bytes)
+        
         # Collect all clothing images from various sources
         clothing_image_files = []
         
         # Handle multiple uploaded images (new format)
         if clothing_images:
             for img in clothing_images:
+                # Validate clothing image
+                is_valid, error_msg = validate_image_file(img)
+                if not is_valid:
+                    raise HTTPException(status_code=400, detail=f"Clothing image validation failed: {error_msg}")
+                
+                # Validate size
+                img_bytes = await img.read()
+                if len(img_bytes) > MAX_FILE_SIZE:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Clothing image too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB"
+                    )
+                total_size += len(img_bytes)
+                img.file.seek(0)  # Reset file pointer
                 clothing_image_files.append(img.file)
         
         # Handle single uploaded image (backward compatibility)
         if clothing_image:
+            # Validate clothing image
+            is_valid, error_msg = validate_image_file(clothing_image)
+            if not is_valid:
+                raise HTTPException(status_code=400, detail=f"Clothing image validation failed: {error_msg}")
+            
+            # Validate size
+            img_bytes = await clothing_image.read()
+            if len(img_bytes) > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Clothing image too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB"
+                )
+            total_size += len(img_bytes)
+            clothing_image.file.seek(0)  # Reset file pointer
             clothing_image_files.append(clothing_image.file)
         
+        # Validate total size
+        if total_size > MAX_TOTAL_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Total upload size too large. Maximum: {MAX_TOTAL_SIZE / (1024*1024):.1f}MB"
+            )
+        
         # Handle multiple file URLs (new format - comma-separated)
+        opened_files = []  # Track opened files for cleanup
         if clothing_file_urls:
             urls = [url.strip() for url in clothing_file_urls.split(",") if url.strip()]
             for url in urls:
@@ -97,7 +176,9 @@ async def try_on(
                         filename = url.split("/uploads/")[-1].split("?")[0]
                     file_path = UPLOADS_DIR / filename
                     if file_path.exists():
-                        clothing_image_files.append(open(file_path, 'rb'))
+                        file_handle = open(file_path, 'rb')
+                        clothing_image_files.append(file_handle)
+                        opened_files.append(file_handle)
                         logger.info(f"Loaded saved file from URL: {filename}")
                     else:
                         logger.warning(f"File not found for URL: {filename}")
@@ -112,7 +193,9 @@ async def try_on(
                     filename = clothing_file_url.split("/uploads/")[-1].split("?")[0]
                 file_path = UPLOADS_DIR / filename
                 if file_path.exists():
-                    clothing_image_files.append(open(file_path, 'rb'))
+                    file_handle = open(file_path, 'rb')
+                    clothing_image_files.append(file_handle)
+                    opened_files.append(file_handle)
                     logger.info(f"Loaded saved file from URL: {filename}")
                 else:
                     logger.warning(f"File not found for URL: {filename}")
@@ -129,10 +212,15 @@ async def try_on(
         # Limit to 5 items
         if len(clothing_image_files) > 5:
             logger.warning(f"Received {len(clothing_image_files)} clothing items, limiting to 5")
-            # Close extra files
+            # Close extra files (only those we opened from URLs)
             for extra_file in clothing_image_files[5:]:
-                if hasattr(extra_file, 'close'):
-                    extra_file.close()
+                if extra_file in opened_files:
+                    try:
+                        if hasattr(extra_file, 'close'):
+                            extra_file.close()
+                        opened_files.remove(extra_file)
+                    except Exception as e:
+                        logger.warning(f"Error closing extra file: {e}")
             clothing_image_files = clothing_image_files[:5]
         
         # Parse metadata if provided
@@ -172,12 +260,12 @@ async def try_on(
             logger.info(f"Try-on completed successfully. Result URL: {result_url}")
         finally:
             # Close any files we opened from URLs
-            for file_handle in clothing_image_files:
-                if hasattr(file_handle, 'close') and file_handle != user_image.file:
-                    try:
+            for file_handle in opened_files:
+                try:
+                    if hasattr(file_handle, 'close'):
                         file_handle.close()
-                    except:
-                        pass
+                except Exception as e:
+                    logger.warning(f"Error closing file handle: {e}")
         
         return {"image_url": result_url}
     except HTTPException:
@@ -238,10 +326,15 @@ async def analyze_clothing_stream(clothing_images: List[UploadFile], save_files:
                     )
                     analysis = result
                     
-                    # Get the saved file path and URL
-                    saved_file_path = result.get("saved_file", "")
-                    saved_filename = result.get("saved_filename", "")
-                    file_url = f"/uploads/{saved_filename}" if saved_filename else ""
+                    # Get the saved file path and URL (handle None result)
+                    if result:
+                        saved_file_path = result.get("saved_file", "")
+                        saved_filename = result.get("saved_filename", "")
+                        file_url = f"/uploads/{saved_filename}" if saved_filename else ""
+                    else:
+                        saved_file_path = ""
+                        saved_filename = ""
+                        file_url = ""
                     
                     item_result = {
                         "index": idx,
@@ -318,6 +411,8 @@ async def analyze_clothing_items(
                 "X-Accel-Buffering": "no"  # Disable buffering for nginx
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in analyze-clothing endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

@@ -3,6 +3,12 @@ import { UploadZone } from './UploadZone';
 import { Upload, Loader2 } from 'lucide-react';
 import axios from 'axios';
 
+interface FileWithMetadata extends File {
+  metadata?: Record<string, unknown>;
+  detailed_description?: string;
+  category?: string;
+}
+
 interface AnalyzedItem {
   index: number;
   original_filename: string;
@@ -10,7 +16,7 @@ interface AnalyzedItem {
     category: string;
     detailed_description: string;
     suggested_filename: string;
-    metadata: any;
+    metadata: Record<string, unknown>;
   };
   error?: string;
 }
@@ -71,9 +77,10 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
           const newFile = new File([file], suggestedName, { type: file.type });
           
           // Attach metadata to the file object (stored in a custom property)
-          (newFile as any).metadata = analysis.metadata;
-          (newFile as any).detailed_description = analysis.detailed_description;
-          (newFile as any).category = analysis.category;
+          const fileWithMeta = newFile as FileWithMetadata;
+          fileWithMeta.metadata = analysis.metadata;
+          fileWithMeta.detailed_description = analysis.detailed_description;
+          fileWithMeta.category = analysis.category;
           
           processedFiles.push(newFile);
         } else {
@@ -94,9 +101,13 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
       }
 
       setAnalysisProgress('Analysis complete!');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error analyzing clothing items:', error);
-      setAnalysisProgress(`Error: ${error.response?.data?.detail || error.message}`);
+      const axiosError = error && typeof error === 'object' && 'response' in error 
+        ? (error as { response?: { data?: { detail?: string } } })
+        : null;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setAnalysisProgress(`Error: ${axiosError?.response?.data?.detail || errorMessage}`);
       // Still allow files to be added even if analysis fails
       selectedFiles.forEach((file, idx) => {
         if (idx < items.length) {
@@ -119,7 +130,7 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
     // Create a synthetic event to reuse the upload handler
     const syntheticEvent = {
       target: { files: files, value: '' }
-    } as any;
+    } as React.ChangeEvent<HTMLInputElement>;
     
     await handleBulkUpload(syntheticEvent);
   }, [handleBulkUpload]);
@@ -168,7 +179,7 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
         {items.map((item, index) => (
           <UploadZone
             key={index}
-            label={`Item ${index + 1}${item && (item as any).category ? ` (${(item as any).category})` : ''}`}
+            label={`Item ${index + 1}${item && (item as FileWithMetadata).category ? ` (${(item as FileWithMetadata).category})` : ''}`}
             selectedFile={item}
             onFileSelect={(file) => file && onItemSelect(index, file)}
           />

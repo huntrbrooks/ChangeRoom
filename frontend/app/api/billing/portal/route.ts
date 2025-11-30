@@ -15,7 +15,7 @@ function getStripe() {
  * POST /api/billing/portal
  * Creates a Stripe Billing Portal session for managing subscription
  */
-export async function POST(req: NextRequest) {
+export async function POST(_req: NextRequest) {
   const { userId } = await auth();
 
   if (!userId) {
@@ -38,12 +38,13 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ url: session.url });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("billing-portal error:", err);
+    const error = err instanceof Error ? err : new Error(String(err));
     return NextResponse.json(
       {
         error: "Failed to create billing portal session",
-        details: err.message,
+        details: error.message,
       },
       { status: 500 }
     );

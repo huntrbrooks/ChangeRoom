@@ -1,8 +1,23 @@
-import React, { useCallback, useState } from 'react';
-import { Upload, Loader2, X } from 'lucide-react';
-import axios from 'axios';
+import React, { useCallback, useState, useEffect } from 'react';
+import { Upload, Loader2, X, RefreshCw } from 'lucide-react';
+import {
+  getWearingStyleOptions,
+  getDefaultWearingStyle,
+  hasWearingStyleOptions,
+} from '@/lib/wearingStyles';
 
-interface AnalyzedItem {
+interface FileWithMetadata extends File {
+  metadata?: Record<string, unknown>;
+  detailed_description?: string;
+  category?: string;
+  item_type?: string;
+  file_url?: string;
+  saved_filename?: string;
+  storage_path?: string;
+  wearing_style?: string;
+}
+
+export interface AnalyzedItem {
   index: number;
   original_filename: string;
   analysis?: {
@@ -12,7 +27,7 @@ interface AnalyzedItem {
     short_description?: string;
     description?: string;
     suggested_filename: string;
-    metadata: any;
+    metadata?: Record<string, unknown>;
     item_type?: string;
     color?: string;
     style?: string;
@@ -26,45 +41,57 @@ interface AnalyzedItem {
 }
 
 interface BulkUploadZoneProps {
-  onFilesUploaded: (files: File[], analyses: AnalyzedItem[]) => void;
+  existingImages?: File[];
+  existingAnalyses?: AnalyzedItem[];
+  onFilesUploaded: (files: File[], analyses: AnalyzedItem[], shouldReplace?: boolean) => void;
   onItemRemove?: (index: number) => void;
+  onItemReplace?: (index: number, file: File, analysis: AnalyzedItem) => void;
   API_URL?: string;
 }
 
 export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({ 
+  existingImages = [],
+  existingAnalyses = [],
   onFilesUploaded,
   onItemRemove,
+  onItemReplace,
   API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<string>('');
   const [progressPercent, setProgressPercent] = useState<number>(0);
-  const [analyzedItems, setAnalyzedItems] = useState<AnalyzedItem[]>([]);
-  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
-  const [savedFileUrls, setSavedFileUrls] = useState<Map<number, string>>(new Map());
+  const [analyzedItems, setAnalyzedItems] = useState<AnalyzedItem[]>(existingAnalyses);
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>(existingImages);
+  const [wearingStyles, setWearingStyles] = useState<Map<number, string>>(new Map());
 
-  const handleBulkUpload = useCallback(async (files: File[]) => {
-    if (files.length === 0) return;
-    
-    // Limit to 5 files
-    const selectedFiles = files.slice(0, 5);
-    
-    if (files.length > 5) {
-      alert(`Only the first 5 files will be uploaded. ${files.length - 5} files were ignored.`);
-    }
+  // Sync with parent state when props change
+  useEffect(() => {
+    setUploadedFiles(existingImages);
+    setAnalyzedItems(existingAnalyses);
+  }, [existingImages, existingAnalyses]);
+
+  const analyzeFiles = useCallback(async (filesToAnalyze: File[], startIndex: number = 0) => {
+    if (filesToAnalyze.length === 0) return { files: [], analyses: [] };
 
     setIsAnalyzing(true);
     setAnalysisProgress('Uploading and analyzing clothing items with OpenAI...');
     setProgressPercent(0);
-    setUploadedFiles(selectedFiles);
     
-    // Initialize items with 'analyzing' status
-    const initialItems: AnalyzedItem[] = selectedFiles.map((file, idx) => ({
-      index: idx,
+    // Initialize items with 'analyzing' status for new files
+    const initialItems: AnalyzedItem[] = filesToAnalyze.map((file, idx) => ({
+      index: startIndex + idx,
       original_filename: file.name,
       status: 'analyzing'
     }));
-    setAnalyzedItems(initialItems);
+    
+    // Update analyzed items - preserve existing, add new analyzing ones
+    setAnalyzedItems(prev => {
+      const newItems = [...prev];
+      initialItems.forEach((item, idx) => {
+        newItems[startIndex + idx] = item;
+      });
+      return newItems;
+    });
 
     try {
       const API_URL_FETCH = API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -73,9 +100,9 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
       setProgressPercent(20);
       setAnalysisProgress('Sending images to backend for OpenAI analysis...');
       
-      // Create FormData with all files
+      // Create FormData with files to analyze
       const formData = new FormData();
-      selectedFiles.forEach((file) => {
+      filesToAnalyze.forEach((file) => {
         formData.append('clothing_images', file);
       });
 
@@ -106,9 +133,18 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
       setAnalysisProgress('Analysis complete!');
 
       // Transform backend response to frontend format
-      const allAnalyses: AnalyzedItem[] = processedItems.map((item: any) => ({
-        index: item.index,
-        original_filename: item.original_filename || item.metadata?.original_filename || selectedFiles[item.index]?.name || `item_${item.index}`,
+      const allAnalyses: AnalyzedItem[] = processedItems.map((item: {
+        index?: number;
+        original_filename?: string;
+        analysis?: AnalyzedItem['analysis'];
+        error?: string;
+        status?: string;
+        file_url?: string;
+        saved_filename?: string;
+        saved_file?: string;
+      }, idx: number) => ({
+        index: startIndex + idx,
+        original_filename: item.original_filename || item.metadata?.original_filename || filesToAnalyze[idx]?.name || `item_${startIndex + idx}`,
         analysis: {
           body_region: item.analysis?.body_region || item.body_region || item.analysis?.category || item.category || 'unknown',
           category: item.analysis?.body_region || item.body_region || item.analysis?.category || item.category || 'unknown',  // For backward compatibility
@@ -127,30 +163,66 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         status: item.status || 'success' as const
       }));
 
-      console.log('Batch preprocessing complete. All items:', allAnalyses);
+      console.log('Batch preprocessing complete. New items:', allAnalyses);
 
-      // Update UI with results
-      setAnalyzedItems(allAnalyses);
+      // Update analyzed items - preserve existing, update new ones
+      setAnalyzedItems(prev => {
+        const newItems = [...prev];
+        allAnalyses.forEach((analysis, idx) => {
+          newItems[startIndex + idx] = analysis;
+        });
+        return newItems;
+      });
 
-      // Store file URLs for display
-      allAnalyses.forEach((item, idx) => {
-        if (item.file_url) {
-          setSavedFileUrls(prev => {
-            const newMap = new Map(prev);
-            newMap.set(idx, item.file_url!);
-            return newMap;
-          });
-        }
+      // Initialize wearing styles map - preserve existing or set defaults
+      // Build local map first, then update state using functional update to get current state
+      let localWearingStyles: Map<number, string>;
+      setWearingStyles(prev => {
+        localWearingStyles = new Map(prev);
+        allAnalyses.forEach((item, idx) => {
+          const actualIdx = startIndex + idx;
+          // Initialize wearing style if options are available
+          if (item.analysis) {
+            const category = item.analysis.category || item.analysis.body_region || '';
+            const itemType = item.analysis.item_type || '';
+            if (hasWearingStyleOptions(category, itemType)) {
+              // Check if file already has a wearing style
+              const existingFile = filesToAnalyze[idx];
+              const existingStyle = existingFile ? (existingFile as FileWithMetadata).wearing_style : null;
+              
+              // Use existing style if valid, otherwise use default
+              if (existingStyle) {
+                const styleOptions = getWearingStyleOptions(category, itemType);
+                const isValidStyle = styleOptions.some(opt => opt.value === existingStyle);
+                if (isValidStyle) {
+                  localWearingStyles.set(actualIdx, existingStyle);
+                } else {
+                  const defaultStyle = getDefaultWearingStyle(category, itemType);
+                  if (defaultStyle) {
+                    localWearingStyles.set(actualIdx, defaultStyle);
+                  }
+                }
+              } else {
+                const defaultStyle = getDefaultWearingStyle(category, itemType);
+                if (defaultStyle) {
+                  localWearingStyles.set(actualIdx, defaultStyle);
+                }
+              }
+            }
+          }
+        });
+        return localWearingStyles;
       });
 
       // Process files for parent component
       const processedFiles: File[] = [];
       const API_URL_PROCESS = API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       
-      for (let idx = 0; idx < selectedFiles.length; idx++) {
-        const file = selectedFiles[idx];
+      for (let idx = 0; idx < filesToAnalyze.length; idx++) {
+        const file = filesToAnalyze[idx];
         const item = allAnalyses[idx];
         const processedItem = processedItems[idx];
+        const actualIdx = startIndex + idx;
         
         if (item?.file_url && processedItem) {
           // File was saved on server - fetch it and create File object with metadata
@@ -165,58 +237,134 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             const newFile = new File([blob], savedFilename, { type: blob.type || file.type });
             
             // Attach metadata to the file object for try-on API
-            (newFile as any).metadata = processedItem.metadata || {};
-            (newFile as any).detailed_description = processedItem.description || '';
-            (newFile as any).category = processedItem.category || 'unknown';
-            (newFile as any).item_type = processedItem.subcategory || '';
-            (newFile as any).file_url = fileUrl; // Store URL for try-on API
-            (newFile as any).saved_filename = savedFilename;
-            (newFile as any).storage_path = processedItem.storage_path;
+            const fileWithMeta = newFile as FileWithMetadata;
+            fileWithMeta.metadata = processedItem.metadata || {};
+            fileWithMeta.detailed_description = processedItem.description || '';
+            fileWithMeta.category = processedItem.category || 'unknown';
+            fileWithMeta.item_type = processedItem.subcategory || '';
+            fileWithMeta.file_url = fileUrl; // Store URL for try-on API
+            fileWithMeta.saved_filename = savedFilename;
+            fileWithMeta.storage_path = processedItem.storage_path;
+            // Add wearing style if set
+            const wearingStyle = localWearingStyles.get(actualIdx);
+            if (wearingStyle) {
+              fileWithMeta.wearing_style = wearingStyle;
+            }
             
             processedFiles.push(newFile);
           } catch (error) {
             console.warn(`Failed to fetch saved file for ${file.name}, using original:`, error);
             // Fallback to original file
             const newFile = new File([file], item.saved_filename || file.name, { type: file.type });
-            (newFile as any).metadata = processedItem?.metadata || {};
-            (newFile as any).detailed_description = processedItem?.description || '';
-            (newFile as any).category = processedItem?.category || 'unknown';
-            (newFile as any).item_type = processedItem?.subcategory || '';
+            const fileWithMeta = newFile as FileWithMetadata;
+            fileWithMeta.metadata = processedItem?.metadata || {};
+            fileWithMeta.detailed_description = processedItem?.description || '';
+            fileWithMeta.category = processedItem?.category || 'unknown';
+            fileWithMeta.item_type = processedItem?.subcategory || '';
+            // Add wearing style if set
+            const wearingStyle = localWearingStyles.get(actualIdx);
+            if (wearingStyle) {
+              fileWithMeta.wearing_style = wearingStyle;
+            }
             processedFiles.push(newFile);
           }
         } else {
           // Use original file with metadata attached
           const newFile = new File([file], file.name, { type: file.type });
+          const fileWithMeta = newFile as FileWithMetadata;
           if (processedItem) {
-            (newFile as any).metadata = processedItem.metadata || {};
-            (newFile as any).detailed_description = processedItem.description || '';
-            (newFile as any).category = processedItem.category || 'unknown';
-            (newFile as any).item_type = processedItem.subcategory || '';
+            fileWithMeta.metadata = processedItem.metadata || {};
+            fileWithMeta.detailed_description = processedItem.description || '';
+            fileWithMeta.category = processedItem.category || 'unknown';
+            fileWithMeta.item_type = processedItem.subcategory || '';
+          }
+          // Add wearing style if set
+          const wearingStyle = localWearingStyles.get(actualIdx);
+          if (wearingStyle) {
+            fileWithMeta.wearing_style = wearingStyle;
           }
           processedFiles.push(newFile);
         }
       }
 
-      // Call the upload handler
-      onFilesUploaded(processedFiles, allAnalyses);
-    } catch (error: any) {
+      return { files: processedFiles, analyses: allAnalyses };
+    } catch (error: unknown) {
       console.error('Error analyzing clothing items:', error);
-      setAnalysisProgress(`Error: ${error.message || 'Analysis failed'}`);
+      const errorMessage = error instanceof Error ? error.message : 'Analysis failed';
+      setAnalysisProgress(`Error: ${errorMessage}`);
       setProgressPercent(0);
       
-      // Mark all items as error
-      setAnalyzedItems(prev => prev.map(item => ({ ...item, status: 'error' as const, error: error.message })));
+      // Mark new items as error
+      setAnalyzedItems(prev => {
+        const newItems = [...prev];
+        for (let idx = 0; idx < filesToAnalyze.length; idx++) {
+          newItems[startIndex + idx] = {
+            index: startIndex + idx,
+            original_filename: filesToAnalyze[idx].name,
+            status: 'error' as const,
+            error: errorMessage
+          };
+        }
+        return newItems;
+      });
       
       // Still allow files to be added even if analysis fails
-      onFilesUploaded(selectedFiles, []);
+      return { files: filesToAnalyze, analyses: [] };
     } finally {
       setIsAnalyzing(false);
     }
-  }, [onFilesUploaded, API_URL]);
+  }, [API_URL]);
+
+  const handleBulkUpload = useCallback(async (files: File[], shouldReplace: boolean = false) => {
+    if (files.length === 0) return;
+    
+    const currentCount = uploadedFiles.length;
+    const totalAfterUpload = currentCount + files.length;
+    
+    // Check if upload would exceed limit
+    if (totalAfterUpload > 5 && !shouldReplace) {
+      const confirmed = window.confirm(
+        `You currently have ${currentCount} image${currentCount !== 1 ? 's' : ''}. Uploading ${files.length} more would exceed the limit of 5 images. Uploading these images will replace all existing images. Continue?`
+      );
+      if (!confirmed) {
+        return;
+      }
+      shouldReplace = true;
+    }
+    
+    // Limit files to what can fit
+    let filesToProcess: File[];
+    if (shouldReplace) {
+      filesToProcess = files.slice(0, 5);
+      if (files.length > 5) {
+        alert(`Only the first 5 files will be uploaded. ${files.length - 5} files were ignored.`);
+      }
+    } else {
+      const remainingSlots = 5 - currentCount;
+      filesToProcess = files.slice(0, remainingSlots);
+      if (files.length > remainingSlots) {
+        alert(`Only ${remainingSlots} more image${remainingSlots !== 1 ? 's' : ''} can be added. ${files.length - remainingSlots} file${files.length - remainingSlots !== 1 ? 's' : ''} were ignored.`);
+      }
+    }
+
+    const startIndex = shouldReplace ? 0 : currentCount;
+    const result = await analyzeFiles(filesToProcess, startIndex);
+    
+    if (shouldReplace) {
+      // Replace all files
+      setUploadedFiles(result.files);
+      onFilesUploaded(result.files, result.analyses, true);
+    } else {
+      // Append new files
+      const newFiles = [...uploadedFiles, ...result.files];
+      setUploadedFiles(newFiles);
+      onFilesUploaded(result.files, result.analyses, false);
+    }
+  }, [uploadedFiles, analyzeFiles, onFilesUploaded]);
 
   const handleFileInput = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    await handleBulkUpload(files);
+    await handleBulkUpload(files, false);
     // Reset file input
     e.target.value = '';
   }, [handleBulkUpload]);
@@ -224,25 +372,65 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
   const handleBulkDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
-    await handleBulkUpload(files);
+    await handleBulkUpload(files, false);
   }, [handleBulkUpload]);
 
+  const handleReplaceItem = useCallback(async (index: number, file: File) => {
+    const result = await analyzeFiles([file], index);
+    if (result.files.length > 0 && result.analyses.length > 0) {
+      // Update local state
+      const newFiles = [...uploadedFiles];
+      newFiles[index] = result.files[0];
+      setUploadedFiles(newFiles);
+      
+      // Notify parent
+      if (onItemReplace) {
+        onItemReplace(index, result.files[0], result.analyses[0]);
+      }
+    }
+  }, [uploadedFiles, analyzeFiles, onItemReplace]);
+
+
   const handleRemoveItem = useCallback((index: number) => {
-    const newItems = [...analyzedItems];
-    const newFiles = [...uploadedFiles];
-    newItems.splice(index, 1);
-    newFiles.splice(index, 1);
+    const newItems = analyzedItems.filter((_, idx) => idx !== index);
+    const newFiles = uploadedFiles.filter((_, idx) => idx !== index);
     setAnalyzedItems(newItems);
     setUploadedFiles(newFiles);
+    
+    // Remove wearing style for this item and reindex remaining ones
+    setWearingStyles(prev => {
+      const newMap = new Map<number, string>();
+      prev.forEach((style, idx) => {
+        if (idx < index) {
+          newMap.set(idx, style);
+        } else if (idx > index) {
+          newMap.set(idx - 1, style);
+        }
+      });
+      return newMap;
+    });
     
     // Notify parent if handler provided
     if (onItemRemove) {
       onItemRemove(index);
-    } else {
-      // Otherwise update parent with remaining files
-      onFilesUploaded(newFiles, newItems);
     }
-  }, [analyzedItems, uploadedFiles, onItemRemove, onFilesUploaded]);
+  }, [analyzedItems, uploadedFiles, onItemRemove]);
+
+  const handleWearingStyleChange = useCallback((index: number, style: string) => {
+    // Update wearing style state
+    setWearingStyles(prev => {
+      const newMap = new Map(prev);
+      newMap.set(index, style);
+      return newMap;
+    });
+
+    // Update file metadata if file exists
+    const updatedFiles = [...uploadedFiles];
+    if (updatedFiles[index]) {
+      (updatedFiles[index] as FileWithMetadata).wearing_style = style;
+      setUploadedFiles(updatedFiles);
+    }
+  }, [uploadedFiles]);
 
   return (
     <div className="space-y-3 sm:space-y-4">
@@ -252,20 +440,20 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         className={`
           border-2 border-dashed rounded-lg p-4 sm:p-6 md:p-8 text-center cursor-pointer transition-colors touch-manipulation
           ${isAnalyzing 
-            ? 'border-blue-500 bg-blue-50' 
-            : 'border-gray-300 hover:border-gray-400 active:border-gray-500 hover:bg-gray-50'
+            ? 'border-cyan-500 bg-cyan-500/10 shadow-[0_0_20px_rgba(0,255,255,0.3)]' 
+            : 'border-cyan-500/30 hover:border-cyan-500/50 active:border-cyan-500 hover:bg-cyan-500/5'
           }
         `}
       >
         {isAnalyzing ? (
           <div className="flex flex-col items-center w-full">
-            <Loader2 className="h-7 w-7 sm:h-8 sm:w-8 text-blue-500 animate-spin mb-3 sm:mb-4" />
-            <p className="text-xs sm:text-sm font-medium text-gray-700 mb-3 sm:mb-4 px-2">{analysisProgress}</p>
+            <Loader2 className="h-7 w-7 sm:h-8 sm:w-8 text-cyan-400 animate-spin mb-3 sm:mb-4" />
+            <p className="text-xs sm:text-sm font-medium text-cyan-300 mb-3 sm:mb-4 px-2">{analysisProgress}</p>
             {/* Progress Bar - Enhanced visibility */}
             <div className="w-full max-w-md px-2 sm:px-4">
-              <div className="w-full bg-gray-200 rounded-full h-2.5 sm:h-3 mb-2 shadow-inner">
+              <div className="w-full bg-gray-800 rounded-full h-2.5 sm:h-3 mb-2 shadow-inner">
                 <div 
-                  className="bg-blue-500 h-2.5 sm:h-3 rounded-full transition-all duration-500 ease-out shadow-md"
+                  className="bg-cyan-500 h-2.5 sm:h-3 rounded-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(0,255,255,0.5)]"
                   style={{ 
                     width: `${Math.max(progressPercent, 5)}%`,
                     minWidth: progressPercent > 0 ? '8px' : '0px'
@@ -273,18 +461,21 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                 />
               </div>
               <div className="flex justify-between items-center">
-                <p className="text-xs font-semibold text-gray-600">{progressPercent}%</p>
-                <p className="text-xs text-gray-500">Processing...</p>
+                <p className="text-xs font-semibold text-cyan-300">{progressPercent}%</p>
+                <p className="text-xs text-cyan-400/70">Processing...</p>
               </div>
             </div>
           </div>
         ) : (
           <label className="cursor-pointer block touch-manipulation">
-            <Upload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-gray-400" />
-            <span className="mt-3 sm:mt-4 block text-sm sm:text-base font-medium text-gray-900 px-2">
-              Upload 1-5 clothing items at once
+            <Upload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-cyan-400" />
+            <span className="mt-3 sm:mt-4 block text-sm sm:text-base font-medium text-cyan-300 px-2">
+              {uploadedFiles.length < 5 
+                ? `Upload ${5 - uploadedFiles.length} more clothing item${5 - uploadedFiles.length !== 1 ? 's' : ''} (${uploadedFiles.length}/5)`
+                : 'Maximum 5 items reached. Upload new images to replace all existing items.'
+              }
             </span>
-            <span className="mt-2 block text-xs sm:text-sm text-gray-500 px-2">
+            <span className="mt-2 block text-xs sm:text-sm text-cyan-400/70 px-2">
               Drag and drop images here or tap to select. Items will be analyzed and categorized automatically.
             </span>
             <input
@@ -299,13 +490,13 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
       </div>
 
       {/* Display analyzed items horizontally */}
-      {analyzedItems.length > 0 && (
+      {uploadedFiles.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 sm:gap-3 md:gap-4">
-          {analyzedItems.map((item, idx) => {
-            const file = uploadedFiles[idx];
-            const isSuccess = item.status === 'success' && item.analysis;
-            const isError = item.status === 'error' || item.error;
-            const isAnalyzing = item.status === 'analyzing';
+          {uploadedFiles.map((file, idx) => {
+            const item = analyzedItems[idx];
+            const isSuccess = item?.status === 'success' && item.analysis;
+            const isError = item?.status === 'error' || item?.error;
+            const isAnalyzing = item?.status === 'analyzing';
             
             return (
               <div
@@ -313,83 +504,100 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                 className={`
                   border-2 rounded-lg p-2 sm:p-3 transition-all
                   ${isSuccess 
-                    ? 'border-green-500 bg-green-50' 
+                    ? 'border-green-500 bg-green-500/10 shadow-[0_0_10px_rgba(0,255,0,0.2)]' 
                     : isError 
-                    ? 'border-red-500 bg-red-50' 
+                    ? 'border-red-500 bg-red-500/10 shadow-[0_0_10px_rgba(255,0,0,0.2)]' 
                     : isAnalyzing
-                    ? 'border-blue-300 bg-blue-50'
-                    : 'border-gray-300 bg-gray-50'
+                    ? 'border-cyan-400 bg-cyan-500/10 shadow-[0_0_10px_rgba(0,255,255,0.2)]'
+                    : 'border-cyan-500/20 bg-gray-800'
                   }
                 `}
               >
-                {(file || item.file_url) && (
-                  <div className="space-y-1.5 sm:space-y-2 relative">
+                <div className="space-y-1.5 sm:space-y-2 relative">
                     <button
                       onClick={() => handleRemoveItem(idx)}
-                      className="absolute top-1 right-1 bg-red-500 hover:bg-red-600 text-white p-1 rounded-full opacity-90 hover:opacity-100 transition-opacity z-10 min-w-[24px] min-h-[24px] flex items-center justify-center"
-                      aria-label={`Remove ${item.saved_filename || item.original_filename}`}
+                      className="absolute top-1 right-1 bg-red-500 hover:bg-red-400 text-white p-1.5 sm:p-1 rounded-full opacity-90 hover:opacity-100 transition-opacity z-10 min-w-[36px] min-h-[36px] sm:min-w-[24px] sm:min-h-[24px] flex items-center justify-center shadow-[0_0_8px_rgba(255,0,0,0.3)] touch-manipulation"
+                      aria-label={`Remove ${item?.saved_filename || item?.original_filename || file.name}`}
                     >
-                      <X size={12} />
+                      <X size={14} className="sm:w-3 sm:h-3" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        const input = document.createElement('input');
+                        input.type = 'file';
+                        input.accept = 'image/*';
+                        input.onchange = (e) => {
+                          const selectedFile = (e.target as HTMLInputElement).files?.[0];
+                          if (selectedFile) {
+                            handleReplaceItem(idx, selectedFile);
+                          }
+                        };
+                        input.click();
+                      }}
+                      className="absolute top-1 left-1 bg-cyan-500 hover:bg-cyan-400 text-white p-1.5 sm:p-1 rounded-full opacity-90 hover:opacity-100 transition-opacity z-10 min-w-[36px] min-h-[36px] sm:min-w-[24px] sm:min-h-[24px] flex items-center justify-center shadow-[0_0_8px_rgba(0,255,255,0.3)] touch-manipulation"
+                      aria-label={`Replace ${item?.saved_filename || item?.original_filename || file.name}`}
+                    >
+                      <RefreshCw size={14} className="sm:w-3 sm:h-3" />
                     </button>
                     <img
                       src={
-                        item.file_url 
+                        item?.file_url 
                           ? (item.file_url.startsWith('http') 
                               ? item.file_url 
                               : `${API_URL}${item.file_url}`)
-                          : (file ? URL.createObjectURL(file) : '')
+                          : URL.createObjectURL(file)
                       }
-                      alt={item.saved_filename || item.analysis?.suggested_filename || item.original_filename}
+                      alt={item?.saved_filename || item?.analysis?.suggested_filename || item?.original_filename || file.name}
                       className="w-full h-24 sm:h-32 object-cover rounded"
                       onError={(e) => {
                         // Fallback to original file if saved URL fails
-                        if (item.file_url && file) {
+                        if (item?.file_url) {
                           (e.target as HTMLImageElement).src = URL.createObjectURL(file);
                         }
                       }}
                     />
                     <div className="text-xs">
-                      <p className="font-medium text-gray-900 truncate mb-0.5 sm:mb-1 text-[10px] sm:text-xs" title={item.saved_filename || item.analysis?.suggested_filename || item.original_filename}>
-                        {item.saved_filename || item.analysis?.suggested_filename || item.original_filename}
+                      <p className="font-medium text-cyan-200 truncate mb-0.5 sm:mb-1 text-[10px] sm:text-xs" title={item?.saved_filename || item?.analysis?.suggested_filename || item?.original_filename || file.name}>
+                        {item?.saved_filename || item?.analysis?.suggested_filename || item?.original_filename || file.name}
                       </p>
                       {isAnalyzing && (
-                        <p className="text-blue-600 mt-0.5 sm:mt-1 font-medium text-[10px] sm:text-xs">Analyzing...</p>
+                        <p className="text-cyan-400 mt-0.5 sm:mt-1 font-medium text-[10px] sm:text-xs">Analyzing...</p>
                       )}
-                      {isSuccess && (
+                      {isSuccess && item?.analysis && (
                         <div className="mt-0.5 sm:mt-1 space-y-0.5">
-                          <p className="text-green-700 font-bold text-[10px] sm:text-xs uppercase">
-                            ✓ {item.analysis?.body_region?.replace(/_/g, ' ') || item.analysis?.category?.replace(/_/g, ' ') || 'Analyzed'}
+                          <p className="text-green-400 font-bold text-[10px] sm:text-xs uppercase">
+                            ✓ {item.analysis.body_region?.replace(/_/g, ' ') || item.analysis.category?.replace(/_/g, ' ') || 'Analyzed'}
                           </p>
                           
                           {/* Item type, for example "leather lace up boots" */}
-                          {item.analysis?.item_type && (
-                            <p className="text-gray-800 text-[9px] sm:text-[10px] font-semibold">
+                          {item.analysis.item_type && (
+                            <p className="text-cyan-300 text-[9px] sm:text-[10px] font-semibold">
                               {item.analysis.item_type}
                             </p>
                           )}
                           
                           {/* Color and style */}
-                          {(item.analysis?.color || item.analysis?.style) && (
-                            <p className="text-gray-600 text-[9px] sm:text-[10px]">
-                              {item.analysis?.color && <span>{item.analysis.color}</span>}
-                              {item.analysis?.color && item.analysis?.style && <span>, </span>}
-                              {item.analysis?.style && <span>{item.analysis.style}</span>}
+                          {(item.analysis.color || item.analysis.style) && (
+                            <p className="text-cyan-400/80 text-[9px] sm:text-[10px]">
+                              {item.analysis.color && <span>{item.analysis.color}</span>}
+                              {item.analysis.color && item.analysis.style && <span>, </span>}
+                              {item.analysis.style && <span>{item.analysis.style}</span>}
                             </p>
                           )}
                           
                           {/* Tags */}
-                          {item.analysis?.tags && Array.isArray(item.analysis.tags) && item.analysis.tags.length > 0 && (
+                          {item.analysis.tags && Array.isArray(item.analysis.tags) && item.analysis.tags.length > 0 && (
                             <div className="flex flex-wrap gap-0.5 mt-0.5">
                               {item.analysis.tags.slice(0, 3).map((tag: string, tagIdx: number) => (
                                 <span
                                   key={tagIdx}
-                                  className="px-1 py-[1px] rounded-full bg-gray-200 text-[8px] sm:text-[9px] text-gray-700"
+                                  className="px-1 py-[1px] rounded-full bg-cyan-500/20 text-[8px] sm:text-[9px] text-cyan-300"
                                 >
                                   {tag}
                                 </span>
                               ))}
                               {item.analysis.tags.length > 3 && (
-                                <span className="text-[8px] sm:text-[9px] text-gray-500">
+                                <span className="text-[8px] sm:text-[9px] text-cyan-400/70">
                                   +{item.analysis.tags.length - 3}
                                 </span>
                               )}
@@ -397,32 +605,67 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                           )}
                           
                           {/* Short description */}
-                          {item.analysis?.short_description && (
-                            <p className="text-gray-500 text-[8px] sm:text-[9px] mt-0.5 line-clamp-2">
+                          {item.analysis.short_description && (
+                            <p className="text-cyan-400/60 text-[8px] sm:text-[9px] mt-0.5 line-clamp-2">
                               {item.analysis.short_description}
                             </p>
                           )}
                           
                           {/* Fallback to description if short_description not available */}
-                          {!item.analysis?.short_description && item.analysis?.description && (
-                            <p className="text-gray-500 text-[8px] sm:text-[9px] mt-0.5 line-clamp-2">
+                          {!item.analysis.short_description && item.analysis.description && (
+                            <p className="text-cyan-400/60 text-[8px] sm:text-[9px] mt-0.5 line-clamp-2">
                               {item.analysis.description}
                             </p>
                           )}
                           
                           {item.saved_filename && (
-                            <p className="text-gray-400 text-[8px] sm:text-[9px] mt-0.5 truncate" title="Saved filename">
+                            <p className="text-cyan-400/50 text-[8px] sm:text-[9px] mt-0.5 truncate" title="Saved filename">
                               Saved
                             </p>
                           )}
                         </div>
                       )}
                       {isError && (
-                        <p className="text-red-600 mt-0.5 sm:mt-1 font-medium text-[10px] sm:text-xs">✗ Failed</p>
+                        <p className="text-red-400 mt-0.5 sm:mt-1 font-medium text-[10px] sm:text-xs">✗ Failed</p>
                       )}
                     </div>
+
+                    {/* Wearing Style Dropdown */}
+                    {isSuccess && item?.analysis && (() => {
+                      const category = item.analysis.category || item.analysis.body_region || '';
+                      const itemType = item.analysis.item_type || '';
+                      const styleOptions = getWearingStyleOptions(category, itemType);
+                      const hasOptions = styleOptions.length > 0;
+                      const currentStyle = wearingStyles.get(idx);
+
+                      if (!hasOptions) return null;
+
+                      return (
+                        <div className="mt-1.5 sm:mt-2">
+                          <label className="block text-[9px] sm:text-[10px] font-medium text-cyan-300 mb-1">
+                            How to wear:
+                          </label>
+                          <select
+                            value={currentStyle || styleOptions[0].value}
+                            onChange={(e) => handleWearingStyleChange(idx, e.target.value)}
+                            className="w-full text-[9px] sm:text-[10px] px-2 py-1.5 rounded bg-gray-800 border border-cyan-500/30 text-cyan-200 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 appearance-none cursor-pointer hover:border-cyan-500/50 transition-colors"
+                            style={{
+                              backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2300ffff' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
+                              backgroundRepeat: 'no-repeat',
+                              backgroundPosition: 'right 0.5rem center',
+                              paddingRight: '2rem',
+                            }}
+                          >
+                            {styleOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    })()}
                   </div>
-                )}
               </div>
             );
           })}

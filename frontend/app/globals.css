@@ -1,22 +1,21 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #000000;
+  --foreground: #ffffff;
+  --neon-blue: #00ffff;
+  --neon-cyan: #00d9ff;
+  --accent-blue: #0099ff;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-neon-blue: var(--neon-blue);
+  --color-neon-cyan: var(--neon-cyan);
+  --color-accent-blue: var(--accent-blue);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
@@ -32,14 +31,33 @@ body {
 
 /* Mobile optimizations */
 @media (max-width: 640px) {
-  /* Improve touch targets */
-  button, a, input[type="file"] + label {
+  /* Improve touch targets - ensure minimum 44px */
+  button, a, input[type="file"] + label, [role="button"] {
     touch-action: manipulation;
+    min-height: 44px;
+    min-width: 44px;
   }
   
   /* Prevent double-tap zoom on buttons */
   button, a {
-    -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+    -webkit-tap-highlight-color: rgba(0, 255, 255, 0.2);
+  }
+  
+  /* Better text sizing on mobile */
+  body {
+    font-size: 16px; /* Prevents iOS zoom on input focus */
+  }
+  
+  /* Improve spacing on mobile */
+  .container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  
+  /* Better image handling */
+  img {
+    max-width: 100%;
+    height: auto;
   }
 }
 
@@ -48,7 +66,21 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 
-/* Prevent pull-to-refresh on mobile (optional) */
+/* Prevent pull-to-refresh on mobile */
 html {
   overscroll-behavior-y: contain;
+  overscroll-behavior-x: contain;
+}
+
+/* Safe area insets for notched devices */
+@supports (padding: max(0px)) {
+  body {
+    padding-left: max(0px, env(safe-area-inset-left));
+    padding-right: max(0px, env(safe-area-inset-right));
+  }
+  
+  header {
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
 }

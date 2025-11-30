@@ -27,7 +27,7 @@ async function getR2ObjectBase64(
   const res = await r2.send(command);
 
   const chunks: Uint8Array[] = [];
-  // @ts-ignore - Body is a stream
+  // @ts-expect-error - Body is a stream, type definition may not include async iterator
   for await (const chunk of res.Body) {
     chunks.push(chunk);
   }
@@ -191,15 +191,16 @@ export async function POST(req: NextRequest) {
       mimeType: fullMimeType,
       publicUrl: resultPublicUrl,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("try-on error:", err);
+    const error = err instanceof Error ? err : new Error(String(err));
 
     // Mark session as failed if it was created
     if (sessionId && userId) {
       try {
         await updateTryOnSessionResult(sessionId, userId, {
           status: "failed",
-          error: err.message,
+          error: error.message,
         });
       } catch (updateErr) {
         console.error("Failed to update session error:", updateErr);
@@ -209,7 +210,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error: "Try on failed",
-        details: err.message,
+        details: error.message,
       },
       { status: 500 }
     );

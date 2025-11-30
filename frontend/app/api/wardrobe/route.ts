@@ -6,7 +6,7 @@ import {
 } from "@/lib/db-access";
 
 // GET /api/wardrobe - Fetch user's clothing items and person images
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   const { userId } = await auth();
 
   if (!userId) {
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
       clothingItems,
       personImages,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("wardrobe fetch error:", err);
     return NextResponse.json(
       {

@@ -23,6 +23,11 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Change Room - Virtual Try-On & Shopping",
   description: "Try on clothes virtually and discover similar products to shop. Upload your photo and wardrobe items to see how they look on you.",
+  icons: {
+    icon: '/Logo.png',
+    shortcut: '/Logo.png',
+    apple: '/Logo.png',
+  },
 };
 
 export const viewport: Viewport = {
@@ -46,8 +51,8 @@ export default function RootLayout({
   if (!hasValidKey) {
     return (
       <html lang="en">
-        <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-          <header className="flex justify-end items-center p-4 gap-4 h-16">
+        <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-black text-white`}>
+          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-black border-b border-cyan-500/20">
             {/* Clerk components won't work during build, but that's OK */}
           </header>
           {children}
@@ -61,19 +66,19 @@ export default function RootLayout({
       publishableKey={publishableKey}
       appearance={{
         elements: {
-          formButtonPrimary: 'bg-[#6c47ff] hover:bg-[#5a3ae6]',
+          formButtonPrimary: 'bg-cyan-500 hover:bg-cyan-400 text-black',
         }
       }}
     >
       <html lang="en">
         <body
-          className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+          className={`${geistSans.variable} ${geistMono.variable} antialiased bg-black text-white`}
         >
-          <header className="flex justify-end items-center p-4 gap-4 h-16">
+          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-black border-b border-cyan-500/20">
             <SignedOut>
               <SignInButton />
               <SignUpButton>
-                <button className="bg-[#6c47ff] text-white rounded-full font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 cursor-pointer">
+                <button className="bg-cyan-500 text-black rounded-full font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 cursor-pointer hover:bg-cyan-400 transition-colors shadow-[0_0_15px_rgba(0,255,255,0.3)]">
                   Sign Up
                 </button>
               </SignUpButton>

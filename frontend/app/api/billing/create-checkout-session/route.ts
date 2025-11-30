@@ -5,7 +5,7 @@ import { stripeConfig, appConfig } from "@/lib/config";
 import {
   getOrCreateUserBilling,
   updateUserBillingPlan,
-  getUserBillingByStripeCustomer,
+  isUserOnFreeTrial,
 } from "@/lib/db-access";
 
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
@@ -19,7 +19,7 @@ function getStripe() {
  * POST /api/billing/create-checkout-session
  * Creates a Stripe Checkout Session for subscription or one-time payment
  * 
- * Body: { priceId: string, mode: "subscription" | "payment" }
+ * Body: { priceId: string, mode: "subscription" | "payment", startTrial?: boolean }
  */
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
@@ -30,9 +30,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { priceId, mode } = body as {
+    const { priceId, mode, startTrial } = body as {
       priceId: string;
       mode: "subscription" | "payment";
+      startTrial?: boolean;
     };
 
     if (!priceId || !mode) {
@@ -51,6 +52,10 @@ export async function POST(req: NextRequest) {
 
     // Get or create user billing
     const billing = await getOrCreateUserBilling(userId);
+    
+    // Check if user has used their free trial try-on
+    const onTrial = await isUserOnFreeTrial(userId);
+    const shouldStartTrial = startTrial && !onTrial && mode === "subscription";
 
     // Create or get Stripe customer
     let customerId = billing.stripe_customer_id;
@@ -77,6 +82,25 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Build subscription data for free trial (Stripe trial period)
+    // Note: Our app logic uses trial_used flag, but we can still offer Stripe trial period
+    const subscriptionData: {
+      subscription_data?: {
+        trial_period_days: number;
+        metadata: Record<string, string>;
+      };
+    } = {};
+    if (shouldStartTrial) {
+      // Offer 7-day Stripe trial period for subscriptions
+      subscriptionData.subscription_data = {
+        trial_period_days: 7,
+        metadata: {
+          clerkUserId: userId,
+          isTrial: "true",
+        },
+      };
+    }
+
     // Create checkout session
     const session = await getStripe().checkout.sessions.create({
       customer: customerId,
@@ -87,6 +111,7 @@ export async function POST(req: NextRequest) {
           quantity: 1,
         },
       ],
+      ...subscriptionData,
       success_url: `${appConfig.appUrl}/?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appConfig.appUrl}/?canceled=true`,
       metadata: {
@@ -94,16 +119,18 @@ export async function POST(req: NextRequest) {
         priceId,
         mode,
         ...(mode === "payment" && { creditAmount: creditAmount.toString() }),
+        ...(shouldStartTrial && { startTrial: "true" }),
       },
     });
 
     return NextResponse.json({ url: session.url });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("create-checkout-session error:", err);
+    const error = err instanceof Error ? err : new Error(String(err));
     return NextResponse.json(
       {
         error: "Failed to create checkout session",
-        details: err.message,
+        details: error.message,
       },
       { status: 500 }
     );

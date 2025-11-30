@@ -27,7 +27,7 @@ function getEnv(key: string, defaultValue?: string): string {
 }
 
 // Helper to create lazy config getters that only access env vars when accessed
-function createLazyConfig<T extends Record<string, any>>(factory: () => T): T {
+function createLazyConfig<T extends Record<string, unknown>>(factory: () => T): T {
   let cached: T | null = null;
   const getValue = () => {
     if (!cached) {

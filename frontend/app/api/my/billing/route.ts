@@ -6,7 +6,7 @@ import { getOrCreateUserBilling } from "@/lib/db-access";
  * GET /api/my/billing
  * Fetch user's billing information (plan, credits)
  */
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   const { userId } = await auth();
 
   if (!userId) {
@@ -19,8 +19,9 @@ export async function GET(req: NextRequest) {
       plan: billing.plan,
       creditsAvailable: billing.credits_available,
       creditsRefreshAt: billing.credits_refresh_at,
+      trialUsed: billing.trial_used,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("get billing error:", err);
     return NextResponse.json(
       { error: "Failed to fetch billing information" },

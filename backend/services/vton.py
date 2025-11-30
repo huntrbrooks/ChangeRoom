@@ -131,10 +131,39 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
             "neutral clean studio background, flattering lighting, full body if possible."
         )
         
-        # Add metadata instructions if provided
+        # Add wearing style instructions if provided
         if garment_metadata:
-            metadata_str = json.dumps(garment_metadata, indent=2, ensure_ascii=False)
-            text_prompt += f"\n\nAdditional styling instructions:\n{metadata_str}"
+            # Extract wearing instructions if available
+            wearing_instructions = garment_metadata.get('wearing_instructions')
+            items_wearing_styles = garment_metadata.get('items_wearing_styles')
+            
+            if wearing_instructions and isinstance(wearing_instructions, list) and len(wearing_instructions) > 0:
+                text_prompt += "\n\nImportant - How each clothing item should be worn:\n"
+                for instruction in wearing_instructions:
+                    text_prompt += f"- {instruction}\n"
+                logger.info(f"Added {len(wearing_instructions)} wearing style instruction(s)")
+            
+            # Add per-item wearing styles if available (alternative format)
+            if items_wearing_styles and isinstance(items_wearing_styles, list) and len(items_wearing_styles) > 0:
+                text_prompt += "\n\nPer-item wearing instructions:\n"
+                for item_info in items_wearing_styles:
+                    item_idx = item_info.get('index', 0) + 2  # +2 because first image is person, items start at 2
+                    item_type = item_info.get('item_type', 'item')
+                    category = item_info.get('category', 'clothing')
+                    wearing_style = item_info.get('wearing_style', 'default')
+                    
+                    # Build instruction based on wearing style
+                    style_desc = wearing_style.replace('_', ' ')
+                    text_prompt += f"- The {item_type} ({category}) shown in image {item_idx} should be worn {style_desc}\n"
+                logger.info(f"Added {len(items_wearing_styles)} per-item wearing style(s)")
+            
+            # Add other metadata instructions
+            other_metadata = {k: v for k, v in garment_metadata.items() 
+                            if k not in ['wearing_instructions', 'items_wearing_styles']}
+            if other_metadata:
+                metadata_str = json.dumps(other_metadata, indent=2, ensure_ascii=False)
+                text_prompt += f"\n\nAdditional styling instructions:\n{metadata_str}"
+            
             logger.info(f"Using metadata: {list(garment_metadata.keys())}")
         
         # Build parts array: text prompt first, then person image, then clothing images

@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS clothing_items (
   mime_type TEXT,
   width INTEGER,
   height INTEGER,
+  wearing_style TEXT,                      -- How the item should be worn (e.g., "backwards", "tucked_in")
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -64,6 +65,7 @@ CREATE TABLE IF NOT EXISTS users_billing (
   plan TEXT NOT NULL DEFAULT 'free',           -- free, standard, pro
   credits_available INTEGER NOT NULL DEFAULT 10,
   credits_refresh_at TIMESTAMPTZ,              -- When to refresh monthly credits
+  trial_used BOOLEAN NOT NULL DEFAULT false,   -- Whether the free trial try-on has been used
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

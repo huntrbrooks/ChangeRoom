@@ -20,6 +20,7 @@ export interface UserBilling {
   plan: Plan;
   credits_available: number;
   credits_refresh_at: Date | null;
+  trial_used: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -39,6 +40,7 @@ export interface ClothingItem {
   mime_type: string | null;
   width: number | null;
   height: number | null;
+  wearing_style: string | null;
   created_at: Date;
 }
 
@@ -145,11 +147,36 @@ export async function updateUserBillingCredits(
 }
 
 /**
+ * Check if user is currently on a free trial (hasn't used their free try-on yet)
+ */
+export async function isUserOnFreeTrial(userId: string): Promise<boolean> {
+  const billing = await getOrCreateUserBilling(userId);
+  return !billing.trial_used;
+}
+
+/**
  * Decrement credits in a transaction-safe way
  * Returns true if credits were available and decremented, false otherwise
+ * During free trial (first try-on), allows 1 free try-on and marks trial as used
  */
 export async function decrementCreditsIfAvailable(userId: string): Promise<boolean> {
-  // Use a transaction to ensure atomicity
+  const billing = await getOrCreateUserBilling(userId);
+  
+  // Check if user is on free trial (hasn't used their free try-on)
+  if (!billing.trial_used) {
+    // Mark trial as used and allow this try-on
+    const result = await sql`
+      UPDATE users_billing
+      SET 
+        trial_used = true,
+        updated_at = now()
+      WHERE user_id = ${userId} AND trial_used = false
+      RETURNING *
+    `;
+    return result.rows.length > 0;
+  }
+  
+  // Use a transaction to ensure atomicity for regular credits
   const result = await sql`
     UPDATE users_billing
     SET 
@@ -160,6 +187,27 @@ export async function decrementCreditsIfAvailable(userId: string): Promise<boole
   `;
 
   return result.rows.length > 0;
+}
+
+/**
+ * Reset free trial for a user (for testing/admin purposes)
+ * Note: In production, users should only get one free try-on
+ */
+export async function resetFreeTrial(userId: string): Promise<UserBilling> {
+  const result = await sql`
+    UPDATE users_billing
+    SET 
+      trial_used = false,
+      updated_at = now()
+    WHERE user_id = ${userId}
+    RETURNING *
+  `;
+
+  if (result.rows.length === 0) {
+    return getOrCreateUserBilling(userId);
+  }
+
+  return result.rows[0] as UserBilling;
 }
 
 /**

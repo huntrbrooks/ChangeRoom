@@ -11,3 +11,8 @@ piexif
 openai>=1.0.0  # OpenAI SDK for batch preprocessing with structured outputs
 boto3>=1.26.0  # For cloud storage (R2/S3) support
 
+# Testing dependencies
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+httpx>=0.24.0  # For TestClient
+

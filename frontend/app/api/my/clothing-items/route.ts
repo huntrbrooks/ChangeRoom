@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json({ clothingItems });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("get clothing-items error:", err);
     return NextResponse.json(
       { error: "Failed to fetch clothing items" },

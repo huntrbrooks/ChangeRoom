@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
-import { stripeConfig, appConfig } from "@/lib/config";
+import { stripeConfig } from "@/lib/config";
 import {
   getUserBillingByStripeCustomer,
   updateUserBillingPlan,
@@ -43,8 +43,9 @@ export async function POST(req: NextRequest) {
       signature,
       stripeConfig.webhookSecret
     );
-  } catch (err: any) {
-    console.error("Webhook signature verification failed:", err.message);
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    console.error("Webhook signature verification failed:", error.message);
     return NextResponse.json(
       { error: "Webhook signature verification failed" },
       { status: 400 }
@@ -153,10 +154,11 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ received: true });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Webhook handler error:", err);
+    const error = err instanceof Error ? err : new Error(String(err));
     return NextResponse.json(
-      { error: "Webhook handler failed", details: err.message },
+      { error: "Webhook handler failed", details: error.message },
       { status: 500 }
     );
   }

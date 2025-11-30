@@ -40,7 +40,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const contentParts: any[] = [
+    const contentParts: Array<{
+      type: string;
+      text?: string;
+      image_url?: { url: string };
+    }> = [
       {
         type: "text",
         text: `
@@ -176,7 +180,7 @@ Return JSON only, matching the schema, one item per input image, with index matc
     const saved = await insertClothingItems(userId, itemsToInsert);
 
     return NextResponse.json({ items: saved });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("preprocess-clothing error:", err);
     // Don't expose internal error details in production
     return NextResponse.json(

@@ -42,7 +42,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileSelect, onClear, s
           <button
             type="button"
             onClick={() => setShowTips(!showTips)}
-            className="text-xs text-gray-500 hover:text-gray-700 underline flex items-center gap-1"
+            className="text-xs text-cyan-400 hover:text-cyan-300 underline flex items-center gap-1 py-1 px-1 touch-manipulation min-h-[32px]"
             aria-label="Show photo tips"
           >
             <Info size={14} />
@@ -51,7 +51,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileSelect, onClear, s
         )}
       </div>
       {showTips && !selectedFile && (
-        <div className="mb-3 p-3 bg-blue-50 rounded-lg text-xs text-gray-700 border border-blue-100">
+        <div className="mb-3 p-3 bg-cyan-500/10 rounded-lg text-xs text-cyan-200 border border-cyan-500/30 shadow-[0_0_10px_rgba(0,255,255,0.2)]">
           <ul className="list-disc list-inside space-y-1">
             <li>Use a full-body photo for best results</li>
             <li>Good lighting works best</li>
@@ -65,7 +65,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileSelect, onClear, s
         onDrop={handleDrop}
         className={`
           border-2 border-dashed rounded-lg p-4 sm:p-6 text-center cursor-pointer transition-colors touch-manipulation
-          ${selectedFile ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400 active:border-gray-500'}
+          ${selectedFile ? 'border-cyan-500 bg-cyan-500/10 shadow-[0_0_15px_rgba(0,255,255,0.3)]' : 'border-cyan-500/30 hover:border-cyan-500/50 active:border-cyan-500'}
         `}
       >
         {selectedFile ? (
@@ -77,17 +77,17 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileSelect, onClear, s
             />
             <button
               onClick={handleClear}
-              className="absolute top-0 right-0 bg-red-500 hover:bg-red-600 text-white p-1.5 sm:p-1 rounded-full transform translate-x-1/2 -translate-y-1/2 min-w-[32px] min-h-[32px] flex items-center justify-center touch-manipulation transition-colors"
+              className="absolute top-0 right-0 bg-red-500 hover:bg-red-400 text-white p-2 sm:p-1.5 rounded-full transform translate-x-1/2 -translate-y-1/2 min-w-[40px] min-h-[40px] sm:min-w-[32px] sm:min-h-[32px] flex items-center justify-center touch-manipulation transition-colors shadow-[0_0_10px_rgba(255,0,0,0.3)]"
               aria-label="Remove image"
             >
-              <X size={14} className="sm:w-4 sm:h-4" />
+              <X size={16} className="sm:w-4 sm:h-4" />
             </button>
-            <p className="mt-2 text-xs sm:text-sm text-gray-600 truncate px-2">{selectedFile.name}</p>
+            <p className="mt-2 text-xs sm:text-sm text-cyan-300 truncate px-2">{selectedFile.name}</p>
           </div>
         ) : (
           <label className="cursor-pointer block touch-manipulation">
-            <Upload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-gray-400" />
-            <span className="mt-2 block text-xs sm:text-sm font-medium text-gray-900 px-2">
+            <Upload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-cyan-400" />
+            <span className="mt-2 block text-xs sm:text-sm font-medium text-cyan-300 px-2">
               Drop image here or tap to upload
             </span>
             <input

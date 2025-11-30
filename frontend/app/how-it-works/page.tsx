@@ -99,7 +99,7 @@ export default function HowItWorks() {
                 <h2 className="text-2xl font-bold">Generate Your Look</h2>
               </div>
               <p className="text-gray-600 mb-4">
-                Click "Try On & Shop Look" and our AI will:
+                Click &quot;Try On &amp; Shop Look&quot; and our AI will:
               </p>
               <ul className="list-disc list-inside space-y-2 text-gray-600 ml-4">
                 <li>Create a realistic virtual try-on image</li>

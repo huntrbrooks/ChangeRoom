@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ personImage });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("save-person-image error:", err);
     // Don't expose internal error details in production
     return NextResponse.json(
