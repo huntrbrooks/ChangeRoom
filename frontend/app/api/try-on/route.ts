@@ -103,12 +103,57 @@ The result should look like a professional fashion photograph of the person wear
     text: prompt,
   });
 
-  // Use Imagen 4 model via REST API for image generation
-  // Try different Imagen 4 variants in order of preference
+  // First, try to list available models to see what's actually available
+  let availableModels: string[] = [];
+  try {
+    const listResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${geminiConfig.apiKey}`
+    );
+    if (listResponse.ok) {
+      const listData = await listResponse.json();
+      availableModels = (listData.models || []).map((m: any) => {
+        // Extract just the model name from the full path
+        const name = m.name || "";
+        return name.includes("/") ? name.split("/").pop() : name;
+      });
+      console.log(`Available models (first 10):`, availableModels.slice(0, 10));
+      
+      // Look for any models that mention "imagen" or "image" generation
+      const imageModels = availableModels.filter((name: string) =>
+        name.toLowerCase().includes("imagen") || 
+        name.toLowerCase().includes("image") ||
+        name.toLowerCase().includes("generate")
+      );
+      console.log(`Image generation models found:`, imageModels);
+    }
+  } catch (e) {
+    console.warn("Could not list available models:", e);
+  }
+
+  // Try Imagen 4 models first, then fall back to any available image generation models
   const imagenModels = [
     "imagen-4.0-generate-001",      // Standard Imagen 4
     "imagen-4.0-fast-generate-001", // Fast variant
-  ];
+    "imagen-3.0-generate-001",      // Imagen 3 fallback
+    ...(availableModels.filter((m: string) => 
+      m.toLowerCase().includes("imagen") && 
+      m.toLowerCase().includes("generate")
+    )),
+  ].filter((m, i, arr) => arr.indexOf(m) === i); // Remove duplicates
+
+  // If no Imagen models found, try Gemini models that might support image generation
+  if (imagenModels.length <= 2) {
+    imagenModels.push(
+      "gemini-2.0-flash-exp",
+      "gemini-2.5-flash-exp",
+      ...(availableModels.filter((m: string) => 
+        m.toLowerCase().includes("gemini") && 
+        (m.toLowerCase().includes("flash") || m.toLowerCase().includes("exp"))
+      )),
+    );
+  }
+
+  console.log(`Trying models in order:`, imagenModels);
 
   let lastError: Error | null = null;
 

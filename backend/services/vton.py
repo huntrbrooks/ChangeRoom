@@ -274,18 +274,56 @@ Output:
         # Optimized model selection for best image generation quality
         # Models ordered by quality and image generation capability
         # Priority: Best quality first, then fallback to reliable alternatives
-        logger.info(f"🚀 Starting virtual try-on generation with Imagen 4")
+        logger.info(f"🚀 Starting virtual try-on generation")
         logger.info(f"   Person image: {len(user_img_base64)} chars (base64)")
         logger.info(f"   Clothing items: {len(limited_garments)}")
         logger.info(f"   Total content parts: {len(parts)} ({len(limited_garments) + 1} images + 1 text)")
         
-        # Use Imagen 4 models for image generation via Gemini API
-        # Imagen 4 models are available through the Gemini API endpoint
-        model_options = [
-            "imagen-4.0-generate-001",      # Standard Imagen 4 - high quality
-            "imagen-4.0-fast-generate-001", # Fast variant - faster generation
-        ]
+        # First, try to list available models to see what's actually available
         base_url = "https://generativelanguage.googleapis.com/v1beta/models"
+        available_models = []
+        
+        try:
+            list_endpoint = f"{base_url}?key={api_key}"
+            async with httpx.AsyncClient(timeout=10.0) as list_client:
+                list_response = await list_client.get(list_endpoint)
+                if list_response.is_success:
+                    list_data = list_response.json()
+                    available_models = [m.get("name", "").split("/")[-1] for m in list_data.get("models", [])]
+                    logger.info(f"Found {len(available_models)} available models")
+                    logger.info(f"Sample models: {', '.join(available_models[:10])}")
+                    
+                    # Look for models that might support image generation
+                    image_models = [
+                        m for m in available_models 
+                        if "imagen" in m.lower() or "image" in m.lower() or "generate" in m.lower()
+                    ]
+                    if image_models:
+                        logger.info(f"Found potential image generation models: {', '.join(image_models)}")
+        except Exception as e:
+            logger.warning(f"Could not list available models: {e}")
+        
+        # Try Imagen models first, then fall back to any available image models
+        model_options = [
+            "imagen-4.0-generate-001",
+            "imagen-4.0-fast-generate-001",
+            "imagen-3.0-generate-001",
+        ]
+        
+        # Add any discovered models that might support image generation
+        if available_models:
+            for model in available_models:
+                if ("imagen" in model.lower() and "generate" in model.lower()) and model not in model_options:
+                    model_options.append(model)
+        
+        # If still no models found, try Gemini models that might support image generation
+        if len(model_options) <= 3:
+            model_options.extend([
+                "gemini-2.0-flash-exp",
+                "gemini-2.5-flash-exp",
+            ])
+        
+        logger.info(f"Will try models in order: {', '.join(model_options[:5])}")
         last_error = None
         successful_model = None
         
