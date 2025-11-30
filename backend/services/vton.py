@@ -36,20 +36,19 @@ async def generate_try_on(user_image_file, garment_image_files, category="upper_
 
 async def _generate_with_gemini(user_image_file, garment_image_files, category="upper_body", garment_metadata=None):
     """
-    Uses Imagen 4 via Gemini API for virtual try-on image generation.
+    Uses Gemini 3 Pro Image for virtual try-on image generation.
     Generates a photorealistic image of the person wearing all clothing items.
     
-    This function uses direct REST API calls to Gemini API with Imagen 4 models.
-    Imagen 4 models are accessed through the Gemini API endpoint.
+    This function uses direct REST API calls to Gemini API with Gemini 3 Pro Image model.
     No SDKs or OAuth2 are required - just set GEMINI_API_KEY environment variable.
     
-    Model Selection Strategy:
-    - Uses imagen-4.0-generate-001 for high quality output
-    - Falls back to imagen-4.0-fast-generate-001 for faster generation
+    Model: gemini-3-pro-image-preview
+    - Supports multi-image fusion (base person + clothing images)
+    - Uses responseModalities: ["TEXT", "IMAGE"] for image generation
     
-    API Endpoint: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+    API Endpoint: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent
     Authentication: API key passed as query parameter (?key={api_key})
-    Request Format: JSON with images as base64 inline_data and responseModalities: ["IMAGE"]
+    Request Format: JSON with text prompt + images as base64 inline_data and responseModalities: ["TEXT", "IMAGE"]
     
     Args:
         user_image_file: File-like object of the person image
@@ -120,137 +119,30 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
                 'layer_order': idx,
             })
         
-        # System prompt for virtual try-on API
-        system_prompt = """You are the image generator behind a virtual try on API endpoint called /api/try-on.
-
-Each request provides:
-
-- One USER_IMAGE: a photo of the real person who must appear in the final image.
-
-- One or more CLOTHING_IMAGES: photos of individual clothing items to be worn by that person.
-
-- Optional METADATA: a JSON object with styling instructions.
-
-Your job:
-
-Generate one high quality, photorealistic image of the SAME PERSON from the USER_IMAGE, wearing ALL of the clothing items from CLOTHING_IMAGES, styled according to METADATA.
-
-Identity and body consistency:
-
-- The person in the output must clearly be the same person as in USER_IMAGE.
-
-- Keep the same face, age, skin tone, hair color, hairstyle, facial hair, tattoos, and body type.
-
-- Do not beautify, slim, bulk up, de-age, change ethnicity, or otherwise alter their core appearance unless METADATA explicitly allows this.
-
-Clothing requirements:
-
-- Use ONLY the clothing items shown in CLOTHING_IMAGES.
-
-- Reproduce the actual colors, prints, logos, graphics, fabrics, and textures accurately.
-
-- Respect correct layering:
-
-  - Underwear or base layers closest to the body.
-
-  - Tops over base layers.
-
-  - Jackets, coats, or hoodies as outer layers.
-
-- If an item is partly visible, infer the missing parts logically while staying consistent with visible details.
-
-- Ignore the bodies, models, faces, and backgrounds in CLOTHING_IMAGES. Only the garments matter.
-
-- Do not add extra garments, shoes, accessories, or logos that are not in CLOTHING_IMAGES unless METADATA explicitly asks for them.
-
-Pose, framing, and composition:
-
-- By default, show a three quarter or full body view that clearly displays the full outfit.
-
-- Keep the person centered and in focus.
-
-- Hands, arms, and body position should not block key parts of the clothing whenever possible.
-
-- If METADATA specifies pose, angle, crop, or framing, follow it.
-
-Background and visual style:
-
-- Default background: simple, neutral, studio style with soft, flattering light.
-
-- If METADATA includes environment, mood, or background style, follow it.
-
-- Do not add overlaid text, watermarks, stickers, or design elements unless METADATA clearly requests them.
-
-- Aim for realistic photography quality, similar to a professional fashion photo or a clean mirror selfie, depending on METADATA.
-
-Using METADATA:
-
-METADATA is a JSON object that can include keys like:
-
-- "background": description of the background or environment.
-
-- "style": description of photo style, for example studio, streetwear, mirror selfie.
-
-- "framing": for example full_body, three_quarter, waist_up.
-
-- "pose": instructions for body pose or direction.
-
-- "camera": instructions like close_up, wide, eye_level, low_angle.
-
-- "extras": any additional user preferences.
-
-Treat METADATA as high priority instructions, as long as they do not conflict with:
-
-1) Preserving the identity from USER_IMAGE,
-
-2) Accurately representing the clothing from CLOTHING_IMAGES.
-
-Conflict resolution:
-
-- If there is any conflict, always prioritise:
-
-  1) Identity consistency with USER_IMAGE,
-
-  2) Clothing accuracy from CLOTHING_IMAGES,
-
-  3) METADATA and other text instructions.
-
-- If something is unclear, choose the safest and most realistic option that shows the outfit clearly and keeps the person recognisable.
-
-Output:
-
-- Return exactly one generated image of the person wearing all clothing items, with no text in the image and no textual explanation in the response."""
-        
-        # Build user prompt with metadata if available
-        user_prompt = system_prompt
-        
-        if garment_metadata:
-            # Format metadata as JSON string for the prompt
-            metadata_str = json.dumps(garment_metadata, indent=2, ensure_ascii=False)
-            user_prompt += f"\n\nMETADATA:\n{metadata_str}"
-            logger.info(f"Using metadata: {list(garment_metadata.keys())}")
-        
-        # Build metadata payload for clothing items
-        metadata_payload = {
-            "clothing": [
-                {
-                    "index": idx + 1,
-                    "id": item.get('id', f'item_{idx + 1}'),
-                    "slot": item.get('slot', category if idx == 0 else 'accessory'),
-                    "layer_order": item.get('layer_order', idx),
-                    "description": item.get('description', ''),
-                }
-                for idx, item in enumerate(garment_data)
-            ]
-        }
-        
-        user_prompt += "\n\nGenerate one photorealistic image of the same person wearing all valid clothing pieces according to this JSON metadata:\n"
-        user_prompt += json.dumps(metadata_payload, indent=2)
-        
         logger.info(f"Generating image with {len(limited_garments)} clothing item(s)...")
         
-        # Build parts array: person image first, then clothing images, then text
+        # Build text prompt for Gemini 3 Pro Image
+        # Simple, clear instructions for virtual try-on
+        text_prompt = (
+            "You are a fashion virtual try on engine. "
+            "Use the first image as the person that must stay consistent. "
+            "Use the other images as clothing items. "
+            "Generate one photorealistic image of the same person wearing all of the clothes, "
+            "neutral clean studio background, flattering lighting, full body if possible."
+        )
+        
+        # Add metadata instructions if provided
+        if garment_metadata:
+            metadata_str = json.dumps(garment_metadata, indent=2, ensure_ascii=False)
+            text_prompt += f"\n\nAdditional styling instructions:\n{metadata_str}"
+            logger.info(f"Using metadata: {list(garment_metadata.keys())}")
+        
+        # Build parts array: text prompt first, then person image, then clothing images
+        # Gemini 3 Pro Image expects: text instructions + base image + clothing images
         parts = [
+            {
+                "text": text_prompt
+            },
             {
                 "inline_data": {
                     "mime_type": user_mime_type,
@@ -268,156 +160,83 @@ Output:
                 }
             })
         
-        # Add text prompt
-        parts.append({"text": user_prompt})
-        
-        # Optimized model selection for best image generation quality
-        # Models ordered by quality and image generation capability
-        # Priority: Best quality first, then fallback to reliable alternatives
-        logger.info(f"🚀 Starting virtual try-on generation")
+        # Use Gemini 3 Pro Image for virtual try-on
+        logger.info(f"🚀 Starting virtual try-on generation with Gemini 3 Pro Image")
         logger.info(f"   Person image: {len(user_img_base64)} chars (base64)")
         logger.info(f"   Clothing items: {len(limited_garments)}")
-        logger.info(f"   Total content parts: {len(parts)} ({len(limited_garments) + 1} images + 1 text)")
+        logger.info(f"   Total content parts: {len(parts)} (1 text + {len(limited_garments) + 1} images)")
         
-        # First, try to list available models to see what's actually available
         base_url = "https://generativelanguage.googleapis.com/v1beta/models"
-        available_models = []
+        model_name = "gemini-3-pro-image-preview"
         
-        try:
-            list_endpoint = f"{base_url}?key={api_key}"
-            async with httpx.AsyncClient(timeout=10.0) as list_client:
-                list_response = await list_client.get(list_endpoint)
-                if list_response.is_success:
-                    list_data = list_response.json()
-                    available_models = [m.get("name", "").split("/")[-1] for m in list_data.get("models", [])]
-                    logger.info(f"Found {len(available_models)} available models")
-                    logger.info(f"Sample models: {', '.join(available_models[:10])}")
-                    
-                    # Look for models that might support image generation
-                    image_models = [
-                        m for m in available_models 
-                        if "imagen" in m.lower() or "image" in m.lower() or "generate" in m.lower()
-                    ]
-                    if image_models:
-                        logger.info(f"Found potential image generation models: {', '.join(image_models)}")
-        except Exception as e:
-            logger.warning(f"Could not list available models: {e}")
-        
-        # Try Imagen 4 Ultra first (highest quality), then other variants
-        model_options = [
-            "imagen-4.0-ultra-generate-001",  # Ultra variant - highest quality
-            "imagen-4.0-generate-001",        # Standard Imagen 4
-            "imagen-4.0-fast-generate-001",   # Fast variant
-            "imagen-3.0-generate-001",        # Imagen 3 fallback
-        ]
-        
-        # Add any discovered models that might support image generation
-        if available_models:
-            for model in available_models:
-                if ("imagen" in model.lower() and "generate" in model.lower()) and model not in model_options:
-                    model_options.append(model)
-        
-        # If still no models found, try Gemini models that might support image generation
-        if len(model_options) <= 3:
-            model_options.extend([
-                "gemini-2.0-flash-exp",
-                "gemini-2.5-flash-exp",
-            ])
-        
-        logger.info(f"Will try models in order: {', '.join(model_options[:5])}")
-        last_error = None
-        successful_model = None
-        
-        # Make async HTTP request
-        # Using httpx for async REST API calls (no SDK required)
+        # Make async HTTP request using Gemini 3 Pro Image
         async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minute timeout for image generation
-            for model_name in model_options:
-                try:
-                    endpoint = f"{base_url}/{model_name}:generateContent"
-                    logger.info(f"Attempting to use Imagen 4 model: {model_name} with API: v1beta")
-                        
-                    response = await client.post(
-                        f"{endpoint}?key={api_key}",
-                        headers={
-                            "Content-Type": "application/json",
+            try:
+                endpoint = f"{base_url}/{model_name}:generateContent"
+                logger.info(f"Calling Gemini 3 Pro Image: {model_name}")
+                    
+                response = await client.post(
+                    f"{endpoint}?key={api_key}",
+                    headers={
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": parts,
+                            }
+                        ],
+                        "generationConfig": {
+                            "responseModalities": ["TEXT", "IMAGE"],  # Required for Gemini image models
                         },
-                        json={
-                            "contents": [
-                                {
-                                    "role": "user",
-                                    "parts": parts,
-                                }
-                            ],
-                            "generationConfig": {
-                                "responseModalities": ["IMAGE"],
-                            },
-                        },
-                    )
-                    
-                    if not response.is_success:
-                        error_text = response.text
-                        logger.warning(f"Model {model_name} failed: {response.status_code} - {error_text}")
-                        last_error = ValueError(f"Gemini API error: {response.status_code} - {error_text}")
-                        continue
-                    
-                    data = response.json()
-                    
-                    # Extract image from response
-                    parts_out = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                    
-                    image_part = None
-                    for part in parts_out:
-                        if "inline_data" in part:
-                            image_part = part["inline_data"]
-                            break
-                    
-                    if not image_part:
-                        logger.warning(f"Model {model_name} returned no image in response")
-                        last_error = ValueError("No image returned from Gemini - model may not support image generation")
-                        continue
-                    
-                    image_base64 = image_part.get("data")
-                    mime_type = image_part.get("mime_type", "image/png")
-                    
-                    if not image_base64:
-                        logger.warning(f"Model {model_name} returned empty image data")
-                        last_error = ValueError("Image data is empty in Gemini response")
-                        continue
-                    
-                    successful_model = f"{model_name} (v1beta)"
-                    logger.info(f"✅ Successfully generated image using model: {successful_model}")
-                    logger.info(f"   Image size: {len(image_base64)} characters (base64), MIME type: {mime_type}")
-                    # Return as data URL
-                    return f"data:{mime_type};base64,{image_base64}"
-                    
-                except httpx.TimeoutException as e:
-                    logger.error(f"Timeout calling model {model_name}: {e}")
-                    last_error = e
-                    continue
-                except Exception as e:
-                    logger.warning(f"Error calling model {model_name}: {e}")
-                    last_error = e
-                    continue
-            
-            # If all models failed, raise the last error with helpful context
-            if last_error:
-                error_msg = str(last_error)
-                if "404" in error_msg or "NOT_FOUND" in error_msg or "not found" in error_msg.lower():
-                    raise ValueError(
-                        f"Imagen 4 API: Model not found.\n\n"
-                        f"Troubleshooting:\n"
-                        f"1. Verify your API key has access to Imagen 4 models\n"
-                        f"2. Enable Generative AI API in Google Cloud Console\n"
-                        f"3. Ensure Imagen API is enabled for your project\n"
-                        f"4. Check that the model names are correct\n\n"
-                        f"Tried models: {', '.join(model_options)}\n"
-                        f"Original error: {error_msg}"
-                    )
-                raise last_error
-            raise ValueError("Imagen 4 failed to generate image. Please check your API key has access to Imagen models.")
+                    },
+                )
+                
+                if not response.is_success:
+                    error_text = response.text
+                    logger.error(f"Gemini 3 Pro Image failed: {response.status_code} - {error_text}")
+                    raise ValueError(f"Gemini API error: {response.status_code} - {error_text}")
+                
+                data = response.json()
+                
+                # Extract image from response
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    raise ValueError("No candidates returned from Gemini 3 Pro Image")
+                
+                content_parts = candidates[0].get("content", {}).get("parts", [])
+                
+                # Find the first image in the response
+                image_part = None
+                for part in content_parts:
+                    if "inline_data" in part and part["inline_data"].get("data"):
+                        image_part = part["inline_data"]
+                        break
+                
+                if not image_part:
+                    raise ValueError("No image part in Gemini 3 Pro Image response")
+                
+                image_base64 = image_part.get("data")
+                mime_type = image_part.get("mime_type", "image/png")
+                
+                if not image_base64:
+                    raise ValueError("Image data is empty in Gemini response")
+                
+                logger.info(f"✅ Successfully generated image using Gemini 3 Pro Image")
+                logger.info(f"   Image size: {len(image_base64)} characters (base64), MIME type: {mime_type}")
+                # Return as data URL
+                return f"data:{mime_type};base64,{image_base64}"
+                
+            except httpx.TimeoutException as e:
+                logger.error(f"Timeout calling Gemini 3 Pro Image: {e}")
+                raise ValueError(f"Request timed out. Please try again.")
+            except Exception as e:
+                logger.error(f"Error calling Gemini 3 Pro Image: {e}")
+                raise
             
     except Exception as e:
-        logger.error(f"Error in Imagen 4 image generation: {e}", exc_info=True)
+        logger.error(f"Error in Gemini 3 Pro Image generation: {e}", exc_info=True)
         raise e
 
 
