@@ -170,7 +170,7 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
             key={index}
             label={`Item ${index + 1}${item && (item as any).category ? ` (${(item as any).category})` : ''}`}
             selectedFile={item}
-            onFileSelect={(file) => onItemSelect(index, file)}
+            onFileSelect={(file) => file && onItemSelect(index, file)}
           />
         ))}
       </div>

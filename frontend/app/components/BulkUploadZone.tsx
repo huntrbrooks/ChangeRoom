@@ -6,11 +6,17 @@ interface AnalyzedItem {
   index: number;
   original_filename: string;
   analysis?: {
+    body_region?: string;
     category: string;
-    detailed_description: string;
+    detailed_description?: string;
+    short_description?: string;
+    description?: string;
     suggested_filename: string;
     metadata: any;
     item_type?: string;
+    color?: string;
+    style?: string;
+    tags?: string[];
   };
   error?: string;
   status?: 'analyzing' | 'success' | 'error';

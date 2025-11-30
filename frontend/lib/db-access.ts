@@ -128,11 +128,14 @@ export async function updateUserBillingCredits(
   // Ensure credits don't go negative
   newCredits = Math.max(0, newCredits);
 
+  // Convert Date to ISO string for SQL template
+  const refreshAtValue = refreshAt instanceof Date ? refreshAt.toISOString() : refreshAt;
+
   const result = await sql`
     UPDATE users_billing
     SET 
       credits_available = ${newCredits},
-      credits_refresh_at = ${refreshAt},
+      credits_refresh_at = ${refreshAtValue || null},
       updated_at = now()
     WHERE user_id = ${userId}
     RETURNING *
@@ -184,7 +187,7 @@ export async function updateUserBillingPlan(
     SET 
       plan = ${plan},
       credits_available = ${monthlyCredits},
-      credits_refresh_at = ${plan === "free" ? null : refreshAt},
+      credits_refresh_at = ${plan === "free" ? null : refreshAt.toISOString()},
       stripe_customer_id = COALESCE(${stripeCustomerId || null}, stripe_customer_id),
       stripe_subscription_id = COALESCE(${stripeSubscriptionId || null}, stripe_subscription_id),
       updated_at = now()
@@ -328,38 +331,47 @@ export async function getUserClothingItems(
     limit?: number;
   }
 ): Promise<ClothingItem[]> {
-  let query = sql`
-    SELECT * FROM clothing_items
-    WHERE user_id = ${userId}
-  `;
-
-  if (filters?.category) {
-    query = sql`
-      ${query}
+  // Build single query with all conditions
+  let result;
+  
+  if (filters?.category && filters?.tags && filters.tags.length > 0) {
+    result = await sql`
+      SELECT * FROM clothing_items
+      WHERE user_id = ${userId}
       AND category = ${filters.category}
-    `;
-  }
-
-  if (filters?.tags && filters.tags.length > 0) {
-    query = sql`
-      ${query}
       AND tags @> ${JSON.stringify(filters.tags)}::jsonb
+      ORDER BY created_at DESC
+    `;
+  } else if (filters?.category) {
+    result = await sql`
+      SELECT * FROM clothing_items
+      WHERE user_id = ${userId}
+      AND category = ${filters.category}
+      ORDER BY created_at DESC
+    `;
+  } else if (filters?.tags && filters.tags.length > 0) {
+    result = await sql`
+      SELECT * FROM clothing_items
+      WHERE user_id = ${userId}
+      AND tags @> ${JSON.stringify(filters.tags)}::jsonb
+      ORDER BY created_at DESC
+    `;
+  } else {
+    result = await sql`
+      SELECT * FROM clothing_items
+      WHERE user_id = ${userId}
+      ORDER BY created_at DESC
     `;
   }
-
-  query = sql`
-    ${query}
-    ORDER BY created_at DESC
-  `;
-
+  
+  let items = result.rows as ClothingItem[];
+  
+  // Apply limit after query if needed
   if (filters?.limit) {
-    query = sql`
-      ${query}
-      LIMIT ${filters.limit}
-    `;
+    items = items.slice(0, filters.limit);
   }
-
-  const result = await query;
+  
+  return items;
   return result.rows as ClothingItem[];
 }
 
@@ -390,13 +402,50 @@ export async function getClothingItemsByIds(
     return [];
   }
 
-  const result = await sql`
-    SELECT * FROM clothing_items
-    WHERE id = ANY(${clothingItemIds}::uuid[]) AND user_id = ${userId}
-    LIMIT 5
-  `;
-
-  return result.rows as ClothingItem[];
+  // Limit to 5 items max
+  const idsToQuery = clothingItemIds.slice(0, 5);
+  if (idsToQuery.length === 0) {
+    return [];
+  }
+  
+  // Use a single query with OR conditions for each ID
+  // Since we can't nest SQL template tags, build conditions separately
+  if (idsToQuery.length === 1) {
+    const result = await sql`
+      SELECT * FROM clothing_items
+      WHERE user_id = ${userId} AND id = ${idsToQuery[0]}
+      LIMIT 5
+    `;
+    return result.rows as ClothingItem[];
+  } else if (idsToQuery.length === 2) {
+    const result = await sql`
+      SELECT * FROM clothing_items
+      WHERE user_id = ${userId} AND (id = ${idsToQuery[0]} OR id = ${idsToQuery[1]})
+      LIMIT 5
+    `;
+    return result.rows as ClothingItem[];
+  } else if (idsToQuery.length === 3) {
+    const result = await sql`
+      SELECT * FROM clothing_items
+      WHERE user_id = ${userId} AND (id = ${idsToQuery[0]} OR id = ${idsToQuery[1]} OR id = ${idsToQuery[2]})
+      LIMIT 5
+    `;
+    return result.rows as ClothingItem[];
+  } else if (idsToQuery.length === 4) {
+    const result = await sql`
+      SELECT * FROM clothing_items
+      WHERE user_id = ${userId} AND (id = ${idsToQuery[0]} OR id = ${idsToQuery[1]} OR id = ${idsToQuery[2]} OR id = ${idsToQuery[3]})
+      LIMIT 5
+    `;
+    return result.rows as ClothingItem[];
+  } else {
+    const result = await sql`
+      SELECT * FROM clothing_items
+      WHERE user_id = ${userId} AND (id = ${idsToQuery[0]} OR id = ${idsToQuery[1]} OR id = ${idsToQuery[2]} OR id = ${idsToQuery[3]} OR id = ${idsToQuery[4]})
+      LIMIT 5
+    `;
+    return result.rows as ClothingItem[];
+  }
 }
 
 /**
@@ -422,7 +471,7 @@ export async function insertTryOnSession(
     VALUES (
       ${userId},
       ${data.personImageId},
-      ${data.clothingItemIds}::uuid[],
+      ${JSON.stringify(data.clothingItemIds)}::jsonb,
       ${data.geminiModel || "gemini-2.5-flash-image"},
       ${data.status || "pending"}
     )

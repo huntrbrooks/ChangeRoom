@@ -9,7 +9,7 @@ import {
 } from "@/lib/db-access";
 
 const stripe = new Stripe(stripeConfig.secretKey, {
-  apiVersion: "2024-12-18.acacia",
+  apiVersion: "2025-02-24.acacia",
 });
 
 /**

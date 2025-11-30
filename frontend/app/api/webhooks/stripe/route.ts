@@ -8,7 +8,7 @@ import {
 } from "@/lib/db-access";
 
 const stripe = new Stripe(stripeConfig.secretKey, {
-  apiVersion: "2024-12-18.acacia",
+  apiVersion: "2025-02-24.acacia",
 });
 
 /**
@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
         const billing = await getUserBillingByStripeCustomer(customerId);
         if (billing) {
           // Downgrade to free plan
-          await updateUserBillingPlan(billing.user_id, "free", customerId, null);
+          await updateUserBillingPlan(billing.user_id, "free", customerId, undefined);
           console.log(`Downgraded user ${billing.user_id} to free plan`);
         }
         break;
