@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { r2, getPublicUrl } from "@/lib/r2";
 import { r2Config, geminiConfig } from "@/lib/config";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
@@ -164,17 +164,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check credits before processing
-    const hasCredits = await decrementCreditsIfAvailable(userId);
-    if (!hasCredits) {
-      const billing = await getOrCreateUserBilling(userId);
-      return NextResponse.json(
-        {
-          error: "no_credits",
-          creditsAvailable: billing.credits_available,
-        },
-        { status: 402 }
-      );
+    // Payment bypass for specific email
+    const BYPASS_EMAILS = ["gerard.grenville@gmail.com"];
+    const user = await currentUser();
+    const userEmail = user?.emailAddresses?.[0]?.emailAddress?.toLowerCase();
+    const shouldBypassPayment = userEmail && BYPASS_EMAILS.includes(userEmail.toLowerCase());
+    
+    // Check credits before processing (unless bypassed)
+    if (!shouldBypassPayment) {
+      const hasCredits = await decrementCreditsIfAvailable(userId);
+      if (!hasCredits) {
+        const billing = await getOrCreateUserBilling(userId);
+        return NextResponse.json(
+          {
+            error: "no_credits",
+            creditsAvailable: billing.credits_available,
+          },
+          { status: 402 }
+        );
+      }
+    } else {
+      console.log(`Payment bypassed for user: ${userEmail}`);
     }
 
     // Fetch person image (scoped to user)
