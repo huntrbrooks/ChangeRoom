@@ -57,7 +57,14 @@ export default function RootLayout({
   }
   
   return (
-    <ClerkProvider publishableKey={publishableKey}>
+    <ClerkProvider 
+      publishableKey={publishableKey}
+      appearance={{
+        elements: {
+          formButtonPrimary: 'bg-[#6c47ff] hover:bg-[#5a3ae6]',
+        }
+      }}
+    >
       <html lang="en">
         <body
           className={`${geistSans.variable} ${geistMono.variable} antialiased`}
