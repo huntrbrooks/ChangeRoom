@@ -18,7 +18,7 @@ interface BillingInfo {
   trialUsed?: boolean;
 }
 
-export default function PricingPage() {
+function PricingPageContent() {
   const { user, isLoaded } = useUser();
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -27,6 +27,8 @@ export default function PricingPage() {
     if (isLoaded && user) {
       fetchBilling();
       trackPricingView(user);
+    } else if (isLoaded) {
+      setLoading(false);
     }
   }, [isLoaded, user]);
 
@@ -112,6 +114,23 @@ export default function PricingPage() {
       </div>
     </div>
   );
+}
+
+export default function PricingPage() {
+  // During build/SSR, Clerk might not be available
+  // Return a loading state that will be replaced at runtime
+  if (typeof window === 'undefined') {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500 mx-auto"></div>
+          <p className="mt-4 text-cyan-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+  
+  return <PricingPageContent />;
 }
 
 

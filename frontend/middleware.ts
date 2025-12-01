@@ -1,6 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import type { NextRequest, NextMiddleware } from 'next/server';
 
 // Define public routes that don't require authentication
 const isPublicRoute = createRouteMatcher([
@@ -39,7 +39,7 @@ function fallbackMiddleware(req: NextRequest) {
 }
 
 // Create Clerk middleware with error handling
-let clerkAuthMiddleware: ((req: NextRequest) => Promise<NextResponse> | NextResponse) | null = null;
+let clerkAuthMiddleware: NextMiddleware | null = null;
 
 try {
   if (hasClerkKeys()) {
@@ -63,11 +63,11 @@ try {
 }
 
 // Export middleware with execution error handling
-export default function middleware(req: NextRequest) {
+export default function middleware(req: NextRequest, event?: any) {
   // Use Clerk middleware if available, otherwise use fallback
   if (clerkAuthMiddleware) {
     try {
-      const result = clerkAuthMiddleware(req);
+      const result = clerkAuthMiddleware(req, event);
       // Handle both sync and async results
       if (result instanceof Promise) {
         return result.catch((error) => {

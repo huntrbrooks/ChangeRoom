@@ -3,7 +3,11 @@
  * Track user interactions with products, features, and pricing
  */
 
-import type { UserResource } from '@clerk/nextjs';
+// Type for user from useUser() hook - matches what we actually use
+type ClerkUser = {
+  id: string;
+  emailAddresses: Array<{ emailAddress: string }>;
+} | null | undefined;
 
 export type TrackingEvent = 
   | 'pricing_viewed'
@@ -28,7 +32,7 @@ export interface TrackingData {
  * This can be extended to send to analytics services
  */
 export async function trackUserEvent(
-  user: UserResource | null,
+  user: ClerkUser,
   event: TrackingEvent,
   metadata?: Record<string, unknown>
 ): Promise<void> {
@@ -66,7 +70,7 @@ export async function trackUserEvent(
 /**
  * Track pricing table view
  */
-export async function trackPricingView(user: UserResource | null): Promise<void> {
+export async function trackPricingView(user: ClerkUser): Promise<void> {
   await trackUserEvent(user, 'pricing_viewed', {
     source: 'pricing_page',
   });
@@ -76,7 +80,7 @@ export async function trackPricingView(user: UserResource | null): Promise<void>
  * Track product view
  */
 export async function trackProductView(
-  user: UserResource | null,
+  user: ClerkUser,
   plan: 'free' | 'standard' | 'pro'
 ): Promise<void> {
   await trackUserEvent(user, 'product_viewed', {
@@ -88,7 +92,7 @@ export async function trackProductView(
  * Track feature click/interaction
  */
 export async function trackFeatureClick(
-  user: UserResource | null,
+  user: ClerkUser,
   featureId: string,
   plan: 'free' | 'standard' | 'pro'
 ): Promise<void> {
@@ -102,7 +106,7 @@ export async function trackFeatureClick(
  * Track checkout initiation
  */
 export async function trackCheckoutInitiated(
-  user: UserResource | null,
+  user: ClerkUser,
   plan: 'standard' | 'pro' | 'credit-pack',
   priceId: string
 ): Promise<void> {
@@ -116,7 +120,7 @@ export async function trackCheckoutInitiated(
  * Track upgrade click
  */
 export async function trackUpgradeClick(
-  user: UserResource | null,
+  user: ClerkUser,
   fromPlan: 'free' | 'standard' | 'pro',
   toPlan: 'standard' | 'pro'
 ): Promise<void> {
@@ -130,7 +134,7 @@ export async function trackUpgradeClick(
  * Track trial start
  */
 export async function trackTrialStarted(
-  user: UserResource | null,
+  user: ClerkUser,
   plan: 'standard' | 'pro'
 ): Promise<void> {
   await trackUserEvent(user, 'trial_started', {
