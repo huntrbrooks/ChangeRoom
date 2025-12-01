@@ -9,6 +9,7 @@ import {
 } from '@clerk/nextjs';
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { Footer } from "./components/Footer";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -51,11 +52,14 @@ export default function RootLayout({
   if (!hasValidKey) {
     return (
       <html lang="en">
-        <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-black text-white`}>
+        <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-black text-white flex flex-col min-h-screen`}>
           <header className="flex justify-end items-center p-4 gap-4 h-16 bg-black border-b border-cyan-500/20">
             {/* Clerk components won't work during build, but that's OK */}
           </header>
-          {children}
+          <div className="flex-1">
+            {children}
+          </div>
+          <Footer />
         </body>
       </html>
     );
@@ -72,7 +76,7 @@ export default function RootLayout({
     >
       <html lang="en">
         <body
-          className={`${geistSans.variable} ${geistMono.variable} antialiased bg-black text-white`}
+          className={`${geistSans.variable} ${geistMono.variable} antialiased bg-black text-white flex flex-col min-h-screen`}
         >
           <header className="flex justify-end items-center p-4 gap-4 h-16 bg-black border-b border-cyan-500/20">
             <SignedOut>
@@ -87,7 +91,10 @@ export default function RootLayout({
               <UserButton />
             </SignedIn>
           </header>
-          {children}
+          <div className="flex-1">
+            {children}
+          </div>
+          <Footer />
         </body>
       </html>
     </ClerkProvider>

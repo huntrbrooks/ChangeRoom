@@ -475,6 +475,31 @@ function HomeContent() {
 
       <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-6 md:py-8 pb-6 sm:pb-8">
         
+        {/* Main Heading */}
+        <div className="text-center mb-6 sm:mb-8">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-cyan-300 mb-3 sm:mb-4">
+            Virtual Try-On & Shopping
+          </h1>
+          <p className="text-sm sm:text-base text-gray-400 mb-4">
+            Try on clothes virtually and discover similar products to shop
+          </p>
+          <div className="flex flex-wrap justify-center items-center gap-4 sm:gap-6 text-xs sm:text-sm text-cyan-400">
+            <Link 
+              href="/terms-of-service" 
+              className="hover:text-cyan-300 transition-colors underline"
+            >
+              Terms of Service
+            </Link>
+            <span className="text-gray-600">|</span>
+            <Link 
+              href="/privacy-policy" 
+              className="hover:text-cyan-300 transition-colors underline"
+            >
+              Privacy Policy
+            </Link>
+          </div>
+        </div>
+        
         {/* Free Trial Banner */}
         {isLoaded && user && billing && isOnTrial && (
           <div className="bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 text-white p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_20px_rgba(0,255,255,0.3)]">
@@ -582,8 +607,16 @@ function HomeContent() {
             </section>
 
             <button
-              onClick={handleGenerate}
+              onClick={(e) => {
+                e.preventDefault();
+                handleGenerate().catch((error) => {
+                  console.error('Error in handleGenerate:', error);
+                  setError('An error occurred while trying to generate your look. Please try again.');
+                  setIsGenerating(false);
+                });
+              }}
               disabled={isGenerating}
+              type="button"
               className={`
                 w-full py-3.5 sm:py-4 rounded-xl font-bold text-base sm:text-lg flex items-center justify-center gap-2 sm:gap-3 transition-all
                 min-h-[48px] touch-manipulation
@@ -601,7 +634,7 @@ function HomeContent() {
               ) : (
                 <>
                   <Sparkles size={18} className="sm:w-5 sm:h-5" />
-                  <span>Try On & Shop Look</span>
+                  <span>Try it on</span>
                 </>
               )}
             </button>
