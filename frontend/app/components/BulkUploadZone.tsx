@@ -63,12 +63,37 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
   const [analyzedItems, setAnalyzedItems] = useState<AnalyzedItem[]>(existingAnalyses);
   const [uploadedFiles, setUploadedFiles] = useState<File[]>(existingImages);
   const [wearingStyles, setWearingStyles] = useState<Map<number, string>>(new Map());
+  const [objectUrls, setObjectUrls] = useState<Map<number, string>>(new Map());
 
   // Sync with parent state when props change
   useEffect(() => {
     setUploadedFiles(existingImages);
     setAnalyzedItems(existingAnalyses);
   }, [existingImages, existingAnalyses]);
+
+  // Create object URLs for files in useEffect to avoid hydration issues
+  useEffect(() => {
+    const urls = new Map<number, string>();
+    uploadedFiles.forEach((file, idx) => {
+      if (!objectUrls.has(idx) && file && !(file as FileWithMetadata).file_url) {
+        const url = URL.createObjectURL(file);
+        urls.set(idx, url);
+      }
+    });
+    
+    if (urls.size > 0) {
+      setObjectUrls(prev => {
+        const newMap = new Map(prev);
+        urls.forEach((url, idx) => newMap.set(idx, url));
+        return newMap;
+      });
+    }
+
+    // Cleanup function to revoke URLs when component unmounts or files change
+    return () => {
+      urls.forEach(url => URL.revokeObjectURL(url));
+    };
+  }, [uploadedFiles]);
 
   const analyzeFiles = useCallback(async (filesToAnalyze: File[], startIndex: number = 0) => {
     if (filesToAnalyze.length === 0) return { files: [], analyses: [] };
@@ -514,6 +539,14 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             const isError = item?.status === 'error' || item?.error;
             const isAnalyzing = item?.status === 'analyzing';
             
+            // Compute wearing style options outside of JSX to avoid hydration issues
+            const category = item?.analysis?.category || item?.analysis?.body_region || '';
+            const itemType = item?.analysis?.item_type || '';
+            const styleOptions = isSuccess ? getWearingStyleOptions(category, itemType) : [];
+            const hasWearingOptions = styleOptions.length > 0;
+            const currentWearingStyle = wearingStyles.get(idx);
+            const defaultWearingStyle = currentWearingStyle || styleOptions[0]?.value || '';
+            
             return (
               <div
                 key={idx}
@@ -561,14 +594,15 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                           ? (item.file_url.startsWith('http') 
                               ? item.file_url 
                               : `${API_URL}${item.file_url}`)
-                          : URL.createObjectURL(file)
+                          : objectUrls.get(idx) || ''
                       }
                       alt={item?.saved_filename || item?.analysis?.suggested_filename || item?.original_filename || file.name}
                       className="w-full h-24 sm:h-32 object-cover rounded"
                       onError={(e) => {
-                        // Fallback to original file if saved URL fails
-                        if (item?.file_url) {
-                          (e.target as HTMLImageElement).src = URL.createObjectURL(file);
+                        // Fallback to object URL if saved URL fails
+                        const fallbackUrl = objectUrls.get(idx);
+                        if (fallbackUrl) {
+                          (e.target as HTMLImageElement).src = fallbackUrl;
                         }
                       }}
                     />
@@ -647,40 +681,31 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                     </div>
 
                     {/* Wearing Style Dropdown */}
-                    {isSuccess && item?.analysis && (() => {
-                      const category = item.analysis.category || item.analysis.body_region || '';
-                      const itemType = item.analysis.item_type || '';
-                      const styleOptions = getWearingStyleOptions(category, itemType);
-                      const hasOptions = styleOptions.length > 0;
-                      const currentStyle = wearingStyles.get(idx);
-
-                      if (!hasOptions) return null;
-
-                      return (
-                        <div className="mt-1.5 sm:mt-2">
-                          <label className="block text-[9px] sm:text-[10px] font-medium text-cyan-300 mb-1">
-                            How to wear:
-                          </label>
-                          <select
-                            value={currentStyle || styleOptions[0].value}
-                            onChange={(e) => handleWearingStyleChange(idx, e.target.value)}
-                            className="w-full text-[9px] sm:text-[10px] px-2 py-1.5 rounded bg-gray-800 border border-cyan-500/30 text-cyan-200 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 appearance-none cursor-pointer hover:border-cyan-500/50 transition-colors"
-                            style={{
-                              backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2300ffff' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
-                              backgroundRepeat: 'no-repeat',
-                              backgroundPosition: 'right 0.5rem center',
-                              paddingRight: '2rem',
-                            }}
-                          >
-                            {styleOptions.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      );
-                    })()}
+                    {isSuccess && hasWearingOptions && defaultWearingStyle && (
+                      <div className="mt-1.5 sm:mt-2">
+                        <label htmlFor={`wearing-style-${idx}`} className="block text-[9px] sm:text-[10px] font-medium text-cyan-300 mb-1">
+                          How to wear:
+                        </label>
+                        <select
+                          id={`wearing-style-${idx}`}
+                          value={defaultWearingStyle}
+                          onChange={(e) => handleWearingStyleChange(idx, e.target.value)}
+                          className="w-full text-[9px] sm:text-[10px] px-2 py-1.5 rounded bg-gray-800 border border-cyan-500/30 text-cyan-200 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 appearance-none cursor-pointer hover:border-cyan-500/50 transition-colors"
+                          style={{
+                            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2300ffff' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
+                            backgroundRepeat: 'no-repeat',
+                            backgroundPosition: 'right 0.5rem center',
+                            paddingRight: '2rem',
+                          }}
+                        >
+                          {styleOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
               </div>
             );

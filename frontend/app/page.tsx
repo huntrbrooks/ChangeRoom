@@ -77,8 +77,12 @@ function HomeContent() {
     try {
       const response = await axios.get('/api/my/billing');
       setBilling(response.data);
-    } catch (error) {
-      console.error('Error fetching billing:', error);
+    } catch (error: any) {
+      // Only log error if it's not a 401 (unauthorized) - that's expected when not logged in
+      if (error.response?.status !== 401) {
+        console.error('Error fetching billing:', error.response?.data || error.message);
+      }
+      // Don't show error to user for billing fetch failures - it's non-critical
     }
   };
 

@@ -22,9 +22,20 @@ export async function GET(_req: NextRequest) {
       trialUsed: billing.trial_used,
     });
   } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
     console.error("get billing error:", err);
+    
+    // Log more details for debugging
+    if (err instanceof Error) {
+      console.error("Error stack:", err.stack);
+    }
+    
+    // Return error details in development, generic message in production
     return NextResponse.json(
-      { error: "Failed to fetch billing information" },
+      { 
+        error: "Failed to fetch billing information",
+        ...(process.env.NODE_ENV === 'development' && { details: errorMessage })
+      },
       { status: 500 }
     );
   }
