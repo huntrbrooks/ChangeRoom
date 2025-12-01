@@ -102,37 +102,37 @@ export function PricingTable({
       <div className="hidden md:block overflow-x-auto">
         <table className="w-full border-collapse">
           <thead>
-            <tr className="border-b-2 border-cyan-500/30">
-              <th className="text-left p-4 text-cyan-300 font-semibold">Features</th>
+            <tr className="border-b-2 border-[#FF13F0]/30">
+              <th className="text-left p-4 text-[#FF13F0] font-semibold">Features</th>
               {products.map((product) => (
                 <th
                   key={product.plan}
                   className={`text-center p-4 ${
                     product.popular
-                      ? 'bg-gradient-to-b from-cyan-500/20 to-transparent border-x-2 border-cyan-500/30'
+                      ? 'bg-gradient-to-b from-[#FF13F0]/20 to-transparent border-x-2 border-[#FF13F0]/30'
                       : ''
                   }`}
                 >
                   <div className="flex flex-col items-center gap-2">
                     <div className="flex items-center gap-2">
-                      {product.plan === 'standard' && <Zap className="w-5 h-5 text-cyan-400" />}
-                      {product.plan === 'pro' && <Crown className="w-5 h-5 text-cyan-400" />}
-                      <span className="text-xl font-bold text-cyan-300">{product.name}</span>
+                      {product.plan === 'standard' && <Zap className="w-5 h-5 text-[#FF13F0]" />}
+                      {product.plan === 'pro' && <Crown className="w-5 h-5 text-[#FF13F0]" />}
+                      <span className="text-xl font-bold text-[#FF13F0]">{product.name}</span>
                       {product.badge && (
-                        <span className="bg-cyan-500/20 text-cyan-300 text-xs font-semibold px-2 py-1 rounded border border-cyan-500/30">
+                        <span className="bg-[#FF13F0]/20 text-[#FF13F0] text-xs font-semibold px-2 py-1 rounded border border-[#FF13F0]/30">
                           {product.badge}
                         </span>
                       )}
                     </div>
-                    <div className="text-3xl font-bold text-cyan-300">{formatPrice(product)}</div>
-                    <div className="text-sm text-cyan-400/70">{product.description}</div>
+                    <div className="text-3xl font-bold text-[#FF13F0]">{formatPrice(product)}</div>
+                    <div className="text-sm text-[#FF13F0]/70">{product.description}</div>
                     {product.credits > 0 && (
-                      <div className="text-xs text-cyan-400/60">
+                      <div className="text-xs text-[#FF13F0]/60">
                         {product.credits} credits/month
                       </div>
                     )}
                     {calculatePricePerCredit(product) && (
-                      <div className="text-xs text-cyan-400/50">
+                      <div className="text-xs text-[#FF13F0]/50">
                         {calculatePricePerCredit(product)}
                       </div>
                     )}
@@ -158,13 +158,13 @@ export function PricingTable({
               return (
                 <tr
                   key={featureId}
-                  className="border-b border-cyan-500/10 hover:bg-cyan-500/5 transition-colors"
+                  className="border-b border-[#FF13F0]/10 hover:bg-[#FF13F0]/5 transition-colors"
                 >
-                  <td className="p-4 text-cyan-200">
+                  <td className="p-4 text-[#FF13F0]">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{feature.name}</span>
                       {feature.description && (
-                        <span className="text-xs text-cyan-400/60 hidden lg:inline">
+                        <span className="text-xs text-[#FF13F0]/60 hidden lg:inline">
                           - {feature.description}
                         </span>
                       )}
@@ -177,15 +177,15 @@ export function PricingTable({
                         key={`${product.plan}-${featureId}`}
                         className={`text-center p-4 ${
                           product.popular
-                            ? 'bg-gradient-to-b from-cyan-500/10 to-transparent border-x border-cyan-500/20'
+                            ? 'bg-gradient-to-b from-[#FF13F0]/10 to-transparent border-x border-[#FF13F0]/20'
                             : ''
                         }`}
                         onMouseEnter={() => handleFeatureHover(featureId, product.plan)}
                       >
                         {hasFeature ? (
-                          <Check className="w-5 h-5 text-cyan-400 mx-auto" />
+                          <Check className="w-5 h-5 text-[#FF13F0] mx-auto" />
                         ) : (
-                          <span className="text-cyan-500/30">—</span>
+                          <span className="text-[#FF13F0]/30">—</span>
                         )}
                       </td>
                     );
@@ -202,7 +202,7 @@ export function PricingTable({
                   key={`action-${product.plan}`}
                   className={`text-center p-4 ${
                     product.popular
-                      ? 'bg-gradient-to-b from-cyan-500/10 to-transparent border-x border-cyan-500/20'
+                      ? 'bg-gradient-to-b from-[#FF13F0]/10 to-transparent border-x border-[#FF13F0]/20'
                       : ''
                   }`}
                 >
@@ -212,8 +212,8 @@ export function PricingTable({
                       disabled={loading !== null || currentPlan === product.plan}
                       className={`w-full py-3 px-6 rounded-lg font-semibold transition-colors min-h-[44px] touch-manipulation ${
                         product.popular
-                          ? 'bg-cyan-500 text-black hover:bg-cyan-400 shadow-[0_0_20px_rgba(0,255,255,0.4)]'
-                          : 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 border border-cyan-500/30'
+                          ? 'bg-[#FF13F0] text-white hover:bg-[#FF13F0] shadow-[0_0_20px_rgba(255,19,240,0.4)]'
+                          : 'bg-[#FF13F0]/20 text-[#FF13F0] hover:bg-[#FF13F0]/30 border border-[#FF13F0]/30'
                       } disabled:opacity-50 disabled:cursor-not-allowed`}
                     >
                       {loading === product.plan
@@ -239,47 +239,47 @@ export function PricingTable({
             key={product.plan}
             className={`border-2 rounded-xl p-6 ${
               product.popular
-                ? 'border-cyan-400 bg-gradient-to-br from-cyan-500/10 to-gray-800/50 shadow-[0_0_20px_rgba(0,255,255,0.2)]'
-                : 'border-cyan-500/20 bg-gray-800/50'
+                ? 'border-[#FF13F0] bg-gradient-to-br from-[#FF13F0]/10 to-gray-800/50 shadow-[0_0_20px_rgba(255,19,240,0.2)]'
+                : 'border-[#FF13F0]/20 bg-gray-100/50'
             }`}
           >
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
-                {product.plan === 'standard' && <Zap className="w-5 h-5 text-cyan-400" />}
-                {product.plan === 'pro' && <Crown className="w-5 h-5 text-cyan-400" />}
-                <h3 className="text-xl font-bold text-cyan-300">{product.name}</h3>
+                {product.plan === 'standard' && <Zap className="w-5 h-5 text-[#FF13F0]" />}
+                {product.plan === 'pro' && <Crown className="w-5 h-5 text-[#FF13F0]" />}
+                <h3 className="text-xl font-bold text-[#FF13F0]">{product.name}</h3>
                 {product.badge && (
-                  <span className="bg-cyan-500/20 text-cyan-300 text-xs font-semibold px-2 py-1 rounded border border-cyan-500/30">
+                  <span className="bg-[#FF13F0]/20 text-[#FF13F0] text-xs font-semibold px-2 py-1 rounded border border-[#FF13F0]/30">
                     {product.badge}
                   </span>
                 )}
               </div>
               <div className="text-right">
-                <div className="text-2xl font-bold text-cyan-300">{formatPrice(product)}</div>
+                <div className="text-2xl font-bold text-[#FF13F0]">{formatPrice(product)}</div>
                 {product.credits > 0 && (
-                  <div className="text-xs text-cyan-400/60">{product.credits} credits/month</div>
+                  <div className="text-xs text-[#FF13F0]/60">{product.credits} credits/month</div>
                 )}
               </div>
             </div>
 
-            <p className="text-sm text-cyan-400/70 mb-4">{product.description}</p>
+            <p className="text-sm text-[#FF13F0]/70 mb-4">{product.description}</p>
 
             {calculatePricePerCredit(product) && (
-              <p className="text-xs text-cyan-400/50 mb-4">{calculatePricePerCredit(product)}</p>
+              <p className="text-xs text-[#FF13F0]/50 mb-4">{calculatePricePerCredit(product)}</p>
             )}
 
             <ul className="space-y-2 mb-6">
               {product.features.map((feature) => (
                 <li
                   key={feature.id}
-                  className="flex items-start gap-2 text-sm text-cyan-200"
+                  className="flex items-start gap-2 text-sm text-[#FF13F0]"
                   onMouseEnter={() => handleFeatureHover(feature.id, product.plan)}
                 >
-                  <Check className="w-4 h-4 text-cyan-400 mt-0.5 flex-shrink-0" />
+                  <Check className="w-4 h-4 text-[#FF13F0] mt-0.5 flex-shrink-0" />
                   <div>
                     <span className="font-medium">{feature.name}</span>
                     {feature.description && (
-                      <span className="text-cyan-400/60 text-xs block mt-0.5">
+                      <span className="text-[#FF13F0]/60 text-xs block mt-0.5">
                         {feature.description}
                       </span>
                     )}
@@ -294,8 +294,8 @@ export function PricingTable({
                 disabled={loading !== null || currentPlan === product.plan}
                 className={`w-full py-3 px-6 rounded-lg font-semibold transition-colors min-h-[44px] touch-manipulation ${
                   product.popular
-                    ? 'bg-cyan-500 text-black hover:bg-cyan-400 shadow-[0_0_20px_rgba(0,255,255,0.4)]'
-                    : 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 border border-cyan-500/30'
+                    ? 'bg-[#FF13F0] text-white hover:bg-[#FF13F0] shadow-[0_0_20px_rgba(255,19,240,0.4)]'
+                    : 'bg-[#FF13F0]/20 text-[#FF13F0] hover:bg-[#FF13F0]/30 border border-[#FF13F0]/30'
                 } disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 {loading === product.plan
@@ -313,17 +313,17 @@ export function PricingTable({
 
       {/* Credit Packs Section */}
       {showCreditPacks && (
-        <div className="mt-8 pt-8 border-t border-cyan-500/20">
-          <h3 className="text-lg font-semibold text-cyan-300 mb-4">Or Buy Credits</h3>
+        <div className="mt-8 pt-8 border-t border-[#FF13F0]/20">
+          <h3 className="text-lg font-semibold text-[#FF13F0] mb-4">Or Buy Credits</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Small Pack */}
-            <div className="border border-cyan-500/20 rounded-lg p-4 bg-gray-800/30">
+            <div className="border border-[#FF13F0]/20 rounded-lg p-4 bg-gray-100/30">
               <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-4 h-4 text-cyan-400" />
-                <h4 className="font-semibold text-cyan-300">Small Pack</h4>
+                <Sparkles className="w-4 h-4 text-[#FF13F0]" />
+                <h4 className="font-semibold text-[#FF13F0]">Small Pack</h4>
               </div>
-              <div className="text-2xl font-bold text-cyan-300 mb-2">20 credits</div>
-              <div className="text-sm text-cyan-400/60 mb-4">$4.99 one-time</div>
+              <div className="text-2xl font-bold text-[#FF13F0] mb-2">20 credits</div>
+              <div className="text-sm text-[#FF13F0]/60 mb-4">$4.99 one-time</div>
               <button
                 onClick={async () => {
                   setLoading('small-pack');
@@ -346,20 +346,20 @@ export function PricingTable({
                   }
                 }}
                 disabled={loading !== null}
-                className="w-full py-2 bg-cyan-500/20 text-cyan-300 rounded-lg font-semibold hover:bg-cyan-500/30 transition-colors disabled:opacity-50 border border-cyan-500/30"
+                className="w-full py-2 bg-[#FF13F0]/20 text-[#FF13F0] rounded-lg font-semibold hover:bg-[#FF13F0]/30 transition-colors disabled:opacity-50 border border-[#FF13F0]/30"
               >
                 {loading === 'small-pack' ? 'Loading...' : 'Buy Now'}
               </button>
             </div>
 
             {/* Large Pack */}
-            <div className="border border-cyan-500/20 rounded-lg p-4 bg-gray-800/30">
+            <div className="border border-[#FF13F0]/20 rounded-lg p-4 bg-gray-100/30">
               <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-4 h-4 text-cyan-400" />
-                <h4 className="font-semibold text-cyan-300">Large Pack</h4>
+                <Sparkles className="w-4 h-4 text-[#FF13F0]" />
+                <h4 className="font-semibold text-[#FF13F0]">Large Pack</h4>
               </div>
-              <div className="text-2xl font-bold text-cyan-300 mb-2">100 credits</div>
-              <div className="text-sm text-cyan-400/60 mb-4">$19.99 one-time</div>
+              <div className="text-2xl font-bold text-[#FF13F0] mb-2">100 credits</div>
+              <div className="text-sm text-[#FF13F0]/60 mb-4">$19.99 one-time</div>
               <button
                 onClick={async () => {
                   setLoading('large-pack');
@@ -382,7 +382,7 @@ export function PricingTable({
                   }
                 }}
                 disabled={loading !== null}
-                className="w-full py-2 bg-cyan-500/20 text-cyan-300 rounded-lg font-semibold hover:bg-cyan-500/30 transition-colors disabled:opacity-50 border border-cyan-500/30"
+                className="w-full py-2 bg-[#FF13F0]/20 text-[#FF13F0] rounded-lg font-semibold hover:bg-[#FF13F0]/30 transition-colors disabled:opacity-50 border border-[#FF13F0]/30"
               >
                 {loading === 'large-pack' ? 'Loading...' : 'Buy Now'}
               </button>

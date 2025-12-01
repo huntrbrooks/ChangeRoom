@@ -61,14 +61,22 @@ export const clerkConfig = createLazyConfig(() => ({
 }));
 
 // Stripe Configuration - lazy access (only accessed when actually used)
-export const stripeConfig = createLazyConfig(() => ({
-  secretKey: requireEnv("STRIPE_SECRET_KEY"),
-  webhookSecret: requireEnv("STRIPE_WEBHOOK_SECRET"),
-  standardPriceId: requireEnv("STRIPE_STANDARD_PRICE_ID"),
-  proPriceId: requireEnv("STRIPE_PRO_PRICE_ID"),
-  creditPackSmallPriceId: requireEnv("STRIPE_CREDIT_PACK_SMALL_PRICE_ID"),
-  creditPackLargePriceId: requireEnv("STRIPE_CREDIT_PACK_LARGE_PRICE_ID"),
-}));
+// Note: Price IDs use NEXT_PUBLIC_ prefix for client-side access
+export const stripeConfig = createLazyConfig(() => {
+  // For client-side, use NEXT_PUBLIC_ versions (safe to expose)
+  // For server-side, fallback to non-public versions if needed
+  const isClient = typeof window !== 'undefined';
+  
+  return {
+    secretKey: requireEnv("STRIPE_SECRET_KEY"),
+    webhookSecret: requireEnv("STRIPE_WEBHOOK_SECRET"),
+    // Price IDs are safe to expose to client (they're public in Stripe)
+    standardPriceId: getEnv("NEXT_PUBLIC_STRIPE_STANDARD_PRICE_ID") || (isClient ? "" : requireEnv("STRIPE_STANDARD_PRICE_ID")),
+    proPriceId: getEnv("NEXT_PUBLIC_STRIPE_PRO_PRICE_ID") || (isClient ? "" : requireEnv("STRIPE_PRO_PRICE_ID")),
+    creditPackSmallPriceId: getEnv("NEXT_PUBLIC_STRIPE_CREDIT_PACK_SMALL_PRICE_ID") || (isClient ? "" : requireEnv("STRIPE_CREDIT_PACK_SMALL_PRICE_ID")),
+    creditPackLargePriceId: getEnv("NEXT_PUBLIC_STRIPE_CREDIT_PACK_LARGE_PRICE_ID") || (isClient ? "" : requireEnv("STRIPE_CREDIT_PACK_LARGE_PRICE_ID")),
+  };
+});
 
 // Database Configuration - lazy access
 export const dbConfig = createLazyConfig(() => ({

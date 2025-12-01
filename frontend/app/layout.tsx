@@ -36,7 +36,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 5,
   userScalable: true,
-  themeColor: '#000000',
+  themeColor: '#ffffff',
 };
 
 export default function RootLayout({
@@ -77,8 +77,8 @@ export default function RootLayout({
   if (!hasValidKey || !publishableKey) {
     return (
       <html lang="en">
-        <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-black text-white flex flex-col min-h-screen`}>
-          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-black border-b border-cyan-500/20">
+        <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-black flex flex-col min-h-screen`}>
+          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-white border-b border-[#FF13F0]/20">
             {/* Clerk components unavailable - invalid or missing key */}
           </header>
           <div className="flex-1">
@@ -95,19 +95,19 @@ export default function RootLayout({
       publishableKey={publishableKey}
       appearance={{
         elements: {
-          formButtonPrimary: 'bg-cyan-500 hover:bg-cyan-400 text-black',
+          formButtonPrimary: 'bg-[#FF13F0] hover:bg-[#FF13F0]/90 text-white',
         }
       }}
     >
       <html lang="en">
         <body
-          className={`${geistSans.variable} ${geistMono.variable} antialiased bg-black text-white flex flex-col min-h-screen`}
+          className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-black flex flex-col min-h-screen`}
         >
-          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-black border-b border-cyan-500/20">
+          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-white border-b border-[#FF13F0]/20">
             <SignedOut>
               <SignInButton />
               <SignUpButton>
-                <button className="bg-cyan-500 text-black rounded-full font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 cursor-pointer hover:bg-cyan-400 transition-colors shadow-[0_0_15px_rgba(0,255,255,0.3)]">
+                <button className="bg-[#FF13F0] text-white rounded-full font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 cursor-pointer hover:bg-[#FF13F0]/90 transition-colors shadow-[0_0_15px_rgba(255,19,240,0.3)]">
                   Sign Up
                 </button>
               </SignUpButton>

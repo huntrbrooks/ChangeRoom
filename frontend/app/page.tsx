@@ -461,11 +461,11 @@ function HomeContent() {
   };
 
   return (
-    <main className="min-h-screen bg-black text-white font-sans">
+    <main className="min-h-screen bg-white text-black font-sans">
       {/* Header */}
-      <header className="border-b border-cyan-500/20 sticky top-0 bg-black/95 backdrop-blur-md z-50 safe-area-inset">
+      <header className="border-b border-[#FF13F0]/20 sticky top-0 bg-white/95 backdrop-blur-md z-50 safe-area-inset">
         <div className="container mx-auto px-3 sm:px-4 py-2.5 sm:py-3 md:py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-shrink">
+          <div className="flex items-center justify-center gap-2 sm:gap-3 min-w-0 flex-shrink flex-1">
             <img 
               src="/Logo.png" 
               alt="Change Room Logo" 
@@ -481,7 +481,7 @@ function HomeContent() {
             {isLoaded && user && billing && (
               <Link 
                 href="/billing" 
-                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-lg transition-colors text-cyan-400 hover:text-cyan-300 min-h-[36px] sm:min-h-[40px] touch-manipulation"
+                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-[#FF13F0]/10 hover:bg-[#FF13F0]/20 border border-[#FF13F0]/30 rounded-lg transition-colors text-[#FF13F0] hover:text-[#FF13F0]/80 min-h-[36px] sm:min-h-[40px] touch-manipulation"
               >
                 <CreditCard size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
                 <span className="hidden sm:inline whitespace-nowrap">
@@ -490,10 +490,10 @@ function HomeContent() {
                 <span className="sm:hidden font-semibold">{billing.creditsAvailable}</span>
               </Link>
             )}
-            <div className="hidden md:flex items-center gap-6 text-cyan-400">
-              <Link href="/pricing" className="hover:text-cyan-300 transition-colors whitespace-nowrap">Pricing</Link>
-              <Link href="/how-it-works" className="hover:text-cyan-300 transition-colors whitespace-nowrap">How it Works</Link>
-              <Link href="/about" className="hover:text-cyan-300 transition-colors whitespace-nowrap">About</Link>
+            <div className="hidden md:flex items-center gap-6 text-[#FF13F0]">
+              <Link href="/pricing" className="hover:text-[#FF13F0]/80 transition-colors whitespace-nowrap">Pricing</Link>
+              <Link href="/how-it-works" className="hover:text-[#FF13F0]/80 transition-colors whitespace-nowrap">How it Works</Link>
+              <Link href="/about" className="hover:text-[#FF13F0]/80 transition-colors whitespace-nowrap">About</Link>
             </div>
           </nav>
         </div>
@@ -503,23 +503,23 @@ function HomeContent() {
         
         {/* Main Heading */}
         <div className="text-center mb-6 sm:mb-8">
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-cyan-300 mb-3 sm:mb-4">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-[#FF13F0] mb-3 sm:mb-4">
             Virtual Try-On & Shopping
           </h1>
-          <p className="text-sm sm:text-base text-gray-400 mb-4">
+          <p className="text-sm sm:text-base text-gray-600 mb-4">
             Try on clothes virtually and discover similar products to shop
           </p>
-          <div className="flex flex-wrap justify-center items-center gap-4 sm:gap-6 text-xs sm:text-sm text-cyan-400">
+          <div className="flex flex-wrap justify-center items-center gap-4 sm:gap-6 text-xs sm:text-sm text-[#FF13F0]">
             <Link 
               href="/terms-of-service" 
-              className="hover:text-cyan-300 transition-colors underline"
+              className="hover:text-[#FF13F0]/80 transition-colors underline"
             >
               Terms of Service
             </Link>
-            <span className="text-gray-600">|</span>
+            <span className="text-gray-400">|</span>
             <Link 
               href="/privacy-policy" 
-              className="hover:text-cyan-300 transition-colors underline"
+              className="hover:text-[#FF13F0]/80 transition-colors underline"
             >
               Privacy Policy
             </Link>
@@ -528,19 +528,19 @@ function HomeContent() {
         
         {/* Free Trial Banner */}
         {isLoaded && user && billing && isOnTrial && (
-          <div className="bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 text-white p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_20px_rgba(0,255,255,0.3)]">
+          <div className="bg-gradient-to-r from-[#FF13F0]/20 to-[#FF13F0]/20 border border-[#FF13F0]/30 text-black p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_20px_rgba(255,19,240,0.3)]">
             <div className="flex items-center gap-2 sm:gap-3 flex-1">
-              <Zap size={18} className="sm:w-5 sm:h-5 text-cyan-400 flex-shrink-0" />
+              <Zap size={18} className="sm:w-5 sm:h-5 text-[#FF13F0] flex-shrink-0" />
               <div className="min-w-0">
-                <p className="font-semibold text-cyan-300 text-sm sm:text-base">Free Try-On Available!</p>
-                <p className="text-xs sm:text-sm text-cyan-200 mt-0.5">
+                <p className="font-semibold text-[#FF13F0] text-sm sm:text-base">Free Try-On Available!</p>
+                <p className="text-xs sm:text-sm text-[#FF13F0]/80 mt-0.5">
                   You have 1 free try-on. Upgrade to get unlimited try-ons with a subscription.
                 </p>
               </div>
             </div>
             <Link 
               href="/billing"
-              className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-cyan-500 text-black rounded-lg font-semibold hover:bg-cyan-400 transition-colors text-sm shadow-[0_0_15px_rgba(0,255,255,0.5)] text-center min-h-[44px] flex items-center justify-center touch-manipulation"
+              className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-[#FF13F0] text-white rounded-lg font-semibold hover:bg-[#FF13F0]/90 transition-colors text-sm shadow-[0_0_15px_rgba(255,19,240,0.5)] text-center min-h-[44px] flex items-center justify-center touch-manipulation"
             >
               Upgrade
             </Link>
@@ -599,8 +599,8 @@ function HomeContent() {
           <div className="lg:col-span-7 space-y-3 sm:space-y-4 md:space-y-6 lg:space-y-8">
             
             <section>
-              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-cyan-300">
-                <span className="bg-cyan-500 text-black w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,255,255,0.5)]">1</span>
+              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-[#FF13F0]">
+                <span className="bg-[#FF13F0] text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(255,19,240,0.5)]">1</span>
                 Upload Yourself
               </h2>
               <UploadZone 
@@ -612,8 +612,8 @@ function HomeContent() {
             </section>
 
             <section>
-              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-cyan-300">
-                <span className="bg-cyan-500 text-black w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,255,255,0.5)]">2</span>
+              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-[#FF13F0]">
+                <span className="bg-[#FF13F0] text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(255,19,240,0.5)]">2</span>
                 Choose Wardrobe
               </h2>
               <BulkUploadZone 
@@ -624,8 +624,8 @@ function HomeContent() {
                 onItemReplace={handleItemReplace}
               />
               {wardrobeItems.length > 1 && (
-                <div className="mt-3 p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-lg shadow-[0_0_10px_rgba(0,255,255,0.2)]">
-                  <p className="text-sm text-cyan-300">
+                <div className="mt-3 p-3 bg-[#FF13F0]/10 border border-[#FF13F0]/30 rounded-lg shadow-[0_0_10px_rgba(255,19,240,0.2)]">
+                  <p className="text-sm text-[#FF13F0]">
                     💡 <strong>Tip:</strong> You can try on up to 5 items at once for a complete outfit!
                   </p>
                 </div>
@@ -660,8 +660,8 @@ function HomeContent() {
                 w-full py-3.5 sm:py-4 rounded-xl font-bold text-base sm:text-lg flex items-center justify-center gap-2 sm:gap-3 transition-all
                 min-h-[48px] touch-manipulation
                 ${isGenerating 
-                  ? 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700' 
-                  : 'bg-cyan-500 text-black hover:bg-cyan-400 active:bg-cyan-600 hover:shadow-lg active:scale-[0.98] shadow-[0_0_25px_rgba(0,255,255,0.5)] border border-cyan-400'
+                  ? 'bg-gray-200 text-gray-500 cursor-not-allowed border border-gray-300' 
+                  : 'bg-[#FF13F0] text-white hover:bg-[#FF13F0]/90 active:bg-[#FF13F0]/80 hover:shadow-lg active:scale-[0.98] shadow-[0_0_25px_rgba(255,19,240,0.5)] border border-[#FF13F0]'
                 }
               `}
             >
@@ -680,7 +680,7 @@ function HomeContent() {
             {isGenerating && (
               <button
                 onClick={() => abortController?.abort()}
-                className="mt-2 text-sm text-cyan-400 hover:text-cyan-300 underline w-full text-center"
+                className="mt-2 text-sm text-[#FF13F0] hover:text-[#FF13F0]/80 underline w-full text-center"
                 aria-label="Cancel operation"
               >
                 Cancel
@@ -692,8 +692,8 @@ function HomeContent() {
           <div className="lg:col-span-5 space-y-3 sm:space-y-4 md:space-y-6 lg:space-y-8">
             
             <section>
-              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-cyan-300">
-                <span className="bg-cyan-500 text-black w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,255,255,0.5)]">3</span>
+              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-[#FF13F0]">
+                <span className="bg-[#FF13F0] text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(255,19,240,0.5)]">3</span>
                 Virtual Mirror
               </h2>
               <VirtualMirror imageUrl={generatedImage} isLoading={isGenerating} />
@@ -701,8 +701,8 @@ function HomeContent() {
 
             {products.length > 0 && (
               <section>
-                <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-cyan-300">
-                  <Search size={18} className="sm:w-5 sm:h-5 text-cyan-400" />
+                <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-[#FF13F0]">
+                  <Search size={18} className="sm:w-5 sm:h-5 text-[#FF13F0]" />
                   Shop the Look
                 </h2>
                 <div className="space-y-3 sm:space-y-4">
@@ -736,10 +736,10 @@ export default function Home() {
   // Return a loading state that will be replaced at runtime
   if (typeof window === 'undefined') {
     return (
-      <main className="min-h-screen bg-black text-white font-sans flex items-center justify-center">
+      <main className="min-h-screen bg-white text-black font-sans flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500 mx-auto"></div>
-          <p className="mt-4 text-cyan-400">Loading...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#FF13F0] mx-auto"></div>
+          <p className="mt-4 text-[#FF13F0]">Loading...</p>
         </div>
       </main>
     );

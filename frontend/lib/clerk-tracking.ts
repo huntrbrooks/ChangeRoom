@@ -36,26 +36,26 @@ export async function trackUserEvent(
   event: TrackingEvent,
   metadata?: Record<string, unknown>
 ): Promise<void> {
-  const trackingData: TrackingData = {
-    event,
-    userId: user?.id,
-    userEmail: user?.emailAddresses?.[0]?.emailAddress,
-    metadata,
-    timestamp: new Date(),
-  };
-
-  // Log to console in development
-  if (process.env.NODE_ENV === 'development') {
-    console.log('📊 User Tracking:', trackingData);
-  }
-
-  // In production, you can send this to:
-  // - Analytics service (Mixpanel, Amplitude, etc.)
-  // - Your backend API
-  // - Clerk's user metadata
-  // - Database for analytics
-
   try {
+    const trackingData: TrackingData = {
+      event,
+      userId: user?.id,
+      userEmail: user?.emailAddresses?.[0]?.emailAddress,
+      metadata,
+      timestamp: new Date(),
+    };
+
+    // Log to console in development
+    if (process.env.NODE_ENV === 'development') {
+      console.log('📊 User Tracking:', trackingData);
+    }
+
+    // In production, you can send this to:
+    // - Analytics service (Mixpanel, Amplitude, etc.)
+    // - Your backend API
+    // - Clerk's user metadata
+    // - Database for analytics
+
     // Example: Send to your analytics endpoint
     // await fetch('/api/analytics/track', {
     //   method: 'POST',
@@ -63,7 +63,8 @@ export async function trackUserEvent(
     //   body: JSON.stringify(trackingData),
     // });
   } catch (error) {
-    console.error('Failed to track event:', error);
+    // Silently fail - tracking should never break the app
+    console.warn('Failed to track event (non-critical):', error);
   }
 }
 

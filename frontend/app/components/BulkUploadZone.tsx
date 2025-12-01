@@ -481,20 +481,20 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         className={`
           border-2 border-dashed rounded-lg p-4 sm:p-6 md:p-8 text-center cursor-pointer transition-colors touch-manipulation
           ${isAnalyzing 
-            ? 'border-cyan-500 bg-cyan-500/10 shadow-[0_0_20px_rgba(0,255,255,0.3)]' 
-            : 'border-cyan-500/30 hover:border-cyan-500/50 active:border-cyan-500 hover:bg-cyan-500/5'
+            ? 'border-[#FF13F0] bg-[#FF13F0]/10 shadow-[0_0_20px_rgba(255,19,240,0.3)]' 
+            : 'border-[#FF13F0]/30 hover:border-[#FF13F0]/50 active:border-[#FF13F0] hover:bg-[#FF13F0]/5'
           }
         `}
       >
         {isAnalyzing ? (
           <div className="flex flex-col items-center w-full">
-            <Loader2 className="h-7 w-7 sm:h-8 sm:w-8 text-cyan-400 animate-spin mb-3 sm:mb-4" />
-            <p className="text-xs sm:text-sm font-medium text-cyan-300 mb-3 sm:mb-4 px-2">{analysisProgress}</p>
+            <Loader2 className="h-7 w-7 sm:h-8 sm:w-8 text-[#FF13F0] animate-spin mb-3 sm:mb-4" />
+            <p className="text-xs sm:text-sm font-medium text-[#FF13F0] mb-3 sm:mb-4 px-2">{analysisProgress}</p>
             {/* Progress Bar - Enhanced visibility */}
             <div className="w-full max-w-md px-2 sm:px-4">
-              <div className="w-full bg-gray-800 rounded-full h-2.5 sm:h-3 mb-2 shadow-inner">
+              <div className="w-full bg-gray-100 rounded-full h-2.5 sm:h-3 mb-2 shadow-inner">
                 <div 
-                  className="bg-cyan-500 h-2.5 sm:h-3 rounded-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(0,255,255,0.5)]"
+                  className="bg-[#FF13F0] h-2.5 sm:h-3 rounded-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(255,19,240,0.5)]"
                   style={{ 
                     width: `${Math.max(progressPercent, 5)}%`,
                     minWidth: progressPercent > 0 ? '8px' : '0px'
@@ -502,21 +502,21 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                 />
               </div>
               <div className="flex justify-between items-center">
-                <p className="text-xs font-semibold text-cyan-300">{progressPercent}%</p>
-                <p className="text-xs text-cyan-400/70">Processing...</p>
+                <p className="text-xs font-semibold text-[#FF13F0]">{progressPercent}%</p>
+                <p className="text-xs text-[#FF13F0]/70">Processing...</p>
               </div>
             </div>
           </div>
         ) : (
           <label className="cursor-pointer block touch-manipulation">
-            <Upload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-cyan-400" />
-            <span className="mt-3 sm:mt-4 block text-sm sm:text-base font-medium text-cyan-300 px-2">
+            <Upload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-[#FF13F0]" />
+            <span className="mt-3 sm:mt-4 block text-sm sm:text-base font-medium text-[#FF13F0] px-2">
               {uploadedFiles.length < 5 
                 ? `Upload ${5 - uploadedFiles.length} more clothing item${5 - uploadedFiles.length !== 1 ? 's' : ''} (${uploadedFiles.length}/5)`
                 : 'Maximum 5 items reached. Upload new images to replace all existing items.'
               }
             </span>
-            <span className="mt-2 block text-xs sm:text-sm text-cyan-400/70 px-2">
+            <span className="mt-2 block text-xs sm:text-sm text-[#FF13F0]/70 px-2">
               Drag and drop images here or tap to select. Items will be analyzed and categorized automatically.
             </span>
             <input
@@ -588,8 +588,8 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                     : isError 
                     ? 'border-red-500 bg-red-500/10 shadow-[0_0_10px_rgba(255,0,0,0.2)]' 
                     : isAnalyzing
-                    ? 'border-cyan-400 bg-cyan-500/10 shadow-[0_0_10px_rgba(0,255,255,0.2)]'
-                    : 'border-cyan-500/20 bg-gray-800'
+                    ? 'border-[#FF13F0] bg-[#FF13F0]/10 shadow-[0_0_10px_rgba(255,19,240,0.2)]'
+                    : 'border-[#FF13F0]/20 bg-gray-100'
                   }
                 `}
               >
@@ -614,7 +614,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                         };
                         input.click();
                       }}
-                      className="absolute top-1 left-1 bg-cyan-500 hover:bg-cyan-400 text-white p-1.5 sm:p-1 rounded-full opacity-90 hover:opacity-100 transition-opacity z-10 min-w-[36px] min-h-[36px] sm:min-w-[24px] sm:min-h-[24px] flex items-center justify-center shadow-[0_0_8px_rgba(0,255,255,0.3)] touch-manipulation"
+                      className="absolute top-1 left-1 bg-[#FF13F0] hover:bg-[#FF13F0] text-white p-1.5 sm:p-1 rounded-full opacity-90 hover:opacity-100 transition-opacity z-10 min-w-[36px] min-h-[36px] sm:min-w-[24px] sm:min-h-[24px] flex items-center justify-center shadow-[0_0_8px_rgba(255,19,240,0.3)] touch-manipulation"
                       aria-label={`Replace ${item?.saved_filename || item?.original_filename || file.name}`}
                     >
                       <RefreshCw size={14} className="sm:w-3 sm:h-3" />
@@ -638,11 +638,11 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                       }}
                     />
                     <div className="text-xs">
-                      <p className="font-medium text-cyan-200 truncate mb-0.5 sm:mb-1 text-[10px] sm:text-xs" title={item?.saved_filename || item?.analysis?.suggested_filename || item?.original_filename || file.name}>
+                      <p className="font-medium text-[#FF13F0] truncate mb-0.5 sm:mb-1 text-[10px] sm:text-xs" title={item?.saved_filename || item?.analysis?.suggested_filename || item?.original_filename || file.name}>
                         {item?.saved_filename || item?.analysis?.suggested_filename || item?.original_filename || file.name}
                       </p>
                       {isAnalyzing && (
-                        <p className="text-cyan-400 mt-0.5 sm:mt-1 font-medium text-[10px] sm:text-xs">Analyzing...</p>
+                        <p className="text-[#FF13F0] mt-0.5 sm:mt-1 font-medium text-[10px] sm:text-xs">Analyzing...</p>
                       )}
                       {isSuccess && item?.analysis && (
                         <div className="mt-0.5 sm:mt-1 space-y-0.5">
@@ -652,14 +652,14 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                           
                           {/* Item type, for example "leather lace up boots" */}
                           {item.analysis.item_type && (
-                            <p className="text-cyan-300 text-[9px] sm:text-[10px] font-semibold">
+                            <p className="text-[#FF13F0] text-[9px] sm:text-[10px] font-semibold">
                               {item.analysis.item_type}
                             </p>
                           )}
                           
                           {/* Color and style */}
                           {(item.analysis.color || item.analysis.style) && (
-                            <p className="text-cyan-400/80 text-[9px] sm:text-[10px]">
+                            <p className="text-[#FF13F0]/80 text-[9px] sm:text-[10px]">
                               {item.analysis.color && <span>{item.analysis.color}</span>}
                               {item.analysis.color && item.analysis.style && <span>, </span>}
                               {item.analysis.style && <span>{item.analysis.style}</span>}
@@ -672,13 +672,13 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                               {item.analysis.tags.slice(0, 3).map((tag: string, tagIdx: number) => (
                                 <span
                                   key={tagIdx}
-                                  className="px-1 py-[1px] rounded-full bg-cyan-500/20 text-[8px] sm:text-[9px] text-cyan-300"
+                                  className="px-1 py-[1px] rounded-full bg-[#FF13F0]/20 text-[8px] sm:text-[9px] text-[#FF13F0]"
                                 >
                                   {tag}
                                 </span>
                               ))}
                               {item.analysis.tags.length > 3 && (
-                                <span className="text-[8px] sm:text-[9px] text-cyan-400/70">
+                                <span className="text-[8px] sm:text-[9px] text-[#FF13F0]/70">
                                   +{item.analysis.tags.length - 3}
                                 </span>
                               )}
@@ -687,20 +687,20 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                           
                           {/* Short description */}
                           {item.analysis.short_description && (
-                            <p className="text-cyan-400/60 text-[8px] sm:text-[9px] mt-0.5 line-clamp-2">
+                            <p className="text-[#FF13F0]/60 text-[8px] sm:text-[9px] mt-0.5 line-clamp-2">
                               {item.analysis.short_description}
                             </p>
                           )}
                           
                           {/* Fallback to description if short_description not available */}
                           {!item.analysis.short_description && item.analysis.description && (
-                            <p className="text-cyan-400/60 text-[8px] sm:text-[9px] mt-0.5 line-clamp-2">
+                            <p className="text-[#FF13F0]/60 text-[8px] sm:text-[9px] mt-0.5 line-clamp-2">
                               {item.analysis.description}
                             </p>
                           )}
                           
                           {item.saved_filename && (
-                            <p className="text-cyan-400/50 text-[8px] sm:text-[9px] mt-0.5 truncate" title="Saved filename">
+                            <p className="text-[#FF13F0]/50 text-[8px] sm:text-[9px] mt-0.5 truncate" title="Saved filename">
                               Saved
                             </p>
                           )}
@@ -714,14 +714,14 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                     {/* Wearing Style Dropdown */}
                     {isSuccess && hasWearingOptions && styleOptions.length > 0 && (
                       <div className="mt-1.5 sm:mt-2">
-                        <label htmlFor={`wearing-style-${idx}`} className="block text-[9px] sm:text-[10px] font-medium text-cyan-300 mb-1">
+                        <label htmlFor={`wearing-style-${idx}`} className="block text-[9px] sm:text-[10px] font-medium text-[#FF13F0] mb-1">
                           How to wear:
                         </label>
                         <select
                           id={`wearing-style-${idx}`}
                           value={defaultWearingStyle || styleOptions[0]?.value || ''}
                           onChange={(e) => handleWearingStyleChange(idx, e.target.value)}
-                          className="w-full text-[9px] sm:text-[10px] px-2 py-1.5 rounded bg-gray-800 border border-cyan-500/30 text-cyan-200 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 appearance-none cursor-pointer hover:border-cyan-500/50 transition-colors"
+                          className="w-full text-[9px] sm:text-[10px] px-2 py-1.5 rounded bg-gray-100 border border-[#FF13F0]/30 text-[#FF13F0] focus:border-[#FF13F0] focus:outline-none focus:ring-1 focus:ring-[#FF13F0] appearance-none cursor-pointer hover:border-[#FF13F0]/50 transition-colors"
                           style={{
                             backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2300ffff' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
                             backgroundRepeat: 'no-repeat',

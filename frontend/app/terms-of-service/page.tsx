@@ -4,28 +4,28 @@ import { ArrowLeft, FileText } from 'lucide-react';
 
 export default function TermsOfService() {
   return (
-    <main className="min-h-screen bg-black text-white font-sans">
+    <main className="min-h-screen bg-white text-black font-sans">
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <Link 
           href="/" 
-          className="inline-flex items-center gap-2 text-cyan-400 hover:text-cyan-300 mb-8 transition-colors"
+          className="inline-flex items-center gap-2 text-[#FF13F0]-400 hover:text-[#FF13F0]-300 mb-8 transition-colors"
         >
           <ArrowLeft size={18} />
           Back to Home
         </Link>
 
         <div className="flex items-center gap-3 mb-8">
-          <FileText className="text-cyan-400" size={32} />
-          <h1 className="text-4xl font-bold text-cyan-300">Terms of Service</h1>
+          <FileText className="text-[#FF13F0]-400" size={32} />
+          <h1 className="text-4xl font-bold text-[#FF13F0]-300">Terms of Service</h1>
         </div>
 
-        <p className="text-gray-400 mb-8 text-sm">
+        <p className="text-gray-600 mb-8 text-sm">
           Last updated: {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
         </p>
 
-        <div className="prose prose-invert max-w-none space-y-8 text-gray-300">
+        <div className="prose prose-invert max-w-none space-y-8 text-gray-700">
           <section>
-            <h2 className="text-2xl font-bold mb-4 text-cyan-300">1. Acceptance of Terms</h2>
+            <h2 className="text-2xl font-bold mb-4 text-[#FF13F0]-300">1. Acceptance of Terms</h2>
             <p className="leading-relaxed">
               By accessing and using Change Room (&quot;the Service&quot;), you accept and agree to be bound by the terms and provision of this agreement. 
               If you do not agree to abide by the above, please do not use this service.
@@ -33,7 +33,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-bold mb-4 text-cyan-300">2. Description of Service</h2>
+            <h2 className="text-2xl font-bold mb-4 text-[#FF13F0]-300">2. Description of Service</h2>
             <p className="leading-relaxed mb-4">
               Change Room is a virtual try-on platform that uses artificial intelligence to generate images of clothing items on user-uploaded photos. 
               The Service also provides product recommendations and shopping links to third-party retailers.
@@ -44,7 +44,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-bold mb-4 text-cyan-300">3. User Accounts and Registration</h2>
+            <h2 className="text-2xl font-bold mb-4 text-[#FF13F0]-300">3. User Accounts and Registration</h2>
             <p className="leading-relaxed mb-4">
               To use certain features of the Service, you must register for an account. You agree to:
             </p>
@@ -58,7 +58,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-bold mb-4 text-cyan-300">4. User Content and Conduct</h2>
+            <h2 className="text-2xl font-bold mb-4 text-[#FF13F0]-300">4. User Content and Conduct</h2>
             <p className="leading-relaxed mb-4">
               You are responsible for all content you upload, post, or otherwise transmit through the Service. You agree not to:
             </p>
@@ -73,7 +73,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-bold mb-4 text-cyan-300">5. Intellectual Property</h2>
+            <h2 className="text-2xl font-bold mb-4 text-[#FF13F0]-300">5. Intellectual Property</h2>
             <p className="leading-relaxed mb-4">
               The Service and its original content, features, and functionality are owned by Change Room and are protected by international 
               copyright, trademark, patent, trade secret, and other intellectual property laws.
@@ -85,7 +85,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-bold mb-4 text-cyan-300">6. Payment and Billing</h2>
+            <h2 className="text-2xl font-bold mb-4 text-[#FF13F0]-300">6. Payment and Billing</h2>
             <p className="leading-relaxed mb-4">
               Certain features of the Service may require payment. By purchasing credits or a subscription, you agree to:
             </p>
@@ -101,7 +101,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-bold mb-4 text-cyan-300">7. Third-Party Services</h2>
+            <h2 className="text-2xl font-bold mb-4 text-[#FF13F0]-300">7. Third-Party Services</h2>
             <p className="leading-relaxed">
               The Service may contain links to third-party websites or services that are not owned or controlled by Change Room. 
               We have no control over, and assume no responsibility for, the content, privacy policies, or practices of any third-party 
@@ -111,7 +111,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-bold mb-4 text-cyan-300">8. Disclaimers and Limitations of Liability</h2>
+            <h2 className="text-2xl font-bold mb-4 text-[#FF13F0]-300">8. Disclaimers and Limitations of Liability</h2>
             <p className="leading-relaxed mb-4">
               THE SERVICE IS PROVIDED &quot;AS IS&quot; AND &quot;AS AVAILABLE&quot; WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, 
               INCLUDING BUT NOT LIMITED TO IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT.
@@ -131,7 +131,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-bold mb-4 text-cyan-300">9. Indemnification</h2>
+            <h2 className="text-2xl font-bold mb-4 text-[#FF13F0]-300">9. Indemnification</h2>
             <p className="leading-relaxed">
               You agree to indemnify, defend, and hold harmless Change Room and its officers, directors, employees, and agents from and against 
               any claims, liabilities, damages, losses, and expenses, including reasonable attorneys&apos; fees, arising out of or in any way 
@@ -140,7 +140,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-bold mb-4 text-cyan-300">10. Termination</h2>
+            <h2 className="text-2xl font-bold mb-4 text-[#FF13F0]-300">10. Termination</h2>
             <p className="leading-relaxed">
               We may terminate or suspend your account and access to the Service immediately, without prior notice or liability, for any reason 
               whatsoever, including without limitation if you breach the Terms. Upon termination, your right to use the Service will immediately cease.
@@ -148,7 +148,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-bold mb-4 text-cyan-300">11. Changes to Terms</h2>
+            <h2 className="text-2xl font-bold mb-4 text-[#FF13F0]-300">11. Changes to Terms</h2>
             <p className="leading-relaxed">
               We reserve the right, at our sole discretion, to modify or replace these Terms at any time. If a revision is material, we will 
               provide at least 30 days notice prior to any new terms taking effect. What constitutes a material change will be determined at 
@@ -157,7 +157,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-bold mb-4 text-cyan-300">12. Governing Law</h2>
+            <h2 className="text-2xl font-bold mb-4 text-[#FF13F0]-300">12. Governing Law</h2>
             <p className="leading-relaxed">
               These Terms shall be governed and construed in accordance with the laws of the jurisdiction in which Change Room operates, 
               without regard to its conflict of law provisions.
@@ -165,7 +165,7 @@ export default function TermsOfService() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-bold mb-4 text-cyan-300">13. Contact Information</h2>
+            <h2 className="text-2xl font-bold mb-4 text-[#FF13F0]-300">13. Contact Information</h2>
             <p className="leading-relaxed">
               If you have any questions about these Terms of Service, please contact us through the contact information provided on our website.
             </p>

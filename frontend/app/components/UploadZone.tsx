@@ -42,7 +42,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileSelect, onClear, s
           <button
             type="button"
             onClick={() => setShowTips(!showTips)}
-            className="text-xs text-cyan-400 hover:text-cyan-300 underline flex items-center gap-1 py-1 px-1 touch-manipulation min-h-[32px]"
+            className="text-xs text-[#FF13F0] hover:text-[#FF13F0]/80 underline flex items-center gap-1 py-1 px-1 touch-manipulation min-h-[32px]"
             aria-label="Show photo tips"
           >
             <Info size={14} />
@@ -51,7 +51,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileSelect, onClear, s
         )}
       </div>
       {showTips && !selectedFile && (
-        <div className="mb-3 p-3 bg-cyan-500/10 rounded-lg text-xs text-cyan-200 border border-cyan-500/30 shadow-[0_0_10px_rgba(0,255,255,0.2)]">
+        <div className="mb-3 p-3 bg-[#FF13F0]/10 rounded-lg text-xs text-[#FF13F0] border border-[#FF13F0]/30 shadow-[0_0_10px_rgba(255,19,240,0.2)]">
           <ul className="list-disc list-inside space-y-1">
             <li>Use a full-body photo for best results</li>
             <li>Good lighting works best</li>
@@ -65,7 +65,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileSelect, onClear, s
         onDrop={handleDrop}
         className={`
           border-2 border-dashed rounded-lg p-4 sm:p-6 text-center cursor-pointer transition-colors touch-manipulation
-          ${selectedFile ? 'border-cyan-500 bg-cyan-500/10 shadow-[0_0_15px_rgba(0,255,255,0.3)]' : 'border-cyan-500/30 hover:border-cyan-500/50 active:border-cyan-500'}
+          ${selectedFile ? 'border-[#FF13F0] bg-[#FF13F0]/10 shadow-[0_0_15px_rgba(255,19,240,0.3)]' : 'border-[#FF13F0]/30 hover:border-[#FF13F0]/50 active:border-[#FF13F0]'}
         `}
       >
         {selectedFile ? (
@@ -82,12 +82,12 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileSelect, onClear, s
             >
               <X size={16} className="sm:w-4 sm:h-4" />
             </button>
-            <p className="mt-2 text-xs sm:text-sm text-cyan-300 truncate px-2">{selectedFile.name}</p>
+            <p className="mt-2 text-xs sm:text-sm text-[#FF13F0] truncate px-2">{selectedFile.name}</p>
           </div>
         ) : (
           <label className="cursor-pointer block touch-manipulation">
-            <Upload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-cyan-400" />
-            <span className="mt-2 block text-xs sm:text-sm font-medium text-cyan-300 px-2">
+            <Upload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-[#FF13F0]" />
+            <span className="mt-2 block text-xs sm:text-sm font-medium text-[#FF13F0] px-2">
               Drop image here or tap to upload
             </span>
             <input
