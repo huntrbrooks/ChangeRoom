@@ -152,19 +152,26 @@ function HomeContent() {
   };
 
   const handleGenerate = async () => {
+    console.log("handleGenerate called", { userImage: !!userImage, wardrobeItems: wardrobeItems.length, billing, isOnTrial });
+    
     if (!userImage) {
-      setError("Please upload a photo of yourself.");
+      const errorMsg = "Please upload a photo of yourself.";
+      console.log("Validation failed:", errorMsg);
+      setError(errorMsg);
       return;
     }
     
     const activeItems = wardrobeItems.map(item => item.file);
     if (activeItems.length === 0) {
-      setError("Please upload at least one clothing item.");
+      const errorMsg = "Please upload at least one clothing item.";
+      console.log("Validation failed:", errorMsg);
+      setError(errorMsg);
       return;
     }
 
     // Check credits before proceeding (unless on trial)
     if (!isOnTrial && (!billing || billing.creditsAvailable <= 0)) {
+      console.log("No credits available, showing paywall");
       setShowPaywall(true);
       return;
     }
@@ -608,15 +615,28 @@ function HomeContent() {
 
             <button
               onClick={(e) => {
-                e.preventDefault();
-                handleGenerate().catch((error) => {
-                  console.error('Error in handleGenerate:', error);
-                  setError('An error occurred while trying to generate your look. Please try again.');
+                try {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  console.log("Try-on button clicked");
+                  if (isGenerating) {
+                    console.log("Button clicked but already generating, ignoring");
+                    return;
+                  }
+                  handleGenerate().catch((error) => {
+                    console.error('Error in handleGenerate:', error);
+                    setError('An error occurred while trying to generate your look. Please try again.');
+                    setIsGenerating(false);
+                  });
+                } catch (error) {
+                  console.error('Error in button onClick handler:', error);
+                  setError('An unexpected error occurred. Please try again.');
                   setIsGenerating(false);
-                });
+                }
               }}
               disabled={isGenerating}
               type="button"
+              aria-label="Try on clothes"
               className={`
                 w-full py-3.5 sm:py-4 rounded-xl font-bold text-base sm:text-lg flex items-center justify-center gap-2 sm:gap-3 transition-all
                 min-h-[48px] touch-manipulation

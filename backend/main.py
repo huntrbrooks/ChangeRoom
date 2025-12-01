@@ -44,8 +44,21 @@ allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "")
 if allowed_origins_str:
     allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",") if origin.strip()]
 else:
-    # Development default: allow localhost
-    allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    # Default: allow localhost for development and known production URLs
+    # For stricter security in production, set ALLOWED_ORIGINS environment variable
+    allowed_origins = [
+        "http://localhost:3000", 
+        "http://127.0.0.1:3000",
+        "https://igetdressed.online",
+        "https://www.igetdressed.online",
+        "https://getdressed.online",
+        "https://www.getdressed.online",
+    ]
+    # Add production frontend URL if NEXT_PUBLIC_APP_URL is set (for custom deployments)
+    production_frontend_url = os.getenv("NEXT_PUBLIC_APP_URL", "")
+    if production_frontend_url and production_frontend_url.startswith("https://"):
+        if production_frontend_url not in allowed_origins:
+            allowed_origins.append(production_frontend_url)
 
 app.add_middleware(
     CORSMiddleware,
