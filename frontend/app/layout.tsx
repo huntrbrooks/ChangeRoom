@@ -68,11 +68,9 @@ export default function RootLayout({
     publishableKey.startsWith('pk_') && 
     publishableKey.length >= 20 &&
     publishableKey.length <= 200 && // Reasonable max length
-    !publishableKey.includes('"') && // No quotes anywhere
+    !publishableKey.includes('"') && // No quotes anywhere (quotes indicate malformed env var)
     !publishableKey.includes("'") && // No single quotes anywhere
-    /^pk_[a-zA-Z0-9_\-=.]+$/.test(publishableKey) && // Allow dots for base64 padding
-    !publishableKey.match(/JA["']?$/) && // Catch truncated keys ending in JA
-    publishableKey.split('_').length >= 3; // Valid keys have format pk_test_... or pk_live_...
+    /^pk_[a-zA-Z0-9_\-=.]+$/.test(publishableKey); // Allow dots, equals for base64 padding
   
   // If key is invalid or missing, skip ClerkProvider entirely (especially during build)
   // This prevents build failures from invalid Clerk keys
