@@ -4,7 +4,7 @@ import { ArrowLeft, Shield } from 'lucide-react';
 
 export default function PrivacyPolicy() {
   return (
-    <main className="min-h-screen bg-white text-black font-sans">
+    <main className="min-h-screen bg-[#FAF9F6] text-black font-sans">
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <Link 
           href="/" 

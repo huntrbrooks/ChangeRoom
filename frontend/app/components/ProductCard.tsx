@@ -15,7 +15,7 @@ interface ProductCardProps {
 
 export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   return (
-    <div className="border border-[#FF13F0]/20 rounded-lg overflow-hidden shadow-[0_0_10px_rgba(255,19,240,0.1)] hover:shadow-[0_0_15px_rgba(255,19,240,0.2)] active:shadow-[0_0_20px_rgba(255,19,240,0.3)] transition-shadow bg-white">
+    <div className="border border-[#FF13F0]/20 rounded-lg overflow-hidden shadow-[0_0_10px_rgba(255,19,240,0.1)] hover:shadow-[0_0_15px_rgba(255,19,240,0.2)] active:shadow-[0_0_20px_rgba(255,19,240,0.3)] transition-shadow bg-[#FAF9F6]">
       <div className="aspect-square relative overflow-hidden bg-gray-100">
         {product.thumbnail && (
           <img 

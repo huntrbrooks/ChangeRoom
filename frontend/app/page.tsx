@@ -461,9 +461,9 @@ function HomeContent() {
   };
 
   return (
-    <main className="min-h-screen bg-white text-black font-sans">
+    <main className="min-h-screen bg-[#FAF9F6] text-black font-sans">
       {/* Header */}
-      <header className="border-b border-[#FF13F0]/20 sticky top-0 bg-white/95 backdrop-blur-md z-50 safe-area-inset">
+      <header className="border-b border-[#FF13F0]/20 sticky top-0 bg-[#FAF9F6]/95 backdrop-blur-md z-50 safe-area-inset">
         <div className="container mx-auto px-3 sm:px-4 py-2.5 sm:py-3 md:py-4 flex items-center justify-between">
           <div className="flex items-center justify-center gap-2 sm:gap-3 min-w-0 flex-shrink flex-1">
             <img 
@@ -503,7 +503,7 @@ function HomeContent() {
         
         {/* Main Heading */}
         <div className="text-center mb-6 sm:mb-8">
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-[#FF13F0] mb-3 sm:mb-4">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-black mb-3 sm:mb-4">
             Virtual Try-On & Shopping
           </h1>
           <p className="text-sm sm:text-base text-gray-600 mb-4">
@@ -570,17 +570,17 @@ function HomeContent() {
 
         {/* No Credits Warning */}
         {isLoaded && user && billing && !isOnTrial && billing.creditsAvailable === 0 && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-300 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_15px_rgba(255,0,0,0.2)]">
+          <div className="bg-orange-500/10 border border-orange-500/30 text-orange-700 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_15px_rgba(255,165,0,0.2)]">
             <div className="flex items-center gap-2 sm:gap-3 flex-1">
-              <CreditCard size={18} className="sm:w-5 sm:h-5 text-red-400 flex-shrink-0" />
+              <CreditCard size={18} className="sm:w-5 sm:h-5 text-orange-500 flex-shrink-0" />
               <div className="min-w-0">
-                <p className="font-semibold text-sm sm:text-base">No Credits Remaining</p>
-                <p className="text-xs sm:text-sm text-red-200 mt-0.5">Upgrade or purchase credits to continue</p>
+                <p className="font-semibold text-sm sm:text-base text-orange-700">No Credits Remaining</p>
+                <p className="text-xs sm:text-sm text-orange-600 mt-0.5">Upgrade or purchase credits to continue</p>
               </div>
             </div>
             <button
               onClick={() => setShowPaywall(true)}
-              className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-400 transition-colors text-sm shadow-[0_0_15px_rgba(255,0,0,0.3)] text-center min-h-[44px] flex items-center justify-center touch-manipulation"
+              className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-orange-500 text-white rounded-lg font-semibold hover:bg-orange-400 transition-colors text-sm shadow-[0_0_15px_rgba(255,165,0,0.3)] text-center min-h-[44px] flex items-center justify-center touch-manipulation"
             >
               Upgrade Now
             </button>
@@ -736,7 +736,7 @@ export default function Home() {
   // Return a loading state that will be replaced at runtime
   if (typeof window === 'undefined') {
     return (
-      <main className="min-h-screen bg-white text-black font-sans flex items-center justify-center">
+      <main className="min-h-screen bg-[#FAF9F6] text-black font-sans flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#FF13F0] mx-auto"></div>
           <p className="mt-4 text-[#FF13F0]">Loading...</p>

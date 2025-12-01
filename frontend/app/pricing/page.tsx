@@ -44,9 +44,9 @@ function PricingPageContent() {
   };
 
   return (
-    <div className="min-h-screen bg-white text-black">
+    <div className="min-h-screen bg-[#FAF9F6] text-black">
       {/* Header */}
-      <header className="border-b border-[#FF13F0]/20 sticky top-0 bg-white/95 backdrop-blur-md z-50">
+      <header className="border-b border-[#FF13F0]/20 sticky top-0 bg-[#FAF9F6]/95 backdrop-blur-md z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2 text-[#FF13F0] hover:text-[#FF13F0]/80 transition-colors">
             <ArrowLeft size={20} />
@@ -70,7 +70,7 @@ function PricingPageContent() {
         </div>
 
         {/* Pricing Table */}
-        <div className="bg-white border border-[#FF13F0]/30 rounded-2xl p-6 md:p-8 mb-8">
+        <div className="bg-[#FAF9F6] border border-[#FF13F0]/30 rounded-2xl p-6 md:p-8 mb-8">
           <PricingTable
             currentPlan={billing?.plan}
             showCreditPacks={true}
@@ -78,7 +78,7 @@ function PricingPageContent() {
         </div>
 
         {/* FAQ Section */}
-        <div className="bg-white border border-[#FF13F0]/20 rounded-xl p-6 md:p-8">
+        <div className="bg-[#FAF9F6] border border-[#FF13F0]/20 rounded-xl p-6 md:p-8">
           <h3 className="text-2xl font-bold text-[#FF13F0] mb-6">Frequently Asked Questions</h3>
           <div className="space-y-6">
             <div>
@@ -121,7 +121,7 @@ export default function PricingPage() {
   // Return a loading state that will be replaced at runtime
   if (typeof window === 'undefined') {
     return (
-      <div className="min-h-screen bg-white text-black flex items-center justify-center">
+      <div className="min-h-screen bg-[#FAF9F6] text-black flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#FF13F0] mx-auto"></div>
           <p className="mt-4 text-[#FF13F0]">Loading...</p>

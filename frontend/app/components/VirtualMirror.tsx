@@ -8,9 +8,9 @@ interface VirtualMirrorProps {
 
 export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoading }) => {
   return (
-    <div className="w-full aspect-[3/4] bg-white rounded-lg sm:rounded-xl overflow-hidden relative border-2 border-[#FF13F0]/30 shadow-[0_0_20px_rgba(255,19,240,0.2)]">
+    <div className="w-full aspect-[3/4] bg-[#FAF9F6] rounded-lg sm:rounded-xl overflow-hidden relative border-2 border-[#FF13F0]/30 shadow-[0_0_20px_rgba(255,19,240,0.2)]">
       {isLoading && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm z-10">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#FAF9F6]/80 backdrop-blur-sm z-10">
           <div className="relative">
             <div className="absolute inset-0 animate-ping rounded-full bg-[#FF13F0] opacity-75"></div>
             <div className="relative bg-[#FF13F0] rounded-full p-3 sm:p-4 shadow-[0_0_20px_rgba(255,19,240,0.5)]">

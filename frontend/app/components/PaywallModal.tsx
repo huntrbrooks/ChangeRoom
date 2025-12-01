@@ -76,10 +76,10 @@ export function PaywallModal({
 
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80 backdrop-blur-sm p-0 sm:p-4">
-      <div className="bg-white border border-[#FF13F0]/30 rounded-none sm:rounded-2xl shadow-[0_0_30px_rgba(255,19,240,0.3)] max-w-2xl w-full h-full sm:h-auto sm:max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#FAF9F6]/80 backdrop-blur-sm p-0 sm:p-4">
+      <div className="bg-[#FAF9F6] border border-[#FF13F0]/30 rounded-none sm:rounded-2xl shadow-[0_0_30px_rgba(255,19,240,0.3)] max-w-2xl w-full h-full sm:h-auto sm:max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="sticky top-0 bg-white border-b border-[#FF13F0]/20 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between z-10">
+        <div className="sticky top-0 bg-[#FAF9F6] border-b border-[#FF13F0]/20 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between z-10">
           <h2 className="text-xl sm:text-2xl font-bold text-[#FF13F0]">Upgrade to Continue</h2>
           <button
             onClick={onClose}

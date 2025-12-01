@@ -77,8 +77,8 @@ export default function RootLayout({
   if (!hasValidKey || !publishableKey) {
     return (
       <html lang="en">
-        <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-black flex flex-col min-h-screen`}>
-          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-white border-b border-[#FF13F0]/20">
+        <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#FAF9F6] text-black flex flex-col min-h-screen`}>
+          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-[#FAF9F6] border-b border-[#FF13F0]/20">
             {/* Clerk components unavailable - invalid or missing key */}
           </header>
           <div className="flex-1">
@@ -101,9 +101,9 @@ export default function RootLayout({
     >
       <html lang="en">
         <body
-          className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-black flex flex-col min-h-screen`}
+          className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#FAF9F6] text-black flex flex-col min-h-screen`}
         >
-          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-white border-b border-[#FF13F0]/20">
+          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-[#FAF9F6] border-b border-[#FF13F0]/20">
             <SignedOut>
               <SignInButton />
               <SignUpButton>
