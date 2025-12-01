@@ -3,10 +3,12 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
-import { CreditCard, Zap, Crown, Sparkles, Settings, ArrowLeft } from 'lucide-react';
+import { CreditCard, Zap, Crown, Sparkles, Settings, ArrowLeft, Check } from 'lucide-react';
 import Link from 'next/link';
 import axios from 'axios';
 import { stripeConfig, appConfig } from '@/lib/config';
+import { getProductFeatures } from '@/lib/products';
+import { trackCheckoutInitiated, trackUpgradeClick } from '@/lib/clerk-tracking';
 import { PaywallModal } from '../components/PaywallModal';
 
 // Force dynamic rendering to prevent static generation issues with Clerk
@@ -63,9 +65,17 @@ function BillingPageContent() {
     }
   };
 
-  const handleCheckout = async (priceId: string, mode: 'subscription' | 'payment', startTrial?: boolean) => {
+  const handleCheckout = async (priceId: string, mode: 'subscription' | 'payment', startTrial?: boolean, planType?: 'standard' | 'pro' | 'credit-pack') => {
     setCheckoutLoading(priceId);
     try {
+      // Track checkout
+      if (user && planType && billing) {
+        if (planType === 'standard' || planType === 'pro') {
+          await trackUpgradeClick(user, billing.plan, planType);
+        }
+        await trackCheckoutInitiated(user, planType, priceId);
+      }
+
       const response = await axios.post('/api/billing/create-checkout-session', {
         priceId,
         mode,
@@ -193,10 +203,22 @@ function BillingPageContent() {
                   <div className="text-3xl font-bold mb-1">
                     {appConfig.standardMonthlyCredits} credits/month
                   </div>
-                  <p className="text-sm text-gray-500">Perfect for regular users</p>
+                  <p className="text-sm text-gray-500 mb-1">Perfect for regular users</p>
+                  <p className="text-xs text-gray-400">≈ $0.20 per try-on</p>
                 </div>
+                
+                {/* Features */}
+                <div className="mb-4 space-y-2">
+                  {getProductFeatures('standard').features.slice(0, 4).map((feature) => (
+                    <div key={feature.id} className="flex items-center gap-2 text-sm text-gray-600">
+                      <Check size={16} className="text-blue-500" />
+                      <span>{feature.name}</span>
+                    </div>
+                  ))}
+                </div>
+
                 <button
-                  onClick={() => handleCheckout(stripeConfig.standardPriceId, 'subscription', true)}
+                  onClick={() => handleCheckout(stripeConfig.standardPriceId, 'subscription', true, 'standard')}
                   disabled={checkoutLoading !== null}
                   className="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
                 >
@@ -215,10 +237,22 @@ function BillingPageContent() {
                   <div className="text-3xl font-bold mb-1">
                     {appConfig.proMonthlyCredits} credits/month
                   </div>
-                  <p className="text-sm text-gray-500">For power users and professionals</p>
+                  <p className="text-sm text-gray-500 mb-1">For power users and professionals</p>
+                  <p className="text-xs text-purple-600 font-semibold">≈ $0.08 per try-on • Best Value</p>
                 </div>
+                
+                {/* Features */}
+                <div className="mb-4 space-y-2">
+                  {getProductFeatures('pro').features.slice(0, 5).map((feature) => (
+                    <div key={feature.id} className="flex items-center gap-2 text-sm text-gray-600">
+                      <Check size={16} className="text-purple-500" />
+                      <span>{feature.name}</span>
+                    </div>
+                  ))}
+                </div>
+
                 <button
-                  onClick={() => handleCheckout(stripeConfig.proPriceId, 'subscription', true)}
+                  onClick={() => handleCheckout(stripeConfig.proPriceId, 'subscription', true, 'pro')}
                   disabled={checkoutLoading !== null}
                   className="w-full py-3 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition-colors disabled:opacity-50"
                 >

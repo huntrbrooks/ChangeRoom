@@ -289,3 +289,4 @@ Ensure all these are set in your environment:
 - Gemini API calls use REST (not SDK) for API key authentication
 - OpenAI preprocessing uses structured outputs (json_schema)
 
+

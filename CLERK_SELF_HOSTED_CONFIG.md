@@ -60,3 +60,4 @@ After setting the environment variables and redeploying:
 2. Verify authentication works on the deployed site
 3. Check browser console for any Clerk-related errors
 
+

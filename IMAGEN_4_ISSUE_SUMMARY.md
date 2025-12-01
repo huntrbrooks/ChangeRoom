@@ -85,3 +85,4 @@ But use a different service for actual image generation.
 2. If Vertex AI: I can help set up Vertex AI authentication
 3. If alternative: Which service do you prefer? (DALL-E, Replicate, etc.)
 
+

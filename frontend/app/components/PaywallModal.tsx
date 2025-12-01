@@ -1,8 +1,11 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X, Sparkles, Zap, Crown, CreditCard } from 'lucide-react';
+import { X, Sparkles, Zap, Crown, CreditCard, Check } from 'lucide-react';
 import { stripeConfig, appConfig } from '@/lib/config';
+import { getProductFeatures } from '@/lib/products';
+import { useUser } from '@clerk/nextjs';
+import { trackCheckoutInitiated, trackProductView } from '@/lib/clerk-tracking';
 import axios from 'axios';
 
 interface PaywallModalProps {
@@ -20,13 +23,27 @@ export function PaywallModal({
   plan,
   onTrial,
 }: PaywallModalProps) {
+  const { user } = useUser();
   const [loading, setLoading] = useState<string | null>(null);
+  const standardFeatures = getProductFeatures('standard');
+  const proFeatures = getProductFeatures('pro');
+
+  React.useEffect(() => {
+    if (isOpen && user) {
+      trackProductView(user, 'standard');
+    }
+  }, [isOpen, user]);
 
   if (!isOpen) return null;
 
-  const handleCheckout = async (priceId: string, mode: 'subscription' | 'payment', startTrial?: boolean) => {
+  const handleCheckout = async (priceId: string, mode: 'subscription' | 'payment', startTrial?: boolean, planType?: 'standard' | 'pro' | 'credit-pack') => {
     setLoading(priceId);
     try {
+      // Track checkout initiation
+      if (user && planType) {
+        await trackCheckoutInitiated(user, planType, priceId);
+      }
+
       const response = await axios.post('/api/billing/create-checkout-session', {
         priceId,
         mode,
@@ -101,7 +118,7 @@ export function PaywallModal({
                     <h4 className="text-lg sm:text-xl font-bold text-cyan-300">Standard</h4>
                   </div>
                   <p className="text-cyan-400/70 text-xs sm:text-sm">
-                    Perfect for regular users
+                    {standardFeatures.description}
                   </p>
                 </div>
               </div>
@@ -109,10 +126,22 @@ export function PaywallModal({
                 <div className="text-2xl sm:text-3xl font-bold mb-1 text-cyan-300">
                   {appConfig.standardMonthlyCredits} credits/month
                 </div>
-                <p className="text-xs sm:text-sm text-cyan-400/60">Monthly subscription</p>
+                <p className="text-xs sm:text-sm text-cyan-400/60 mb-1">Monthly subscription</p>
+                <p className="text-xs text-cyan-400/50">≈ $0.20 per try-on</p>
               </div>
+              
+              {/* Features List */}
+              <div className="mb-3 sm:mb-4 space-y-1.5">
+                {standardFeatures.features.slice(0, 3).map((feature) => (
+                  <div key={feature.id} className="flex items-center gap-2 text-xs sm:text-sm text-cyan-200">
+                    <Check size={14} className="text-cyan-400 flex-shrink-0" />
+                    <span>{feature.name}</span>
+                  </div>
+                ))}
+              </div>
+
               <button
-                onClick={() => handleCheckout(stripeConfig.standardPriceId, 'subscription', !onTrial && plan === 'free')}
+                onClick={() => handleCheckout(stripeConfig.standardPriceId, 'subscription', !onTrial && plan === 'free', 'standard')}
                 disabled={loading !== null}
                 className="w-full py-3 sm:py-3 bg-cyan-500 text-black rounded-lg font-semibold hover:bg-cyan-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(0,255,255,0.3)] min-h-[44px] touch-manipulation text-sm sm:text-base"
               >
@@ -136,7 +165,7 @@ export function PaywallModal({
                     <span className="bg-cyan-500/20 text-cyan-300 text-[10px] sm:text-xs font-semibold px-1.5 sm:px-2 py-0.5 sm:py-1 rounded border border-cyan-500/30 whitespace-nowrap">POPULAR</span>
                   </div>
                   <p className="text-cyan-400/70 text-xs sm:text-sm">
-                    For power users and professionals
+                    {proFeatures.description}
                   </p>
                 </div>
               </div>
@@ -144,10 +173,22 @@ export function PaywallModal({
                 <div className="text-2xl sm:text-3xl font-bold mb-1 text-cyan-300">
                   {appConfig.proMonthlyCredits} credits/month
                 </div>
-                <p className="text-xs sm:text-sm text-cyan-400/60">Monthly subscription</p>
+                <p className="text-xs sm:text-sm text-cyan-400/60 mb-1">Monthly subscription</p>
+                <p className="text-xs text-cyan-400/50">≈ $0.08 per try-on • Best Value</p>
               </div>
+              
+              {/* Features List */}
+              <div className="mb-3 sm:mb-4 space-y-1.5">
+                {proFeatures.features.slice(0, 4).map((feature) => (
+                  <div key={feature.id} className="flex items-center gap-2 text-xs sm:text-sm text-cyan-200">
+                    <Check size={14} className="text-cyan-400 flex-shrink-0" />
+                    <span>{feature.name}</span>
+                  </div>
+                ))}
+              </div>
+
               <button
-                onClick={() => handleCheckout(stripeConfig.proPriceId, 'subscription', !onTrial && plan === 'free')}
+                onClick={() => handleCheckout(stripeConfig.proPriceId, 'subscription', !onTrial && plan === 'free', 'pro')}
                 disabled={loading !== null}
                 className="w-full py-3 sm:py-3 bg-cyan-500 text-black rounded-lg font-semibold hover:bg-cyan-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_20px_rgba(0,255,255,0.4)] min-h-[44px] touch-manipulation text-sm sm:text-base"
               >
@@ -179,7 +220,7 @@ export function PaywallModal({
                   </div>
                 </div>
                 <button
-                  onClick={() => handleCheckout(stripeConfig.creditPackSmallPriceId, 'payment')}
+                  onClick={() => handleCheckout(stripeConfig.creditPackSmallPriceId, 'payment', false, 'credit-pack')}
                   disabled={loading !== null}
                   className="w-full py-2 sm:py-2 bg-cyan-500/20 text-cyan-300 rounded-lg font-semibold hover:bg-cyan-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm border border-cyan-500/30 min-h-[44px] touch-manipulation"
                 >
@@ -199,7 +240,7 @@ export function PaywallModal({
                   </div>
                 </div>
                 <button
-                  onClick={() => handleCheckout(stripeConfig.creditPackLargePriceId, 'payment')}
+                  onClick={() => handleCheckout(stripeConfig.creditPackLargePriceId, 'payment', false, 'credit-pack')}
                   disabled={loading !== null}
                   className="w-full py-2 sm:py-2 bg-cyan-500/20 text-cyan-300 rounded-lg font-semibold hover:bg-cyan-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm border border-cyan-500/30 min-h-[44px] touch-manipulation"
                 >

@@ -9,3 +9,4 @@ export const ai = new GoogleGenAI({
   apiKey: geminiConfig.apiKey,
 });
 
+

@@ -111,3 +111,4 @@ This confirms that Gemini models don't support image generation via `generateCon
 - [OpenAI DALL-E API](https://platform.openai.com/docs/guides/images)
 - [Gemini API Documentation](https://ai.google.dev/docs)
 
+

@@ -261,3 +261,4 @@ NEXT_PUBLIC_API_URL=https://your-backend-url.com
 - Stripe: https://stripe.com/docs
 - Vercel: https://vercel.com/docs
 
+

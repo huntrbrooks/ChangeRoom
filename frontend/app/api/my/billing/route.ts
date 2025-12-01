@@ -19,7 +19,7 @@ export async function GET(_req: NextRequest) {
       plan: billing.plan,
       creditsAvailable: billing.credits_available,
       creditsRefreshAt: billing.credits_refresh_at,
-      trialUsed: billing.trial_used,
+      trialUsed: billing.trial_used ?? false, // Default to false if null/undefined
     });
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
@@ -30,14 +30,14 @@ export async function GET(_req: NextRequest) {
       console.error("Error stack:", err.stack);
     }
     
-    // Return error details in development, generic message in production
-    return NextResponse.json(
-      { 
-        error: "Failed to fetch billing information",
-        ...(process.env.NODE_ENV === 'development' && { details: errorMessage })
-      },
-      { status: 500 }
-    );
+    // Return default billing info instead of error to prevent UI issues
+    // This allows the app to continue working even if there's a DB issue
+    return NextResponse.json({
+      plan: 'free' as const,
+      creditsAvailable: 0,
+      creditsRefreshAt: null,
+      trialUsed: false,
+    });
   }
 }
 

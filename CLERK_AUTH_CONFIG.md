@@ -33,12 +33,16 @@ Configure Clerk to use **Email/Password** authentication instead of (or in addit
 ### Alternative: OAuth Providers
 
 You can also enable OAuth providers that work globally:
-- Google
+- Google (see `CLERK_GOOGLE_OAUTH_SETUP.md` or `GOOGLE_OAUTH_STEP_BY_STEP.md` for setup instructions)
+- Apple (see `CLERK_APPLE_OAUTH_SETUP.md` for setup instructions - requires paid Apple Developer account)
 - GitHub
-- Apple
 - Microsoft
 
 These don't have country restrictions.
+
+**Notes:**
+- **Google OAuth:** If you see "Missing required parameter: client_id" when trying to sign in with Google, see `CLERK_GOOGLE_OAUTH_SETUP.md` or `GOOGLE_OAUTH_STEP_BY_STEP.md` for detailed setup instructions or disable Google OAuth in the Clerk dashboard if you don't need it.
+- **Apple Sign In:** Requires a paid Apple Developer Program membership ($99/year). See `CLERK_APPLE_OAUTH_SETUP.md` for complete setup instructions.
 
 ## Code Configuration
 
@@ -63,4 +67,5 @@ If issues persist:
 - Check Clerk Dashboard → User & Authentication settings
 - Ensure email authentication is enabled and set as primary
 - Contact Clerk support if phone restrictions are blocking your use case
+
 

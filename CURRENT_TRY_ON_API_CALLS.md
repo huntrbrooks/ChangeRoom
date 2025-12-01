@@ -269,3 +269,4 @@ Both use:
 - **Method**: `generateContent`
 - **Authentication**: API key as query parameter (`?key=...`)
 
+

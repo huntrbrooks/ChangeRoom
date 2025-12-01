@@ -206,3 +206,4 @@ Files saved with structure: clothing/YYYY-MM-DD/filename.jpg
 
 This allows switching storage backends without changing the preprocessing code.
 
+

@@ -75,22 +75,69 @@ export interface TryOnSession {
  * Creates with free plan and default credits if doesn't exist
  */
 export async function getOrCreateUserBilling(userId: string): Promise<UserBilling> {
-  const result = await sql`
-    INSERT INTO users_billing (user_id, plan, credits_available)
-    VALUES (${userId}, 'free', ${appConfig.freeCredits})
-    ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
-    RETURNING *
+  // First try to get existing record
+  const existing = await sql`
+    SELECT * FROM users_billing WHERE user_id = ${userId}
   `;
 
-  if (result.rows.length > 0) {
-    return result.rows[0] as UserBilling;
+  if (existing.rows.length > 0) {
+    const billing = existing.rows[0] as UserBilling;
+    // Ensure trial_used field exists (for backward compatibility)
+    if (billing.trial_used === undefined || billing.trial_used === null) {
+      // Update to set default value if column exists
+      try {
+        await sql`
+          UPDATE users_billing 
+          SET trial_used = COALESCE(trial_used, false), updated_at = now()
+          WHERE user_id = ${userId}
+        `;
+        // Fetch again to get updated value
+        const updated = await sql`
+          SELECT * FROM users_billing WHERE user_id = ${userId}
+        `;
+        return updated.rows[0] as UserBilling;
+      } catch (err) {
+        // If column doesn't exist, return with default value
+        return { ...billing, trial_used: false };
+      }
+    }
+    return billing;
+  }
+
+  // Create new record
+  try {
+    const result = await sql`
+      INSERT INTO users_billing (user_id, plan, credits_available, trial_used)
+      VALUES (${userId}, 'free', ${appConfig.freeCredits}, false)
+      ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
+      RETURNING *
+    `;
+
+    if (result.rows.length > 0) {
+      return result.rows[0] as UserBilling;
+    }
+  } catch (err: any) {
+    // If trial_used column doesn't exist, try without it
+    if (err.message?.includes('trial_used')) {
+      const result = await sql`
+        INSERT INTO users_billing (user_id, plan, credits_available)
+        VALUES (${userId}, 'free', ${appConfig.freeCredits})
+        ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
+        RETURNING *
+      `;
+      if (result.rows.length > 0) {
+        return { ...result.rows[0] as UserBilling, trial_used: false };
+      }
+    }
+    throw err;
   }
 
   // If no row returned (shouldn't happen), fetch it
   const fetchResult = await sql`
     SELECT * FROM users_billing WHERE user_id = ${userId}
   `;
-  return fetchResult.rows[0] as UserBilling;
+  const fetched = fetchResult.rows[0] as UserBilling;
+  return { ...fetched, trial_used: fetched.trial_used ?? false };
 }
 
 /**
@@ -160,33 +207,49 @@ export async function isUserOnFreeTrial(userId: string): Promise<boolean> {
  * During free trial (first try-on), allows 1 free try-on and marks trial as used
  */
 export async function decrementCreditsIfAvailable(userId: string): Promise<boolean> {
-  const billing = await getOrCreateUserBilling(userId);
-  
-  // Check if user is on free trial (hasn't used their free try-on)
-  if (!billing.trial_used) {
-    // Mark trial as used and allow this try-on
+  try {
+    const billing = await getOrCreateUserBilling(userId);
+    
+    // Check if user is on free trial (hasn't used their free try-on)
+    // Handle case where trial_used might be null/undefined (backward compatibility)
+    const trialUsed = billing.trial_used ?? false;
+    
+    if (!trialUsed) {
+      // Mark trial as used and allow this try-on
+      try {
+        const result = await sql`
+          UPDATE users_billing
+          SET 
+            trial_used = true,
+            updated_at = now()
+          WHERE user_id = ${userId} AND (trial_used = false OR trial_used IS NULL)
+          RETURNING *
+        `;
+        return result.rows.length > 0;
+      } catch (err: any) {
+        // If trial_used column doesn't exist, just allow the try-on
+        if (err.message?.includes('trial_used') || err.message?.includes('column')) {
+          return true;
+        }
+        throw err;
+      }
+    }
+    
+    // Use a transaction to ensure atomicity for regular credits
     const result = await sql`
       UPDATE users_billing
       SET 
-        trial_used = true,
+        credits_available = credits_available - 1,
         updated_at = now()
-      WHERE user_id = ${userId} AND trial_used = false
+      WHERE user_id = ${userId} AND credits_available > 0
       RETURNING *
     `;
-    return result.rows.length > 0;
-  }
-  
-  // Use a transaction to ensure atomicity for regular credits
-  const result = await sql`
-    UPDATE users_billing
-    SET 
-      credits_available = credits_available - 1,
-      updated_at = now()
-    WHERE user_id = ${userId} AND credits_available > 0
-    RETURNING *
-  `;
 
-  return result.rows.length > 0;
+    return result.rows.length > 0;
+  } catch (err) {
+    console.error('Error in decrementCreditsIfAvailable:', err);
+    return false;
+  }
 }
 
 /**

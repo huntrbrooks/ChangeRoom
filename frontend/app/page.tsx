@@ -82,11 +82,24 @@ function HomeContent() {
       if (error.response?.status !== 401) {
         console.error('Error fetching billing:', error.response?.data || error.message);
       }
-      // Don't show error to user for billing fetch failures - it's non-critical
+      // Set default billing if fetch fails
+      if (user) {
+        setBilling({
+          plan: 'free',
+          creditsAvailable: 0,
+          creditsRefreshAt: null,
+          trialUsed: false,
+        });
+      }
     }
   };
 
-  const isOnTrial = billing && !billing.trialUsed;
+  // Check if user email is in bypass list
+  const BYPASS_EMAILS = ["gerard.grenville@gmail.com"];
+  const userEmail = user?.emailAddresses?.[0]?.emailAddress?.toLowerCase();
+  const isBypassUser = userEmail && BYPASS_EMAILS.includes(userEmail);
+
+  const isOnTrial = billing && !billing.trialUsed && !isBypassUser;
 
   interface AnalyzedItem {
     index: number;
@@ -169,11 +182,16 @@ function HomeContent() {
       return;
     }
 
-    // Check credits before proceeding (unless on trial)
-    if (!isOnTrial && (!billing || billing.creditsAvailable <= 0)) {
+    // Check credits before proceeding (unless on trial or bypass user)
+    if (!isBypassUser && !isOnTrial && (!billing || billing.creditsAvailable <= 0)) {
       console.log("No credits available, showing paywall");
       setShowPaywall(true);
       return;
+    }
+
+    // Log bypass for admin
+    if (isBypassUser) {
+      console.log(`Payment bypassed for user: ${userEmail}`);
     }
 
     // Show paywall if credits are low (3 or less) and not on trial
@@ -473,6 +491,7 @@ function HomeContent() {
               </Link>
             )}
             <div className="hidden md:flex items-center gap-6 text-cyan-400">
+              <Link href="/pricing" className="hover:text-cyan-300 transition-colors whitespace-nowrap">Pricing</Link>
               <Link href="/how-it-works" className="hover:text-cyan-300 transition-colors whitespace-nowrap">How it Works</Link>
               <Link href="/about" className="hover:text-cyan-300 transition-colors whitespace-nowrap">About</Link>
             </div>
@@ -699,12 +718,12 @@ function HomeContent() {
       </div>
 
       {/* Paywall Modal */}
-      {showPaywall && billing && (
+      {showPaywall && (
         <PaywallModal
           isOpen={showPaywall}
           onClose={() => setShowPaywall(false)}
-          creditsAvailable={billing.creditsAvailable}
-          plan={billing.plan}
+          creditsAvailable={billing?.creditsAvailable ?? 0}
+          plan={billing?.plan ?? 'free'}
           onTrial={isOnTrial || undefined}
         />
       )}
