@@ -2,6 +2,9 @@ import React from 'react';
 import Link from 'next/link';
 import { Shirt, Upload, Sparkles, ShoppingBag, ArrowLeft } from 'lucide-react';
 
+// Force dynamic rendering to avoid Clerk initialization issues during build
+export const dynamic = 'force-dynamic';
+
 export default function HowItWorks() {
   return (
     <main className="min-h-screen bg-white text-black font-sans">
