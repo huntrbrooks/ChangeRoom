@@ -13,6 +13,7 @@ import {
 } from "@/lib/db-access";
 import { randomUUID } from "crypto";
 import { generateTryOnWithGemini3ProImage } from "@/lib/tryOnGemini3";
+import { isBypassUser } from "@/lib/bypass-config";
 
 /**
  * Fetch image from R2 and convert to base64
@@ -95,10 +96,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Payment bypass for specific email
-    const BYPASS_EMAILS = ["gerard.grenville@gmail.com"];
     const user = await currentUser();
-    const userEmail = user?.emailAddresses?.[0]?.emailAddress?.toLowerCase();
-    const shouldBypassPayment = userEmail && BYPASS_EMAILS.includes(userEmail.toLowerCase());
+    const userEmail = user?.emailAddresses?.[0]?.emailAddress;
+    const shouldBypassPayment = isBypassUser(userEmail);
     
     // Check credits before processing (unless bypassed)
     if (!shouldBypassPayment) {

@@ -1,19 +1,59 @@
 @import "tailwindcss";
 
 :root {
+  /* Base colors */
   --background: #FAF9F6;
   --foreground: #000000;
-  --neon-blue: #FF13F0;
-  --neon-cyan: #FF13F0;
-  --accent-blue: #FF13F0;
+  
+  /* Primary accent - Vibrant purple */
+  --primary-accent: #8B5CF6;
+  --primary-accent-hover: #7C3AED;
+  --primary-accent-light: #A78BFA;
+  --primary-accent-dark: #6D28D9;
+  
+  /* Secondary accent - Electric blue */
+  --secondary-accent: #3B82F6;
+  --secondary-accent-hover: #2563EB;
+  --secondary-accent-light: #60A5FA;
+  --secondary-accent-dark: #1D4ED8;
+  
+  /* Tertiary accent - Soft pink (used sparingly) */
+  --tertiary-accent: #EC4899;
+  --tertiary-accent-hover: #DB2777;
+  
+  /* Semantic colors */
+  --success: #10B981;
+  --success-light: #34D399;
+  --warning: #F59E0B;
+  --warning-light: #FBBF24;
+  --error: #EF4444;
+  --error-light: #F87171;
+  
+  /* Opacity variants for backgrounds and borders */
+  --primary-accent-10: rgba(139, 92, 246, 0.1);
+  --primary-accent-20: rgba(139, 92, 246, 0.2);
+  --primary-accent-30: rgba(139, 92, 246, 0.3);
+  --primary-accent-50: rgba(139, 92, 246, 0.5);
+  
+  --secondary-accent-10: rgba(59, 130, 246, 0.1);
+  --secondary-accent-20: rgba(59, 130, 246, 0.2);
+  --secondary-accent-30: rgba(59, 130, 246, 0.3);
+  
+  /* Legacy support (for gradual migration) */
+  --neon-blue: var(--primary-accent);
+  --neon-cyan: var(--primary-accent);
+  --accent-blue: var(--primary-accent);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --color-neon-blue: var(--neon-blue);
-  --color-neon-cyan: var(--neon-cyan);
-  --color-accent-blue: var(--accent-blue);
+  --color-primary-accent: var(--primary-accent);
+  --color-secondary-accent: var(--secondary-accent);
+  --color-tertiary-accent: var(--tertiary-accent);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -21,7 +61,7 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /* Prevent text size adjustment on iOS */
@@ -40,7 +80,7 @@ body {
   
   /* Prevent double-tap zoom on buttons */
   button, a {
-    -webkit-tap-highlight-color: rgba(0, 255, 255, 0.2);
+    -webkit-tap-highlight-color: var(--primary-accent-20);
   }
   
   /* Better text sizing on mobile */

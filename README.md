@@ -23,6 +23,15 @@ GEMINI_API_KEY=your_api_key_here
 # GOOGLE_API_KEY=your_api_key_here
 ```
 
+Create a `.env.local` file in the `frontend` directory with the following:
+
+```bash
+# Optional: Paywall bypass emails (comma-separated list)
+# Users with these emails will have unlimited access while paywall remains visible
+# Example: NEXT_PUBLIC_PAYWALL_BYPASS_EMAILS=gerard.grenville@gmail.com
+NEXT_PUBLIC_PAYWALL_BYPASS_EMAILS=gerard.grenville@gmail.com
+```
+
 **Note:** The application uses direct REST API calls to Gemini API with API key authentication. No OAuth2 or SDK setup is required.
 
 ### Backend Setup

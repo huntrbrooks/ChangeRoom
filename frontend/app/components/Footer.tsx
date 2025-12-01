@@ -3,7 +3,7 @@ import Link from 'next/link';
 
 export function Footer() {
   return (
-    <footer className="border-t border-[#FF13F0]/20 bg-[#FAF9F6] text-gray-600 py-8 mt-auto">
+    <footer className="border-t border-[#8B5CF6]/20 bg-[#FAF9F6] text-gray-600 py-8 mt-auto">
       <div className="container mx-auto px-4">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="text-sm">
@@ -12,25 +12,25 @@ export function Footer() {
           <nav className="flex flex-wrap justify-center gap-6 text-sm">
             <Link 
               href="/terms-of-service" 
-              className="hover:text-[#FF13F0] transition-colors"
+              className="hover:text-[#8B5CF6] transition-colors"
             >
               Terms of Service
             </Link>
             <Link 
               href="/privacy-policy" 
-              className="hover:text-[#FF13F0] transition-colors"
+              className="hover:text-[#8B5CF6] transition-colors"
             >
               Privacy Policy
             </Link>
             <Link 
               href="/about" 
-              className="hover:text-[#FF13F0] transition-colors"
+              className="hover:text-[#8B5CF6] transition-colors"
             >
               About
             </Link>
             <Link 
               href="/how-it-works" 
-              className="hover:text-[#FF13F0] transition-colors"
+              className="hover:text-[#8B5CF6] transition-colors"
             >
               How it Works
             </Link>

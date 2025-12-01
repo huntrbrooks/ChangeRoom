@@ -40,7 +40,8 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 5,
   userScalable: true,
-  themeColor: '#FF13F0',
+  themeColor: '#8B5CF6',
+  viewportFit: 'cover', // For notched devices
 };
 
 export default function RootLayout({
@@ -82,7 +83,7 @@ export default function RootLayout({
     return (
       <html lang="en">
         <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#FAF9F6] text-black flex flex-col min-h-screen`}>
-          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-[#FAF9F6] border-b border-[#FF13F0]/20">
+          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-[#FAF9F6] border-b border-[#8B5CF6]/20">
             {/* Clerk components unavailable - invalid or missing key */}
           </header>
           <div className="flex-1">
@@ -99,7 +100,7 @@ export default function RootLayout({
       publishableKey={publishableKey}
       appearance={{
         elements: {
-          formButtonPrimary: 'bg-[#FF13F0] hover:bg-[#FF13F0]/90 text-white',
+          formButtonPrimary: 'bg-[#8B5CF6] hover:bg-[#7C3AED] text-white',
         }
       }}
     >
@@ -107,11 +108,11 @@ export default function RootLayout({
         <body
           className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#FAF9F6] text-black flex flex-col min-h-screen`}
         >
-          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-[#FAF9F6] border-b border-[#FF13F0]/20">
+          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-[#FAF9F6] border-b border-[#8B5CF6]/20">
             <SignedOut>
               <SignInButton />
               <SignUpButton>
-                <button className="bg-[#FF13F0] text-white rounded-full font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 cursor-pointer hover:bg-[#FF13F0]/90 transition-colors shadow-[0_0_15px_rgba(255,19,240,0.3)]">
+                <button className="bg-[#8B5CF6] text-white rounded-full font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 cursor-pointer hover:bg-[#7C3AED] transition-colors shadow-[0_0_15px_rgba(139,92,246,0.3)]">
                   Sign Up
                 </button>
               </SignUpButton>
