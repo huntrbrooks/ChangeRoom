@@ -542,10 +542,41 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             // Compute wearing style options outside of JSX to avoid hydration issues
             const category = item?.analysis?.category || item?.analysis?.body_region || '';
             const itemType = item?.analysis?.item_type || '';
-            const styleOptions = isSuccess ? getWearingStyleOptions(category, itemType) : [];
+            // Also check description and tags for better matching (e.g., "cargo pants", "baseball cap", "hooded sweatshirt")
+            const description = (item?.analysis?.description || item?.analysis?.detailed_description || '').toLowerCase();
+            const tags = (item?.analysis?.tags || []).join(' ').toLowerCase();
+            const combinedText = `${itemType} ${description} ${tags}`.toLowerCase();
+            
+            // Try matching with item_type first, then fallback to keyword matching in description/tags
+            let styleOptions = isSuccess ? getWearingStyleOptions(category, itemType) : [];
+            
+            // If no options found with item_type, try keyword matching for common cases
+            if (isSuccess && styleOptions.length === 0) {
+              // Check for hoodie/hooded sweatshirt
+              if (category === 'upper_body' && (combinedText.includes('hood') || combinedText.includes('sweatshirt'))) {
+                styleOptions = getWearingStyleOptions('upper_body', 'hoodie');
+              }
+              // Check for cargo pants
+              else if (category === 'lower_body' && combinedText.includes('cargo')) {
+                styleOptions = getWearingStyleOptions('lower_body', 'pants');
+              }
+              // Check for baseball cap
+              else if (category === 'accessories' && (combinedText.includes('baseball') || combinedText.includes('cap'))) {
+                styleOptions = getWearingStyleOptions('accessories', 'hat');
+              }
+              // Check for boots
+              else if (category === 'shoes' && combinedText.includes('boot')) {
+                styleOptions = getWearingStyleOptions('shoes', 'boots');
+              }
+            }
             const hasWearingOptions = styleOptions.length > 0;
             const currentWearingStyle = wearingStyles.get(idx);
             const defaultWearingStyle = currentWearingStyle || styleOptions[0]?.value || '';
+            
+            // Debug logging
+            if (isSuccess && item?.analysis) {
+              console.log(`[WearingStyle] Item ${idx}: category="${category}", itemType="${itemType}", hasOptions=${hasWearingOptions}, styleOptions=${styleOptions.length}, defaultStyle="${defaultWearingStyle}"`);
+            }
             
             return (
               <div
@@ -681,14 +712,14 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                     </div>
 
                     {/* Wearing Style Dropdown */}
-                    {isSuccess && hasWearingOptions && defaultWearingStyle && (
+                    {isSuccess && hasWearingOptions && styleOptions.length > 0 && (
                       <div className="mt-1.5 sm:mt-2">
                         <label htmlFor={`wearing-style-${idx}`} className="block text-[9px] sm:text-[10px] font-medium text-cyan-300 mb-1">
                           How to wear:
                         </label>
                         <select
                           id={`wearing-style-${idx}`}
-                          value={defaultWearingStyle}
+                          value={defaultWearingStyle || styleOptions[0]?.value || ''}
                           onChange={(e) => handleWearingStyleChange(idx, e.target.value)}
                           className="w-full text-[9px] sm:text-[10px] px-2 py-1.5 rounded bg-gray-800 border border-cyan-500/30 text-cyan-200 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 appearance-none cursor-pointer hover:border-cyan-500/50 transition-colors"
                           style={{

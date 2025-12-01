@@ -122,7 +122,7 @@ const WEARING_STYLE_CONFIGS: WearingStyleConfig[] = [
   },
   {
     category: "upper_body",
-    itemTypes: ["hoodie"],
+    itemTypes: ["hoodie", "sweatshirt"],
     options: [
       {
         value: "zipped",
@@ -310,10 +310,38 @@ export function getWearingStyleOptions(
 
     // If itemTypes are specified, match those too
     if (cfg.itemTypes && normalizedItemType) {
-      return (
-        categoryMatch &&
-        cfg.itemTypes.some((type) => type === normalizedItemType)
-      );
+      // Try exact match first
+      const exactMatch = cfg.itemTypes.some((type) => type === normalizedItemType);
+      if (exactMatch) return categoryMatch && exactMatch;
+      
+      // Try partial match - check if any itemType is contained in the normalizedItemType or vice versa
+      const partialMatch = cfg.itemTypes.some((type) => {
+        return normalizedItemType.includes(type) || type.includes(normalizedItemType);
+      });
+      if (partialMatch) return categoryMatch && partialMatch;
+      
+      // Try matching common variations
+      const variations: Record<string, string[]> = {
+        'cap': ['baseball cap', 'ball cap', 'cap', 'baseball'],
+        'hat': ['hat', 'cap', 'baseball cap', 'baseball'],
+        'hoodie': ['hoodie', 'hooded sweatshirt', 'hoody', 'hooded', 'sweatshirt'],
+        'sweatshirt': ['sweatshirt', 'hooded sweatshirt', 'hoodie'],
+        'pants': ['pants', 'trousers', 'cargo pants', 'cargo', 'jeans'],
+        'jeans': ['jeans', 'denim'],
+        'boots': ['boots', 'boot'],
+        'sneakers': ['sneakers', 'sneaker', 'trainers', 'athletic shoes'],
+      };
+      
+      for (const [key, aliases] of Object.entries(variations)) {
+        if (cfg.itemTypes.includes(key)) {
+          const hasMatch = aliases.some(alias => 
+            normalizedItemType.includes(alias) || alias.includes(normalizedItemType)
+          );
+          if (hasMatch) return categoryMatch;
+        }
+      }
+      
+      return false;
     }
 
     // If no itemTypes specified, match any item in this category
