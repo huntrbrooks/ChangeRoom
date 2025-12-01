@@ -25,10 +25,14 @@ export const metadata: Metadata = {
   title: "Change Room - Virtual Try-On & Shopping",
   description: "Try on clothes virtually and discover similar products to shop. Upload your photo and wardrobe items to see how they look on you.",
   icons: {
-    icon: '/Logo.png',
-    shortcut: '/Logo.png',
-    apple: '/Logo.png',
+    icon: [
+      { url: '/favicon/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
+      { url: '/favicon/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
+    ],
+    shortcut: '/favicon/favicon.ico',
+    apple: '/favicon/apple-touch-icon.png',
   },
+  manifest: '/favicon/site.webmanifest',
 };
 
 export const viewport: Viewport = {
@@ -36,7 +40,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 5,
   userScalable: true,
-  themeColor: '#ffffff',
+  themeColor: '#FF13F0',
 };
 
 export default function RootLayout({
