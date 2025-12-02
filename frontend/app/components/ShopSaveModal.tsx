@@ -76,12 +76,6 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
   const [localResults, setLocalResults] = useState<ShopSaveResult[]>([]);
 
   useEffect(() => {
-    if (isOpen && items.length === 0 && !loadingItems) {
-      void fetchItems();
-    }
-  }, [fetchItems, isOpen, items.length, loadingItems]);
-
-  useEffect(() => {
     if (!isOpen) {
       setSearchError(null);
     }
@@ -124,6 +118,12 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
       setLoadingItems(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (isOpen && items.length === 0 && !loadingItems) {
+      void fetchItems();
+    }
+  }, [fetchItems, isOpen, items.length, loadingItems]);
 
   const toggleSelect = useCallback(
     (id: string) => {
