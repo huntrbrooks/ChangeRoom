@@ -5,11 +5,12 @@ import Link from 'next/link';
 import { useUser } from '@clerk/nextjs';
 import axios from 'axios';
 import { UploadZone } from './components/UploadZone';
-import { BulkUploadZone, type AnalyzedItem } from './components/BulkUploadZone';
+import { BulkUploadZone } from './components/BulkUploadZone';
 import { VirtualMirror } from './components/VirtualMirror';
 import { ProductCard } from './components/ProductCard';
 import { PaywallModal } from './components/PaywallModal';
 import { MyOutfits } from './components/MyOutfits';
+import { ShopSaveModal, type ShopSaveResult } from './components/ShopSaveModal';
 import { Sparkles, Search, Loader2, CreditCard, Zap, Shirt } from 'lucide-react';
 import { getWearingStylePromptText } from '@/lib/wearingStyles';
 import { isBypassUser } from '@/lib/bypass-config';
@@ -33,6 +34,21 @@ interface BillingInfo {
   trialUsed?: boolean;
 }
 
+const formatCurrency = (value?: number | null, currency?: string | null) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return 'N/A';
+  }
+  try {
+    return new Intl.NumberFormat('en-AU', {
+      style: 'currency',
+      currency: currency || 'AUD',
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    return `$${value.toFixed(2)}`;
+  }
+};
+
 function HomeContent() {
   const { user, isLoaded } = useUser();
   const [userImage, setUserImage] = useState<File | null>(null);
@@ -52,6 +68,8 @@ function HomeContent() {
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
   const [activeTab, setActiveTab] = useState<'try-on' | 'my-outfits'>('try-on');
+  const [isShopSaveOpen, setIsShopSaveOpen] = useState(false);
+  const [shopSaveResults, setShopSaveResults] = useState<ShopSaveResult[]>([]);
 
   // Fetch billing info on mount and when user changes
   useEffect(() => {
@@ -538,15 +556,13 @@ function HomeContent() {
     <main className="min-h-screen bg-white text-black font-sans">
       {/* Header */}
       <header className="border-b border-white/10 sticky top-0 bg-[#2C2C2C]/95 backdrop-blur-md z-50 safe-area-inset text-white">
-        <div className="container mx-auto px-3 sm:px-4 py-2.5 sm:py-3 md:py-4 flex items-center gap-4">
-          <div className="flex items-center flex-shrink-0">
+        <div className="w-full px-3 sm:px-6 lg:px-10 py-2.5 sm:py-3 md:py-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 flex-shrink-0">
             <img 
               src="/Logo.png" 
               alt="Change Room Logo" 
               className="w-8 h-8 sm:w-10 sm:h-10 object-contain"
             />
-          </div>
-          <div className="flex-1 flex items-center justify-center">
             <img 
               src="/Font logo.png" 
               alt="Change Room" 
@@ -737,7 +753,7 @@ function HomeContent() {
           {/* Left Column: Inputs */}
           <div className="lg:col-span-7 space-y-3 sm:space-y-4 md:space-y-6 lg:space-y-8">
             
-            <section>
+            <section id="choose-wardrobe">
               <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
                 <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,0,0,0.5)]">1</span>
                 Upload Yourself
@@ -842,6 +858,26 @@ function HomeContent() {
                 Virtual Mirror
               </h2>
               <VirtualMirror imageUrl={generatedImage} isLoading={isGenerating} />
+              {generatedImage && !isGenerating && user && (
+                <div className="mt-4 rounded-lg border border-black/20 bg-black/5 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold uppercase tracking-wide text-black/70">
+                        Shop &amp; Save
+                      </p>
+                      <p className="text-xs text-black/60">
+                        Compare prices for up to 5 wardrobe items using Google Shopping data.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setIsShopSaveOpen(true)}
+                      className="w-full sm:w-auto rounded-none border border-black bg-black px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white transition-colors hover:bg-[#111]"
+                    >
+                      Open Selector
+                    </button>
+                  </div>
+                </div>
+              )}
             </section>
 
             {products.length > 0 && (
@@ -858,10 +894,112 @@ function HomeContent() {
               </section>
             )}
 
+            {shopSaveResults.length > 0 && (
+              <section>
+                <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
+                  <Search size={18} className="sm:w-5 sm:h-5 text-black" />
+                  Shop &amp; Save Deals
+                </h2>
+                <div className="space-y-4">
+                  {shopSaveResults.map((result) => (
+                    <div
+                      key={result.item.id}
+                      className="rounded-lg border border-black/15 bg-white/80 p-3 sm:p-4 shadow-[0_5px_20px_rgba(0,0,0,0.08)]"
+                    >
+                      <div className="flex gap-3">
+                        {result.item.public_url && (
+                          <img
+                            src={result.item.public_url}
+                            alt={result.item.description || result.item.subcategory || 'Wardrobe item'}
+                            className="h-20 w-20 rounded-md border border-black/10 object-cover"
+                          />
+                        )}
+                        <div className="flex-1">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-black/60">
+                            {result.item.category?.replace('_', ' ') || 'Item'}
+                          </p>
+                          <p className="text-sm font-bold">
+                            {result.item.subcategory || result.item.description || result.item.original_filename}
+                          </p>
+                          {(result.item.color || result.item.style) && (
+                            <p className="text-xs text-black/60">
+                              {result.item.color}
+                              {result.item.color && result.item.style ? ' · ' : ''}
+                              {result.item.style}
+                            </p>
+                          )}
+                          {result.item.tags && result.item.tags.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {result.item.tags.slice(0, 3).map((tag) => (
+                                <span
+                                  key={`${result.item.id}-${tag}`}
+                                  className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-black/70"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {result.offers.length > 0 ? (
+                        <div className="mt-4 space-y-2">
+                          {result.offers.map((offer, idx) => {
+                            const offerKey = `${result.item.id}-${offer.source}-${offer.merchant || 'merchant'}-${idx}`;
+                            return (
+                              <a
+                                key={offerKey}
+                                href={offer.affiliateUrl || offer.productUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center justify-between rounded-lg border border-black/10 px-3 py-2 text-xs sm:text-sm transition-colors hover:border-black/40"
+                              >
+                                <div className="flex flex-col pr-3">
+                                  <span className="font-semibold">
+                                    {offer.merchant || offer.source}
+                                  </span>
+                                  <span className="text-[11px] text-black/60 line-clamp-2">
+                                    {offer.title}
+                                  </span>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-sm font-bold text-black">
+                                    {formatCurrency(
+                                      typeof offer.totalPrice === 'number' ? offer.totalPrice : offer.price,
+                                      offer.currency
+                                    )}
+                                  </p>
+                                  {offer.shippingPrice && offer.shippingPrice > 0 && (
+                                    <p className="text-[11px] text-black/50">
+                                      + {formatCurrency(offer.shippingPrice, offer.currency)} ship
+                                    </p>
+                                  )}
+                                </div>
+                              </a>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="mt-3 text-xs text-black/60">
+                          We couldn&apos;t find live offers for this item yet. Try again later.
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
           </div>
         </div>
         )}
       </div>
+
+      <ShopSaveModal
+        isOpen={isShopSaveOpen}
+        onClose={() => setIsShopSaveOpen(false)}
+        onResults={(results) => setShopSaveResults(results)}
+      />
 
       {/* Paywall Modal */}
       {showPaywall && (
