@@ -634,3 +634,214 @@ export async function getUserBillingByStripeCustomer(
   return (result.rows[0] as UserBilling) || null;
 }
 
+// Shop & Save Offer Types
+export interface ClothingItemOffer {
+  id: string;
+  clothing_item_id: string;
+  source: string;
+  merchant: string;
+  title: string;
+  price: number;
+  currency: string;
+  product_url: string;
+  affiliate_url: string;
+  thumbnail_url: string | null;
+  shipping_price: number | null;
+  total_price: number;
+  created_at: Date;
+}
+
+/**
+ * Insert offers for a clothing item (replace existing offers)
+ */
+export async function upsertClothingItemOffers(
+  clothingItemId: string,
+  offers: Array<{
+    source: string;
+    merchant: string;
+    title: string;
+    price: number;
+    currency: string;
+    productUrl: string;
+    affiliateUrl: string;
+    thumbnailUrl?: string | null;
+    shippingPrice?: number | null;
+    totalPrice: number;
+  }>
+): Promise<ClothingItemOffer[]> {
+  // Delete existing offers for this item
+  await sql`
+    DELETE FROM clothing_item_offers
+    WHERE clothing_item_id = ${clothingItemId}
+  `;
+
+  // Insert new offers
+  const inserted: ClothingItemOffer[] = [];
+  for (const offer of offers) {
+    const result = await sql`
+      INSERT INTO clothing_item_offers (
+        clothing_item_id,
+        source,
+        merchant,
+        title,
+        price,
+        currency,
+        product_url,
+        affiliate_url,
+        thumbnail_url,
+        shipping_price,
+        total_price
+      )
+      VALUES (
+        ${clothingItemId},
+        ${offer.source},
+        ${offer.merchant},
+        ${offer.title},
+        ${offer.price},
+        ${offer.currency},
+        ${offer.productUrl},
+        ${offer.affiliateUrl},
+        ${offer.thumbnailUrl || null},
+        ${offer.shippingPrice || null},
+        ${offer.totalPrice}
+      )
+      RETURNING *
+    `;
+    inserted.push(result.rows[0] as ClothingItemOffer);
+  }
+
+  return inserted;
+}
+
+/**
+ * Get offers for a clothing item (scoped to user)
+ */
+export async function getClothingItemOffers(
+  userId: string,
+  clothingItemId: string,
+  limit?: number
+): Promise<ClothingItemOffer[]> {
+  let result;
+  
+  if (limit) {
+    result = await sql`
+      SELECT o.*
+      FROM clothing_item_offers o
+      INNER JOIN clothing_items c ON c.id = o.clothing_item_id
+      WHERE c.user_id = ${userId} AND o.clothing_item_id = ${clothingItemId}
+      ORDER BY o.total_price ASC
+      LIMIT ${limit}
+    `;
+  } else {
+    result = await sql`
+      SELECT o.*
+      FROM clothing_item_offers o
+      INNER JOIN clothing_items c ON c.id = o.clothing_item_id
+      WHERE c.user_id = ${userId} AND o.clothing_item_id = ${clothingItemId}
+      ORDER BY o.total_price ASC
+    `;
+  }
+
+  return result.rows as ClothingItemOffer[];
+}
+
+/**
+ * Log an affiliate click
+ */
+export async function logAffiliateClick(data: {
+  offerId?: string | null;
+  userId?: string | null;
+  clickedUrl: string;
+}): Promise<void> {
+  await sql`
+    INSERT INTO affiliate_clicks (offer_id, user_id, clicked_url)
+    VALUES (${data.offerId || null}, ${data.userId || null}, ${data.clickedUrl})
+  `;
+}
+
+// User Outfits Types
+export interface ClothingItemMetadata {
+  filename: string;
+  category: string;
+  itemType: string;
+  color: string;
+  style: string;
+  description: string;
+  tags: string[];
+  fileUrl: string | null;
+}
+
+export interface UserOutfit {
+  id: string;
+  user_id: string;
+  image_url: string;
+  clothing_items: ClothingItemMetadata[];
+  created_at: Date;
+}
+
+/**
+ * Insert a new user outfit
+ */
+export async function insertUserOutfit(
+  userId: string,
+  data: {
+    imageUrl: string;
+    clothingItems: ClothingItemMetadata[];
+  }
+): Promise<UserOutfit> {
+  const result = await sql`
+    INSERT INTO user_outfits (user_id, image_url, clothing_items)
+    VALUES (
+      ${userId},
+      ${data.imageUrl},
+      ${JSON.stringify(data.clothingItems)}::jsonb
+    )
+    RETURNING *
+  `;
+
+  return result.rows[0] as UserOutfit;
+}
+
+/**
+ * Get user's outfits (ordered by most recent first)
+ */
+export async function getUserOutfits(
+  userId: string,
+  limit?: number
+): Promise<UserOutfit[]> {
+  let result;
+  
+  if (limit) {
+    result = await sql`
+      SELECT * FROM user_outfits
+      WHERE user_id = ${userId}
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `;
+  } else {
+    result = await sql`
+      SELECT * FROM user_outfits
+      WHERE user_id = ${userId}
+      ORDER BY created_at DESC
+    `;
+  }
+
+  return result.rows as UserOutfit[];
+}
+
+/**
+ * Delete a user outfit (scoped to user)
+ */
+export async function deleteUserOutfit(
+  userId: string,
+  outfitId: string
+): Promise<boolean> {
+  const result = await sql`
+    DELETE FROM user_outfits
+    WHERE id = ${outfitId} AND user_id = ${userId}
+    RETURNING id
+  `;
+
+  return result.rows.length > 0;
+}
+

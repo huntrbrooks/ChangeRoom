@@ -170,3 +170,4 @@ Fetch user's clothing items and person images.
 5. Update frontend components to use new API routes
 
 
+

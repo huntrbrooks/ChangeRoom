@@ -112,3 +112,4 @@ This confirms that Gemini models don't support image generation via `generateCon
 - [Gemini API Documentation](https://ai.google.dev/docs)
 
 
+

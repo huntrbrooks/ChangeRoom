@@ -166,47 +166,38 @@ function HomeContent() {
     });
   };
 
-  // Save outfit to My Outfits
-  const saveOutfitToMyOutfits = (imageUrl: string, clothingFiles: File[], wardrobeItemsData: typeof wardrobeItems) => {
+  // Save outfit to My Outfits (persistent storage via API)
+  const saveOutfitToMyOutfits = async (imageUrl: string, clothingFiles: File[], wardrobeItemsData: typeof wardrobeItems) => {
     try {
-      const outfit = {
-        id: Date.now().toString(),
-        imageUrl,
-        clothingItems: wardrobeItemsData.map((item, idx) => ({
-          filename: item.file.name,
-          category: item.analysis?.analysis?.category || item.analysis?.analysis?.body_region || 'unknown',
-          itemType: item.analysis?.analysis?.item_type || '',
-          color: item.analysis?.analysis?.color || '',
-          style: item.analysis?.analysis?.style || '',
-          description: item.analysis?.analysis?.description || item.analysis?.analysis?.short_description || '',
-          tags: item.analysis?.analysis?.tags || [],
-          fileUrl: (item.file as FileWithMetadata)?.file_url || null,
-        })),
-        createdAt: new Date().toISOString(),
-      };
+      const clothingItems = wardrobeItemsData.map((item, idx) => ({
+        filename: item.file.name,
+        category: item.analysis?.analysis?.category || item.analysis?.analysis?.body_region || 'unknown',
+        itemType: item.analysis?.analysis?.item_type || '',
+        color: item.analysis?.analysis?.color || '',
+        style: item.analysis?.analysis?.style || '',
+        description: item.analysis?.analysis?.description || item.analysis?.analysis?.short_description || '',
+        tags: item.analysis?.analysis?.tags || [],
+        fileUrl: (item.file as FileWithMetadata)?.file_url || null,
+      }));
 
-      // Get existing outfits from localStorage
-      const existingOutfits = typeof window !== 'undefined' 
-        ? JSON.parse(localStorage.getItem('myOutfits') || '[]')
-        : [];
-      
-      // Add new outfit at the beginning
-      const updatedOutfits = [outfit, ...existingOutfits];
-      
-      // Keep only last 50 outfits to prevent storage issues
-      const limitedOutfits = updatedOutfits.slice(0, 50);
-      
-      // Save back to localStorage
+      // Save to database via API
+      const response = await axios.post('/api/my/outfits', {
+        imageUrl,
+        clothingItems,
+      });
+
+      // Dispatch custom event to notify MyOutfits component to refresh
       if (typeof window !== 'undefined') {
-        localStorage.setItem('myOutfits', JSON.stringify(limitedOutfits));
-        // Dispatch custom event to notify MyOutfits component
         window.dispatchEvent(new Event('outfitSaved'));
       }
       
-      console.log('Outfit saved to My Outfits:', outfit);
-    } catch (error) {
+      console.log('Outfit saved to My Outfits:', response.data);
+    } catch (error: any) {
       console.error('Error saving outfit to My Outfits:', error);
-      // Don't throw - this is non-critical
+      // Don't throw - this is non-critical, but log for debugging
+      if (error.response?.status === 401) {
+        console.warn('User not authenticated, outfit not saved');
+      }
     }
   };
 
@@ -544,9 +535,9 @@ function HomeContent() {
   };
 
   return (
-    <main className="min-h-screen bg-[#FAF9F6] text-black font-sans">
+    <main className="min-h-screen bg-white text-black font-sans">
       {/* Header */}
-      <header className="border-b border-[#8B5CF6]/20 sticky top-0 bg-[#FAF9F6]/95 backdrop-blur-md z-50 safe-area-inset">
+      <header className="border-b border-black/20 sticky top-0 bg-white/95 backdrop-blur-md z-50 safe-area-inset">
         <div className="container mx-auto px-3 sm:px-4 py-2.5 sm:py-3 md:py-4 flex items-center justify-between">
           <div className="flex items-center justify-center gap-2 sm:gap-3 min-w-0 flex-shrink flex-1">
             <img 
@@ -564,7 +555,7 @@ function HomeContent() {
             {isLoaded && user && billing && (
               <>
                 {isBypass ? (
-                  <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-gradient-to-r from-[#8B5CF6]/20 to-[#7C3AED]/20 border border-[#8B5CF6]/40 rounded-lg text-[#8B5CF6] min-h-[36px] sm:min-h-[40px]">
+                  <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-gradient-to-r from-[#8B5CF6]/20 to-[#7C3AED]/20 border border-black/40 rounded-lg text-black min-h-[36px] sm:min-h-[40px]">
                     <Zap size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
                     <span className="hidden sm:inline whitespace-nowrap font-semibold">Unlimited Access</span>
                     <span className="sm:hidden font-semibold">∞</span>
@@ -572,7 +563,7 @@ function HomeContent() {
                 ) : (
                   <Link 
                     href="/billing" 
-                    className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 border border-[#8B5CF6]/30 rounded-lg transition-colors text-[#8B5CF6] hover:text-[#7C3AED] min-h-[36px] sm:min-h-[40px] touch-manipulation"
+                    className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-black/10 hover:bg-black/20 border border-black/30 rounded-lg transition-colors text-black hover:text-[#7C3AED] min-h-[36px] sm:min-h-[40px] touch-manipulation"
                   >
                     <CreditCard size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
                     <span className="hidden sm:inline whitespace-nowrap">
@@ -583,7 +574,7 @@ function HomeContent() {
                 )}
               </>
             )}
-            <div className="hidden md:flex items-center gap-6 text-[#8B5CF6]">
+            <div className="hidden md:flex items-center gap-6 text-black">
               <Link href="/pricing" className="hover:text-[#7C3AED] transition-colors whitespace-nowrap">Pricing</Link>
               <Link href="/how-it-works" className="hover:text-[#7C3AED] transition-colors whitespace-nowrap">How it Works</Link>
               <Link href="/about" className="hover:text-[#7C3AED] transition-colors whitespace-nowrap">About</Link>
@@ -596,13 +587,13 @@ function HomeContent() {
         
         {/* Main Heading */}
         <div className="text-center mb-6 sm:mb-8">
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-black mb-3 sm:mb-4">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-black mb-3 sm:mb-4 uppercase tracking-tight">
             Virtual Try-On & Shopping
           </h1>
           <p className="text-sm sm:text-base text-gray-600 mb-4">
             Try on clothes virtually and discover similar products to shop
           </p>
-          <div className="flex flex-wrap justify-center items-center gap-4 sm:gap-6 text-xs sm:text-sm text-[#8B5CF6]">
+          <div className="flex flex-wrap justify-center items-center gap-4 sm:gap-6 text-xs sm:text-sm text-black">
             <Link 
               href="/terms-of-service" 
               className="hover:text-[#7C3AED] transition-colors underline"
@@ -620,7 +611,7 @@ function HomeContent() {
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex items-center justify-center mb-4 sm:mb-6 md:mb-8 border-b border-[#8B5CF6]/20 -mx-3 sm:-mx-4 px-3 sm:px-4 overflow-x-auto overscroll-contain">
+        <div className="flex items-center justify-center mb-4 sm:mb-6 md:mb-8 border-b border-black/20 -mx-3 sm:-mx-4 px-3 sm:px-4 overflow-x-auto overscroll-contain">
           <div className="flex items-center min-w-full sm:min-w-0">
             <button
               onClick={() => setActiveTab('try-on')}
@@ -631,10 +622,10 @@ function HomeContent() {
               }}
               className={`
                 flex-1 sm:flex-none px-4 sm:px-6 py-3 sm:py-2 md:py-3 font-semibold text-sm sm:text-base transition-colors relative
-                min-h-[48px] sm:min-h-[44px] touch-manipulation select-none active:bg-[#8B5CF6]/5
+                min-h-[48px] sm:min-h-[44px] touch-manipulation select-none active:bg-black/5
                 ${activeTab === 'try-on'
-                  ? 'text-[#8B5CF6] border-b-2 border-[#8B5CF6]'
-                  : 'text-gray-600 active:text-[#8B5CF6]/80'
+                  ? 'text-black border-b-2 border-black'
+                  : 'text-gray-600 active:text-black/80'
                 }
               `}
               aria-label="Try-On tab"
@@ -653,10 +644,10 @@ function HomeContent() {
               }}
               className={`
                 flex-1 sm:flex-none px-4 sm:px-6 py-3 sm:py-2 md:py-3 font-semibold text-sm sm:text-base transition-colors relative
-                min-h-[48px] sm:min-h-[44px] touch-manipulation select-none active:bg-[#8B5CF6]/5
+                min-h-[48px] sm:min-h-[44px] touch-manipulation select-none active:bg-black/5
                 ${activeTab === 'my-outfits'
-                  ? 'text-[#8B5CF6] border-b-2 border-[#8B5CF6]'
-                  : 'text-gray-600 active:text-[#8B5CF6]/80'
+                  ? 'text-black border-b-2 border-black'
+                  : 'text-gray-600 active:text-black/80'
                 }
               `}
               aria-label="My Outfits tab"
@@ -671,11 +662,11 @@ function HomeContent() {
         
         {/* Free Trial Banner */}
         {isLoaded && user && billing && isOnTrial && (
-          <div className="bg-gradient-to-r from-[#8B5CF6]/20 to-[#8B5CF6]/20 border border-[#8B5CF6]/30 text-black p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_20px_rgba(139,92,246,0.3)]">
+          <div className="bg-gradient-to-r from-[#8B5CF6]/20 to-[#8B5CF6]/20 border border-black/30 text-black p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_20px_rgba(0,0,0,0.3)]">
             <div className="flex items-center gap-2 sm:gap-3 flex-1">
-              <Zap size={18} className="sm:w-5 sm:h-5 text-[#8B5CF6] flex-shrink-0" />
+              <Zap size={18} className="sm:w-5 sm:h-5 text-black flex-shrink-0" />
               <div className="min-w-0">
-                <p className="font-semibold text-[#8B5CF6] text-sm sm:text-base">Free Try-On Available!</p>
+                <p className="font-semibold text-black text-sm sm:text-base">Free Try-On Available!</p>
                 <p className="text-xs sm:text-sm text-[#7C3AED] mt-0.5">
                   You have 1 free try-on. Upgrade to get unlimited try-ons with a subscription.
                 </p>
@@ -683,7 +674,7 @@ function HomeContent() {
             </div>
             <Link 
               href="/billing"
-              className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-[#8B5CF6] text-white rounded-lg font-semibold hover:bg-[#7C3AED] transition-colors text-sm shadow-[0_0_15px_rgba(139,92,246,0.5)] text-center min-h-[44px] flex items-center justify-center touch-manipulation"
+              className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-black text-white rounded-lg font-semibold hover:bg-[#7C3AED] transition-colors text-sm shadow-[0_0_15px_rgba(0,0,0,0.5)] text-center min-h-[44px] flex items-center justify-center touch-manipulation"
             >
               Upgrade
             </Link>
@@ -745,8 +736,8 @@ function HomeContent() {
           <div className="lg:col-span-7 space-y-3 sm:space-y-4 md:space-y-6 lg:space-y-8">
             
             <section>
-              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-[#8B5CF6]">
-                <span className="bg-[#8B5CF6] text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(139,92,246,0.5)]">1</span>
+              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
+                <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,0,0,0.5)]">1</span>
                 Upload Yourself
               </h2>
               <UploadZone 
@@ -758,8 +749,8 @@ function HomeContent() {
             </section>
 
             <section>
-              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-[#8B5CF6]">
-                <span className="bg-[#8B5CF6] text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(139,92,246,0.5)]">2</span>
+              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
+                <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,0,0,0.5)]">2</span>
                 Choose Wardrobe
               </h2>
               <BulkUploadZone 
@@ -770,8 +761,8 @@ function HomeContent() {
                 onItemReplace={handleItemReplace}
               />
               {wardrobeItems.length > 1 && (
-                <div className="mt-3 p-3 bg-[#8B5CF6]/10 border border-[#8B5CF6]/30 rounded-lg shadow-[0_0_10px_rgba(139,92,246,0.2)]">
-                  <p className="text-sm text-[#8B5CF6]">
+                <div className="mt-3 p-3 bg-black/10 border border-black/30 rounded-lg shadow-[0_0_10px_rgba(0,0,0,0.2)]">
+                  <p className="text-sm text-black">
                     💡 <strong>Tip:</strong> You can try on up to 5 items at once for a complete outfit!
                   </p>
                 </div>
@@ -809,11 +800,11 @@ function HomeContent() {
               type="button"
               aria-label="Try on clothes"
               className={`
-                w-full py-3.5 sm:py-4 rounded-xl font-bold text-base sm:text-lg flex items-center justify-center gap-2 sm:gap-3 transition-all
+                w-full py-3.5 sm:py-4 rounded-none font-bold text-base sm:text-lg flex items-center justify-center gap-2 sm:gap-3 transition-all uppercase tracking-wider
                 min-h-[48px] touch-manipulation select-none
                 ${isGenerating 
                   ? 'bg-gray-200 text-gray-500 cursor-not-allowed border border-gray-300 pointer-events-none' 
-                  : 'bg-[#8B5CF6] text-white hover:bg-[#7C3AED] active:bg-[#6D28D9] hover:shadow-lg active:scale-[0.98] shadow-[0_0_25px_rgba(139,92,246,0.5)] border border-[#8B5CF6]'
+                  : 'bg-black text-white hover:bg-gray-900 active:bg-gray-800 active:scale-[0.98] border-2 border-black'
                 }
               `}
             >
@@ -832,7 +823,7 @@ function HomeContent() {
             {isGenerating && (
               <button
                 onClick={() => abortController?.abort()}
-                className="mt-2 text-sm text-[#8B5CF6] hover:text-[#7C3AED] underline w-full text-center"
+                className="mt-2 text-sm text-black hover:text-[#7C3AED] underline w-full text-center"
                 aria-label="Cancel operation"
               >
                 Cancel
@@ -844,8 +835,8 @@ function HomeContent() {
           <div className="lg:col-span-5 space-y-3 sm:space-y-4 md:space-y-6 lg:space-y-8">
             
             <section>
-              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-[#8B5CF6]">
-                <span className="bg-[#8B5CF6] text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(139,92,246,0.5)]">3</span>
+              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
+                <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,0,0,0.5)]">3</span>
                 Virtual Mirror
               </h2>
               <VirtualMirror imageUrl={generatedImage} isLoading={isGenerating} />
@@ -853,8 +844,8 @@ function HomeContent() {
 
             {products.length > 0 && (
               <section>
-                <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-[#8B5CF6]">
-                  <Search size={18} className="sm:w-5 sm:h-5 text-[#8B5CF6]" />
+                <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
+                  <Search size={18} className="sm:w-5 sm:h-5 text-black" />
                   Shop the Look
                 </h2>
                 <div className="space-y-3 sm:space-y-4">
@@ -889,10 +880,10 @@ export default function Home() {
   // Return a loading state that will be replaced at runtime
   if (typeof window === 'undefined') {
     return (
-      <main className="min-h-screen bg-[#FAF9F6] text-black font-sans flex items-center justify-center">
+      <main className="min-h-screen bg-white text-black font-sans flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#8B5CF6] mx-auto"></div>
-          <p className="mt-4 text-[#8B5CF6]">Loading...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-black mx-auto"></div>
+          <p className="mt-4 text-black">Loading...</p>
         </div>
       </main>
     );

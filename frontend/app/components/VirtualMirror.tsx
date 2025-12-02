@@ -8,16 +8,16 @@ interface VirtualMirrorProps {
 
 export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoading }) => {
   return (
-    <div className="w-full aspect-[3/4] bg-[#FAF9F6] rounded-lg sm:rounded-xl overflow-hidden relative border-2 border-[#8B5CF6]/30 shadow-[0_0_20px_rgba(139,92,246,0.2)]">
+    <div className="w-full aspect-[3/4] bg-white rounded-none overflow-hidden relative border-2 border-black/20">
       {isLoading && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#FAF9F6]/80 backdrop-blur-sm z-10">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm z-10">
           <div className="relative">
-            <div className="absolute inset-0 animate-ping rounded-full bg-[#8B5CF6] opacity-75"></div>
-            <div className="relative bg-[#8B5CF6] rounded-full p-3 sm:p-4 shadow-[0_0_20px_rgba(139,92,246,0.5)]">
+            <div className="absolute inset-0 animate-ping rounded-full bg-black opacity-75"></div>
+            <div className="relative bg-black rounded-full p-3 sm:p-4">
               <Sparkles className="text-white animate-spin w-6 h-6 sm:w-8 sm:h-8" />
             </div>
           </div>
-          <p className="mt-3 sm:mt-4 text-sm sm:text-lg font-medium text-[#8B5CF6] animate-pulse px-4 text-center">
+          <p className="mt-3 sm:mt-4 text-sm sm:text-lg font-semibold text-black uppercase tracking-wider animate-pulse px-4 text-center">
             Weaving your new look...
           </p>
         </div>
@@ -80,7 +80,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoadin
                   e.preventDefault();
                 }
               }}
-              className="bg-[#8B5CF6]/90 active:bg-[#8B5CF6] hover:bg-[#8B5CF6] text-white px-3 sm:px-3 py-2.5 sm:py-2 rounded-lg shadow-[0_0_15px_rgba(139,92,246,0.4)] flex items-center justify-center gap-2 text-xs sm:text-sm font-medium transition-colors min-h-[44px] min-w-[44px] touch-manipulation select-none"
+              className="bg-black hover:bg-gray-900 active:bg-gray-800 text-white px-3 sm:px-3 py-2.5 sm:py-2 rounded-none flex items-center justify-center gap-2 text-xs sm:text-sm font-semibold uppercase tracking-wider transition-colors min-h-[44px] min-w-[44px] touch-manipulation select-none"
               aria-label="Download try-on result"
             >
               <Download size={16} className="sm:w-4 sm:h-4" />
@@ -116,7 +116,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoadin
                   e.preventDefault();
                 }
               }}
-              className="bg-[#8B5CF6]/90 active:bg-[#8B5CF6] hover:bg-[#8B5CF6] text-white px-3 sm:px-3 py-2.5 sm:py-2 rounded-lg shadow-[0_0_15px_rgba(139,92,246,0.4)] flex items-center justify-center gap-2 text-xs sm:text-sm font-medium transition-colors min-h-[44px] min-w-[44px] touch-manipulation select-none"
+              className="bg-black hover:bg-gray-900 active:bg-gray-800 text-white px-3 sm:px-3 py-2.5 sm:py-2 rounded-none flex items-center justify-center gap-2 text-xs sm:text-sm font-semibold uppercase tracking-wider transition-colors min-h-[44px] min-w-[44px] touch-manipulation select-none"
               aria-label="Share try-on result"
             >
               <Share2 size={16} className="sm:w-4 sm:h-4" />
@@ -125,7 +125,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoadin
           </div>
         </>
       ) : (
-        <div className="w-full h-full flex items-center justify-center text-[#8B5CF6]/50 px-4">
+        <div className="w-full h-full flex items-center justify-center text-black/40 px-4">
           <p className="text-xs sm:text-sm text-center">Your virtual reflection appears here</p>
         </div>
       )}

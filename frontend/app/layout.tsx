@@ -40,7 +40,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 5,
   userScalable: true,
-  themeColor: '#8B5CF6',
+  themeColor: '#000000',
   viewportFit: 'cover', // For notched devices
 };
 
@@ -82,8 +82,8 @@ export default function RootLayout({
   if (!hasValidKey || !publishableKey) {
     return (
       <html lang="en">
-        <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#FAF9F6] text-black flex flex-col min-h-screen`}>
-          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-[#FAF9F6] border-b border-[#8B5CF6]/20">
+        <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-black flex flex-col min-h-screen`}>
+          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-white border-b border-black/10">
             {/* Clerk components unavailable - invalid or missing key */}
           </header>
           <div className="flex-1">
@@ -100,7 +100,7 @@ export default function RootLayout({
       publishableKey={publishableKey}
       appearance={{
         elements: {
-          formButtonPrimary: 'bg-[#8B5CF6] hover:bg-[#7C3AED] text-white',
+          formButtonPrimary: 'bg-black hover:bg-gray-900 text-white uppercase font-semibold tracking-wider',
         }
       }}
     >
@@ -112,7 +112,7 @@ export default function RootLayout({
             <SignedOut>
               <SignInButton />
               <SignUpButton>
-                <button className="bg-[#8B5CF6] text-white rounded-full font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 cursor-pointer hover:bg-[#7C3AED] transition-colors shadow-[0_0_15px_rgba(139,92,246,0.3)]">
+                <button className="bg-black text-white rounded-none font-semibold text-xs sm:text-sm h-10 sm:h-12 px-6 sm:px-8 cursor-pointer hover:bg-gray-900 transition-colors uppercase tracking-wider">
                   Sign Up
                 </button>
               </SignUpButton>

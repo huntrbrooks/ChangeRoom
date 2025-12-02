@@ -243,3 +243,4 @@ This method is easier but requires granting Clerk access to your Apple Developer
 - Clerk Apple OAuth Docs: https://clerk.com/docs/authentication/social-connections/apple
 - Apple Developer Support: https://developer.apple.com/support/
 
+

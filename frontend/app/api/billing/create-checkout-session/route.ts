@@ -43,10 +43,46 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Validate price ID is not empty and has correct format
+    if (!priceId.trim() || !priceId.startsWith("price_")) {
+      console.error("Invalid price ID:", priceId);
+      return NextResponse.json(
+        { 
+          error: "Invalid price ID. Please contact support if this issue persists.",
+          details: "Price ID is missing or incorrectly configured"
+        },
+        { status: 400 }
+      );
+    }
+
     if (mode !== "subscription" && mode !== "payment") {
       return NextResponse.json(
         { error: "mode must be 'subscription' or 'payment'" },
         { status: 400 }
+      );
+    }
+
+    // Validate Stripe configuration
+    if (!stripeConfig.secretKey || !stripeConfig.secretKey.trim()) {
+      console.error("Stripe secret key is not configured");
+      return NextResponse.json(
+        { 
+          error: "Payment system configuration error. Please contact support.",
+          details: "Stripe is not properly configured"
+        },
+        { status: 500 }
+      );
+    }
+
+    // Validate app URL for redirects
+    if (!appConfig.appUrl || !appConfig.appUrl.startsWith("http")) {
+      console.error("Invalid app URL:", appConfig.appUrl);
+      return NextResponse.json(
+        { 
+          error: "Configuration error. Please contact support.",
+          details: "App URL is not properly configured"
+        },
+        { status: 500 }
       );
     }
 
@@ -123,14 +159,41 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    if (!session.url) {
+      console.error("Stripe session created but no URL returned");
+      return NextResponse.json(
+        {
+          error: "Failed to create checkout session. Please try again.",
+          details: "No checkout URL returned from Stripe"
+        },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({ url: session.url });
   } catch (err: unknown) {
     console.error("create-checkout-session error:", err);
     const error = err instanceof Error ? err : new Error(String(err));
+    
+    // Provide more specific error messages for common Stripe errors
+    let errorMessage = "Failed to create checkout session";
+    let errorDetails = error.message;
+    
+    if (error.message.includes("No such price")) {
+      errorMessage = "Invalid price configuration. Please contact support.";
+      errorDetails = "The selected plan is not available";
+    } else if (error.message.includes("Invalid API Key")) {
+      errorMessage = "Payment system configuration error. Please contact support.";
+      errorDetails = "Stripe API key is invalid";
+    } else if (error.message.includes("rate_limit")) {
+      errorMessage = "Too many requests. Please try again in a moment.";
+      errorDetails = "Rate limit exceeded";
+    }
+    
     return NextResponse.json(
       {
-        error: "Failed to create checkout session",
-        details: error.message,
+        error: errorMessage,
+        details: errorDetails,
       },
       { status: 500 }
     );

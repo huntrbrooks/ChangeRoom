@@ -57,6 +57,14 @@ export function PricingTable({
         return;
       }
 
+      // Validate price ID before proceeding
+      if (!priceId || !priceId.trim() || !priceId.startsWith('price_')) {
+        console.error('Invalid price ID for plan:', product.plan, priceId);
+        alert('Payment configuration error. Please contact support.');
+        setLoading(null);
+        return;
+      }
+
       // Track checkout initiation
       if (user) {
         await trackCheckoutInitiated(user, product.plan, priceId);
@@ -68,12 +76,16 @@ export function PricingTable({
         startTrial: currentPlan === 'free',
       });
 
-      if (response.data.url) {
+      if (response.data?.url) {
         window.location.href = response.data.url;
+      } else {
+        throw new Error('No checkout URL returned');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Checkout error:', error);
-      alert('Failed to start checkout');
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
+      const errorDetails = error.response?.data?.details || '';
+      alert(errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage);
     } finally {
       setLoading(null);
     }
@@ -102,37 +114,37 @@ export function PricingTable({
       <div className="hidden md:block overflow-x-auto">
         <table className="w-full border-collapse">
           <thead>
-            <tr className="border-b-2 border-[#8B5CF6]/30">
-              <th className="text-left p-4 text-[#8B5CF6] font-semibold">Features</th>
+            <tr className="border-b-2 border-black/30">
+              <th className="text-left p-4 text-black font-semibold">Features</th>
               {products.map((product) => (
                 <th
                   key={product.plan}
                   className={`text-center p-4 ${
                     product.popular
-                      ? 'bg-gradient-to-b from-[#8B5CF6]/20 to-transparent border-x-2 border-[#8B5CF6]/30'
+                      ? 'bg-gradient-to-b from-[black]/20 to-transparent border-x-2 border-black/30'
                       : ''
                   }`}
                 >
                   <div className="flex flex-col items-center gap-2">
                     <div className="flex items-center gap-2">
-                      {product.plan === 'standard' && <Zap className="w-5 h-5 text-[#8B5CF6]" />}
-                      {product.plan === 'pro' && <Crown className="w-5 h-5 text-[#8B5CF6]" />}
-                      <span className="text-xl font-bold text-[#8B5CF6]">{product.name}</span>
+                      {product.plan === 'standard' && <Zap className="w-5 h-5 text-black" />}
+                      {product.plan === 'pro' && <Crown className="w-5 h-5 text-black" />}
+                      <span className="text-xl font-bold text-black">{product.name}</span>
                       {product.badge && (
-                        <span className="bg-[#8B5CF6]/20 text-[#8B5CF6] text-xs font-semibold px-2 py-1 rounded border border-[#8B5CF6]/30">
+                        <span className="bg-black/20 text-black text-xs font-semibold px-2 py-1 rounded border border-black/30">
                           {product.badge}
                         </span>
                       )}
                     </div>
-                    <div className="text-3xl font-bold text-[#8B5CF6]">{formatPrice(product)}</div>
-                    <div className="text-sm text-[#8B5CF6]/70">{product.description}</div>
+                    <div className="text-3xl font-bold text-black">{formatPrice(product)}</div>
+                    <div className="text-sm text-black/70">{product.description}</div>
                     {product.credits > 0 && (
-                      <div className="text-xs text-[#8B5CF6]/60">
+                      <div className="text-xs text-black/60">
                         {product.credits} credits/month
                       </div>
                     )}
                     {calculatePricePerCredit(product) && (
-                      <div className="text-xs text-[#8B5CF6]/50">
+                      <div className="text-xs text-black/50">
                         {calculatePricePerCredit(product)}
                       </div>
                     )}
@@ -158,13 +170,13 @@ export function PricingTable({
               return (
                 <tr
                   key={featureId}
-                  className="border-b border-[#8B5CF6]/10 hover:bg-[#8B5CF6]/5 transition-colors"
+                  className="border-b border-black/10 hover:bg-black/5 transition-colors"
                 >
-                  <td className="p-4 text-[#8B5CF6]">
+                  <td className="p-4 text-black">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{feature.name}</span>
                       {feature.description && (
-                        <span className="text-xs text-[#8B5CF6]/60 hidden lg:inline">
+                        <span className="text-xs text-black/60 hidden lg:inline">
                           - {feature.description}
                         </span>
                       )}
@@ -177,15 +189,15 @@ export function PricingTable({
                         key={`${product.plan}-${featureId}`}
                         className={`text-center p-4 ${
                           product.popular
-                            ? 'bg-gradient-to-b from-[#8B5CF6]/10 to-transparent border-x border-[#8B5CF6]/20'
+                            ? 'bg-gradient-to-b from-[black]/10 to-transparent border-x border-black/20'
                             : ''
                         }`}
                         onMouseEnter={() => handleFeatureHover(featureId, product.plan)}
                       >
                         {hasFeature ? (
-                          <Check className="w-5 h-5 text-[#8B5CF6] mx-auto" />
+                          <Check className="w-5 h-5 text-black mx-auto" />
                         ) : (
-                          <span className="text-[#8B5CF6]/30">—</span>
+                          <span className="text-black/30">—</span>
                         )}
                       </td>
                     );
@@ -202,7 +214,7 @@ export function PricingTable({
                   key={`action-${product.plan}`}
                   className={`text-center p-4 ${
                     product.popular
-                      ? 'bg-gradient-to-b from-[#8B5CF6]/10 to-transparent border-x border-[#8B5CF6]/20'
+                      ? 'bg-gradient-to-b from-[black]/10 to-transparent border-x border-black/20'
                       : ''
                   }`}
                 >
@@ -212,8 +224,8 @@ export function PricingTable({
                       disabled={loading !== null || currentPlan === product.plan}
                       className={`w-full py-3 px-6 rounded-lg font-semibold transition-colors min-h-[44px] touch-manipulation ${
                         product.popular
-                          ? 'bg-[#8B5CF6] text-white hover:bg-[#8B5CF6] shadow-[0_0_20px_rgba(139,92,246,0.4)]'
-                          : 'bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30 border border-[#8B5CF6]/30'
+                          ? 'bg-black text-white hover:bg-black shadow-[0_0_20px_rgba(0,0,0,0.4)]'
+                          : 'bg-black/20 text-black hover:bg-black/30 border border-black/30'
                       } disabled:opacity-50 disabled:cursor-not-allowed`}
                     >
                       {loading === product.plan
@@ -239,47 +251,47 @@ export function PricingTable({
             key={product.plan}
             className={`border-2 rounded-xl p-6 ${
               product.popular
-                ? 'border-[#8B5CF6] bg-gradient-to-br from-[#8B5CF6]/10 to-gray-800/50 shadow-[0_0_20px_rgba(139,92,246,0.2)]'
-                : 'border-[#8B5CF6]/20 bg-gray-100/50'
+                ? 'border-black bg-gradient-to-br from-[black]/10 to-gray-800/50 shadow-[0_0_20px_rgba(0,0,0,0.2)]'
+                : 'border-black/20 bg-gray-100/50'
             }`}
           >
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
-                {product.plan === 'standard' && <Zap className="w-5 h-5 text-[#8B5CF6]" />}
-                {product.plan === 'pro' && <Crown className="w-5 h-5 text-[#8B5CF6]" />}
-                <h3 className="text-xl font-bold text-[#8B5CF6]">{product.name}</h3>
+                {product.plan === 'standard' && <Zap className="w-5 h-5 text-black" />}
+                {product.plan === 'pro' && <Crown className="w-5 h-5 text-black" />}
+                <h3 className="text-xl font-bold text-black">{product.name}</h3>
                 {product.badge && (
-                  <span className="bg-[#8B5CF6]/20 text-[#8B5CF6] text-xs font-semibold px-2 py-1 rounded border border-[#8B5CF6]/30">
+                  <span className="bg-black/20 text-black text-xs font-semibold px-2 py-1 rounded border border-black/30">
                     {product.badge}
                   </span>
                 )}
               </div>
               <div className="text-right">
-                <div className="text-2xl font-bold text-[#8B5CF6]">{formatPrice(product)}</div>
+                <div className="text-2xl font-bold text-black">{formatPrice(product)}</div>
                 {product.credits > 0 && (
-                  <div className="text-xs text-[#8B5CF6]/60">{product.credits} credits/month</div>
+                  <div className="text-xs text-black/60">{product.credits} credits/month</div>
                 )}
               </div>
             </div>
 
-            <p className="text-sm text-[#8B5CF6]/70 mb-4">{product.description}</p>
+            <p className="text-sm text-black/70 mb-4">{product.description}</p>
 
             {calculatePricePerCredit(product) && (
-              <p className="text-xs text-[#8B5CF6]/50 mb-4">{calculatePricePerCredit(product)}</p>
+              <p className="text-xs text-black/50 mb-4">{calculatePricePerCredit(product)}</p>
             )}
 
             <ul className="space-y-2 mb-6">
               {product.features.map((feature) => (
                 <li
                   key={feature.id}
-                  className="flex items-start gap-2 text-sm text-[#8B5CF6]"
+                  className="flex items-start gap-2 text-sm text-black"
                   onMouseEnter={() => handleFeatureHover(feature.id, product.plan)}
                 >
-                  <Check className="w-4 h-4 text-[#8B5CF6] mt-0.5 flex-shrink-0" />
+                  <Check className="w-4 h-4 text-black mt-0.5 flex-shrink-0" />
                   <div>
                     <span className="font-medium">{feature.name}</span>
                     {feature.description && (
-                      <span className="text-[#8B5CF6]/60 text-xs block mt-0.5">
+                      <span className="text-black/60 text-xs block mt-0.5">
                         {feature.description}
                       </span>
                     )}
@@ -294,8 +306,8 @@ export function PricingTable({
                 disabled={loading !== null || currentPlan === product.plan}
                 className={`w-full py-3 px-6 rounded-lg font-semibold transition-colors min-h-[44px] touch-manipulation ${
                   product.popular
-                    ? 'bg-[#8B5CF6] text-white hover:bg-[#8B5CF6] shadow-[0_0_20px_rgba(139,92,246,0.4)]'
-                    : 'bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30 border border-[#8B5CF6]/30'
+                    ? 'bg-black text-white hover:bg-black shadow-[0_0_20px_rgba(0,0,0,0.4)]'
+                    : 'bg-black/20 text-black hover:bg-black/30 border border-black/30'
                 } disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 {loading === product.plan
@@ -313,76 +325,104 @@ export function PricingTable({
 
       {/* Credit Packs Section */}
       {showCreditPacks && (
-        <div className="mt-8 pt-8 border-t border-[#8B5CF6]/20">
-          <h3 className="text-lg font-semibold text-[#8B5CF6] mb-4">Or Buy Credits</h3>
+        <div className="mt-8 pt-8 border-t border-black/20">
+          <h3 className="text-lg font-semibold text-black mb-4">Or Buy Credits</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Small Pack */}
-            <div className="border border-[#8B5CF6]/20 rounded-lg p-4 bg-gray-100/30">
+            <div className="border border-black/20 rounded-lg p-4 bg-gray-100/30">
               <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-4 h-4 text-[#8B5CF6]" />
-                <h4 className="font-semibold text-[#8B5CF6]">Small Pack</h4>
+                <Sparkles className="w-4 h-4 text-black" />
+                <h4 className="font-semibold text-black">Small Pack</h4>
               </div>
-              <div className="text-2xl font-bold text-[#8B5CF6] mb-2">20 credits</div>
-              <div className="text-sm text-[#8B5CF6]/60 mb-4">$4.99 one-time</div>
+              <div className="text-2xl font-bold text-black mb-2">20 credits</div>
+              <div className="text-sm text-black/60 mb-4">$4.99 one-time</div>
               <button
                 onClick={async () => {
                   setLoading('small-pack');
+                  const priceId = stripeConfig.creditPackSmallPriceId;
+                  
+                  // Validate price ID
+                  if (!priceId || !priceId.trim() || !priceId.startsWith('price_')) {
+                    console.error('Invalid price ID for small credit pack:', priceId);
+                    alert('Payment configuration error. Please contact support.');
+                    setLoading(null);
+                    return;
+                  }
+
                   if (user) {
-                    await trackCheckoutInitiated(user, 'credit-pack', stripeConfig.creditPackSmallPriceId);
+                    await trackCheckoutInitiated(user, 'credit-pack', priceId);
                   }
                   try {
                     const response = await axios.post('/api/billing/create-checkout-session', {
-                      priceId: stripeConfig.creditPackSmallPriceId,
+                      priceId,
                       mode: 'payment',
                     });
-                    if (response.data.url) {
+                    if (response.data?.url) {
                       window.location.href = response.data.url;
+                    } else {
+                      throw new Error('No checkout URL returned');
                     }
-                  } catch (error) {
+                  } catch (error: any) {
                     console.error('Checkout error:', error);
-                    alert('Failed to start checkout');
+                    const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
+                    const errorDetails = error.response?.data?.details || '';
+                    alert(errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage);
                   } finally {
                     setLoading(null);
                   }
                 }}
                 disabled={loading !== null}
-                className="w-full py-2 bg-[#8B5CF6]/20 text-[#8B5CF6] rounded-lg font-semibold hover:bg-[#8B5CF6]/30 transition-colors disabled:opacity-50 border border-[#8B5CF6]/30"
+                className="w-full py-2 bg-black/20 text-black rounded-lg font-semibold hover:bg-black/30 transition-colors disabled:opacity-50 border border-black/30"
               >
                 {loading === 'small-pack' ? 'Loading...' : 'Buy Now'}
               </button>
             </div>
 
             {/* Large Pack */}
-            <div className="border border-[#8B5CF6]/20 rounded-lg p-4 bg-gray-100/30">
+            <div className="border border-black/20 rounded-lg p-4 bg-gray-100/30">
               <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-4 h-4 text-[#8B5CF6]" />
-                <h4 className="font-semibold text-[#8B5CF6]">Large Pack</h4>
+                <Sparkles className="w-4 h-4 text-black" />
+                <h4 className="font-semibold text-black">Large Pack</h4>
               </div>
-              <div className="text-2xl font-bold text-[#8B5CF6] mb-2">100 credits</div>
-              <div className="text-sm text-[#8B5CF6]/60 mb-4">$19.99 one-time</div>
+              <div className="text-2xl font-bold text-black mb-2">100 credits</div>
+              <div className="text-sm text-black/60 mb-4">$19.99 one-time</div>
               <button
                 onClick={async () => {
                   setLoading('large-pack');
+                  const priceId = stripeConfig.creditPackLargePriceId;
+                  
+                  // Validate price ID
+                  if (!priceId || !priceId.trim() || !priceId.startsWith('price_')) {
+                    console.error('Invalid price ID for large credit pack:', priceId);
+                    alert('Payment configuration error. Please contact support.');
+                    setLoading(null);
+                    return;
+                  }
+
                   if (user) {
-                    await trackCheckoutInitiated(user, 'credit-pack', stripeConfig.creditPackLargePriceId);
+                    await trackCheckoutInitiated(user, 'credit-pack', priceId);
                   }
                   try {
                     const response = await axios.post('/api/billing/create-checkout-session', {
-                      priceId: stripeConfig.creditPackLargePriceId,
+                      priceId,
                       mode: 'payment',
                     });
-                    if (response.data.url) {
+                    if (response.data?.url) {
                       window.location.href = response.data.url;
+                    } else {
+                      throw new Error('No checkout URL returned');
                     }
-                  } catch (error) {
+                  } catch (error: any) {
                     console.error('Checkout error:', error);
-                    alert('Failed to start checkout');
+                    const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
+                    const errorDetails = error.response?.data?.details || '';
+                    alert(errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage);
                   } finally {
                     setLoading(null);
                   }
                 }}
                 disabled={loading !== null}
-                className="w-full py-2 bg-[#8B5CF6]/20 text-[#8B5CF6] rounded-lg font-semibold hover:bg-[#8B5CF6]/30 transition-colors disabled:opacity-50 border border-[#8B5CF6]/30"
+                className="w-full py-2 bg-black/20 text-black rounded-lg font-semibold hover:bg-black/30 transition-colors disabled:opacity-50 border border-black/30"
               >
                 {loading === 'large-pack' ? 'Loading...' : 'Buy Now'}
               </button>

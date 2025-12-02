@@ -270,3 +270,4 @@ Both use:
 - **Authentication**: API key as query parameter (`?key=...`)
 
 
+

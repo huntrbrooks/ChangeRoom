@@ -66,6 +66,13 @@ function BillingPageContent() {
   };
 
   const handleCheckout = async (priceId: string, mode: 'subscription' | 'payment', startTrial?: boolean, planType?: 'standard' | 'pro' | 'credit-pack') => {
+    // Validate price ID before proceeding
+    if (!priceId || !priceId.trim() || !priceId.startsWith('price_')) {
+      console.error('Invalid price ID:', priceId);
+      alert('Payment configuration error. Please contact support.');
+      return;
+    }
+
     setCheckoutLoading(priceId);
     try {
       // Track checkout
@@ -81,15 +88,19 @@ function BillingPageContent() {
         mode,
         startTrial,
       });
-      if (response.data.url) {
+      if (response.data?.url) {
         window.location.href = response.data.url;
+      } else {
+        throw new Error('No checkout URL returned');
       }
     } catch (error: unknown) {
       console.error('Checkout error:', error);
       const axiosError = error && typeof error === 'object' && 'response' in error 
-        ? (error as { response?: { data?: { error?: string } } })
+        ? (error as { response?: { data?: { error?: string; details?: string } } })
         : null;
-      alert(axiosError?.response?.data?.error || 'Failed to start checkout');
+      const errorMessage = axiosError?.response?.data?.error || 'Failed to start checkout';
+      const errorDetails = axiosError?.response?.data?.details || '';
+      alert(errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage);
       setCheckoutLoading(null);
     }
   };
