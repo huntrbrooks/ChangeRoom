@@ -2,6 +2,47 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { insertUserOutfit, getUserOutfits, type ClothingItemMetadata } from "@/lib/db-access";
 
+const toIsoString = (value: unknown): string => {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (typeof value === "string" || typeof value === "number") {
+    const parsed = new Date(value);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+
+  // Fallback to current time to avoid runtime errors
+  return new Date().toISOString();
+};
+
+const normalizeClothingItems = (items: unknown): ClothingItemMetadata[] => {
+  if (!items) {
+    return [];
+  }
+
+  if (Array.isArray(items)) {
+    return items as ClothingItemMetadata[];
+  }
+
+  if (typeof items === "string") {
+    try {
+      const parsed = JSON.parse(items);
+      return Array.isArray(parsed) ? (parsed as ClothingItemMetadata[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  if (typeof items === "object" && items !== null) {
+    return items as ClothingItemMetadata[];
+  }
+
+  return [];
+};
+
 /**
  * GET /api/my/outfits
  * Fetch user's saved outfits
@@ -20,8 +61,8 @@ export async function GET(_req: NextRequest) {
     const formattedOutfits = outfits.map(outfit => ({
       id: outfit.id,
       imageUrl: outfit.image_url,
-      clothingItems: outfit.clothing_items,
-      createdAt: outfit.created_at.toISOString(),
+      clothingItems: normalizeClothingItems(outfit.clothing_items),
+      createdAt: toIsoString(outfit.created_at),
     }));
 
     return NextResponse.json(formattedOutfits);
@@ -78,8 +119,8 @@ export async function POST(req: NextRequest) {
     const formattedOutfit = {
       id: outfit.id,
       imageUrl: outfit.image_url,
-      clothingItems: outfit.clothing_items,
-      createdAt: outfit.created_at.toISOString(),
+      clothingItems: normalizeClothingItems(outfit.clothing_items),
+      createdAt: toIsoString(outfit.created_at),
     };
 
     return NextResponse.json(formattedOutfit, { status: 201 });
