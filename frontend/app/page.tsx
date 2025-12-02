@@ -537,33 +537,35 @@ function HomeContent() {
   return (
     <main className="min-h-screen bg-white text-black font-sans">
       {/* Header */}
-      <header className="border-b border-black/20 sticky top-0 bg-white/95 backdrop-blur-md z-50 safe-area-inset">
-        <div className="container mx-auto px-3 sm:px-4 py-2.5 sm:py-3 md:py-4 flex items-center justify-between">
-          <div className="flex items-center justify-center gap-2 sm:gap-3 min-w-0 flex-shrink flex-1">
+      <header className="border-b border-white/10 sticky top-0 bg-[#2C2C2C]/95 backdrop-blur-md z-50 safe-area-inset text-white">
+        <div className="container mx-auto px-3 sm:px-4 py-2.5 sm:py-3 md:py-4 flex items-center gap-4">
+          <div className="flex items-center flex-shrink-0">
             <img 
               src="/Logo.png" 
               alt="Change Room Logo" 
-              className="w-7 h-7 sm:w-10 sm:h-10 object-contain flex-shrink-0"
+              className="w-8 h-8 sm:w-10 sm:h-10 object-contain"
             />
+          </div>
+          <div className="flex-1 flex items-center justify-center">
             <img 
               src="/Font logo.png" 
               alt="Change Room" 
-              className="h-5 sm:h-8 object-contain max-w-[120px] sm:max-w-none"
+              className="h-5 sm:h-8 object-contain"
             />
           </div>
-          <nav className="flex items-center gap-2 sm:gap-4 md:gap-6 text-xs sm:text-sm font-medium flex-shrink-0">
+          <nav className="flex items-center gap-2 sm:gap-4 md:gap-6 text-xs sm:text-sm font-medium flex-shrink-0 text-white">
             {isLoaded && user && billing && (
               <>
                 {isBypass ? (
-                  <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-gradient-to-r from-[#8B5CF6]/20 to-[#7C3AED]/20 border border-black/40 rounded-lg text-black min-h-[36px] sm:min-h-[40px]">
-                    <Zap size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
+                  <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-white/10 border border-white/20 rounded-lg text-white min-h-[36px] sm:min-h-[40px]">
+                    <Zap size={14} className="sm:w-4 sm:h-4 flex-shrink-0 text-white" />
                     <span className="hidden sm:inline whitespace-nowrap font-semibold">Unlimited Access</span>
                     <span className="sm:hidden font-semibold">∞</span>
                   </div>
                 ) : (
                   <Link 
                     href="/billing" 
-                    className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-black/10 hover:bg-black/20 border border-black/30 rounded-lg transition-colors text-black hover:text-[#7C3AED] min-h-[36px] sm:min-h-[40px] touch-manipulation"
+                    className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-white/10 hover:bg-white/20 border border-white/30 rounded-lg transition-colors text-white min-h-[36px] sm:min-h-[40px] touch-manipulation"
                   >
                     <CreditCard size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
                     <span className="hidden sm:inline whitespace-nowrap">
@@ -574,10 +576,10 @@ function HomeContent() {
                 )}
               </>
             )}
-            <div className="hidden md:flex items-center gap-6 text-black">
-              <Link href="/pricing" className="hover:text-[#7C3AED] transition-colors whitespace-nowrap">Pricing</Link>
-              <Link href="/how-it-works" className="hover:text-[#7C3AED] transition-colors whitespace-nowrap">How it Works</Link>
-              <Link href="/about" className="hover:text-[#7C3AED] transition-colors whitespace-nowrap">About</Link>
+            <div className="hidden md:flex items-center gap-6">
+              <Link href="/pricing" className="hover:text-gray-200 transition-colors whitespace-nowrap">Pricing</Link>
+              <Link href="/how-it-works" className="hover:text-gray-200 transition-colors whitespace-nowrap">How it Works</Link>
+              <Link href="/about" className="hover:text-gray-200 transition-colors whitespace-nowrap">About</Link>
             </div>
           </nav>
         </div>

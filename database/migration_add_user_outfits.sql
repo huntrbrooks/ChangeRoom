@@ -13,3 +13,4 @@ CREATE INDEX IF NOT EXISTS user_outfits_user_idx ON user_outfits (user_id);
 CREATE INDEX IF NOT EXISTS user_outfits_created_at_idx ON user_outfits (created_at DESC);
 
 
+
