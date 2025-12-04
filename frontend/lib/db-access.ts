@@ -334,46 +334,51 @@ export async function insertClothingItems(
     height?: number | null;
   }>
 ): Promise<ClothingItem[]> {
-  const inserted: ClothingItem[] = [];
+  return withClothingItemsTable(async () => {
+    const inserted: ClothingItem[] = [];
 
-  for (const item of items) {
-    const result = await sql`
-      INSERT INTO clothing_items (
-        user_id,
-        storage_key,
-        public_url,
-        category,
-        subcategory,
-        color,
-        style,
-        description,
-        tags,
-        original_filename,
-        mime_type,
-        width,
-        height
-      )
-      VALUES (
-        ${userId},
-        ${item.storageKey},
-        ${item.publicUrl},
-        ${item.category},
-        ${item.subcategory || null},
-        ${item.color || null},
-        ${item.style || null},
-        ${item.description},
-        ${JSON.stringify(item.tags || [])}::jsonb,
-        ${item.originalFilename || null},
-        ${item.mimeType || null},
-        ${item.width || null},
-        ${item.height || null}
-      )
-      RETURNING *
-    `;
-    inserted.push(result.rows[0] as ClothingItem);
-  }
+    for (const item of items) {
+      const itemId = generateUuid();
+      const result = await sql`
+        INSERT INTO clothing_items (
+          id,
+          user_id,
+          storage_key,
+          public_url,
+          category,
+          subcategory,
+          color,
+          style,
+          description,
+          tags,
+          original_filename,
+          mime_type,
+          width,
+          height
+        )
+        VALUES (
+          ${itemId},
+          ${userId},
+          ${item.storageKey},
+          ${item.publicUrl},
+          ${item.category},
+          ${item.subcategory || null},
+          ${item.color || null},
+          ${item.style || null},
+          ${item.description},
+          ${JSON.stringify(item.tags || [])}::jsonb,
+          ${item.originalFilename || null},
+          ${item.mimeType || null},
+          ${item.width || null},
+          ${item.height || null}
+        )
+        RETURNING *
+      `;
+      inserted.push(result.rows[0] as ClothingItem);
+    }
 
-  return inserted;
+    return inserted;
+  });
 }
 
 /**
@@ -442,48 +447,49 @@ export async function getUserClothingItems(
     limit?: number;
   }
 ): Promise<ClothingItem[]> {
-  // Build single query with all conditions
-  let result;
-  
-  if (filters?.category && filters?.tags && filters.tags.length > 0) {
-    result = await sql`
-      SELECT * FROM clothing_items
-      WHERE user_id = ${userId}
-      AND category = ${filters.category}
-      AND tags @> ${JSON.stringify(filters.tags)}::jsonb
-      ORDER BY created_at DESC
-    `;
-  } else if (filters?.category) {
-    result = await sql`
-      SELECT * FROM clothing_items
-      WHERE user_id = ${userId}
-      AND category = ${filters.category}
-      ORDER BY created_at DESC
-    `;
-  } else if (filters?.tags && filters.tags.length > 0) {
-    result = await sql`
-      SELECT * FROM clothing_items
-      WHERE user_id = ${userId}
-      AND tags @> ${JSON.stringify(filters.tags)}::jsonb
-      ORDER BY created_at DESC
-    `;
-  } else {
-    result = await sql`
-      SELECT * FROM clothing_items
-      WHERE user_id = ${userId}
-      ORDER BY created_at DESC
-    `;
-  }
-  
-  let items = result.rows as ClothingItem[];
-  
-  // Apply limit after query if needed
-  if (filters?.limit) {
-    items = items.slice(0, filters.limit);
-  }
-  
-  return items;
-  return result.rows as ClothingItem[];
+  return withClothingItemsTable(async () => {
+    // Build single query with all conditions
+    let result;
+    
+    if (filters?.category && filters?.tags && filters.tags.length > 0) {
+      result = await sql`
+        SELECT * FROM clothing_items
+        WHERE user_id = ${userId}
+        AND category = ${filters.category}
+        AND tags @> ${JSON.stringify(filters.tags)}::jsonb
+        ORDER BY created_at DESC
+      `;
+    } else if (filters?.category) {
+      result = await sql`
+        SELECT * FROM clothing_items
+        WHERE user_id = ${userId}
+        AND category = ${filters.category}
+        ORDER BY created_at DESC
+      `;
+    } else if (filters?.tags && filters.tags.length > 0) {
+      result = await sql`
+        SELECT * FROM clothing_items
+        WHERE user_id = ${userId}
+        AND tags @> ${JSON.stringify(filters.tags)}::jsonb
+        ORDER BY created_at DESC
+      `;
+    } else {
+      result = await sql`
+        SELECT * FROM clothing_items
+        WHERE user_id = ${userId}
+        ORDER BY created_at DESC
+      `;
+    }
+    
+    let items = result.rows as ClothingItem[];
+    
+    // Apply limit after query if needed
+    if (filters?.limit) {
+      items = items.slice(0, filters.limit);
+    }
+    
+    return items;
+  });
 }
 
 /**
@@ -513,50 +519,52 @@ export async function getClothingItemsByIds(
     return [];
   }
 
-  // Limit to 5 items max
-  const idsToQuery = clothingItemIds.slice(0, 5);
-  if (idsToQuery.length === 0) {
-    return [];
-  }
-  
-  // Use a single query with OR conditions for each ID
-  // Since we can't nest SQL template tags, build conditions separately
-  if (idsToQuery.length === 1) {
-    const result = await sql`
-      SELECT * FROM clothing_items
-      WHERE user_id = ${userId} AND id = ${idsToQuery[0]}
-      LIMIT 5
-    `;
-    return result.rows as ClothingItem[];
-  } else if (idsToQuery.length === 2) {
-    const result = await sql`
-      SELECT * FROM clothing_items
-      WHERE user_id = ${userId} AND (id = ${idsToQuery[0]} OR id = ${idsToQuery[1]})
-      LIMIT 5
-    `;
-    return result.rows as ClothingItem[];
-  } else if (idsToQuery.length === 3) {
-    const result = await sql`
-      SELECT * FROM clothing_items
-      WHERE user_id = ${userId} AND (id = ${idsToQuery[0]} OR id = ${idsToQuery[1]} OR id = ${idsToQuery[2]})
-      LIMIT 5
-    `;
-    return result.rows as ClothingItem[];
-  } else if (idsToQuery.length === 4) {
-    const result = await sql`
-      SELECT * FROM clothing_items
-      WHERE user_id = ${userId} AND (id = ${idsToQuery[0]} OR id = ${idsToQuery[1]} OR id = ${idsToQuery[2]} OR id = ${idsToQuery[3]})
-      LIMIT 5
-    `;
-    return result.rows as ClothingItem[];
-  } else {
-    const result = await sql`
-      SELECT * FROM clothing_items
-      WHERE user_id = ${userId} AND (id = ${idsToQuery[0]} OR id = ${idsToQuery[1]} OR id = ${idsToQuery[2]} OR id = ${idsToQuery[3]} OR id = ${idsToQuery[4]})
-      LIMIT 5
-    `;
-    return result.rows as ClothingItem[];
-  }
+  return withClothingItemsTable(async () => {
+    // Limit to 5 items max
+    const idsToQuery = clothingItemIds.slice(0, 5);
+    if (idsToQuery.length === 0) {
+      return [];
+    }
+    
+    // Use a single query with OR conditions for each ID
+    // Since we can't nest SQL template tags, build conditions separately
+    if (idsToQuery.length === 1) {
+      const result = await sql`
+        SELECT * FROM clothing_items
+        WHERE user_id = ${userId} AND id = ${idsToQuery[0]}
+        LIMIT 5
+      `;
+      return result.rows as ClothingItem[];
+    } else if (idsToQuery.length === 2) {
+      const result = await sql`
+        SELECT * FROM clothing_items
+        WHERE user_id = ${userId} AND (id = ${idsToQuery[0]} OR id = ${idsToQuery[1]})
+        LIMIT 5
+      `;
+      return result.rows as ClothingItem[];
+    } else if (idsToQuery.length === 3) {
+      const result = await sql`
+        SELECT * FROM clothing_items
+        WHERE user_id = ${userId} AND (id = ${idsToQuery[0]} OR id = ${idsToQuery[1]} OR id = ${idsToQuery[2]})
+        LIMIT 5
+      `;
+      return result.rows as ClothingItem[];
+    } else if (idsToQuery.length === 4) {
+      const result = await sql`
+        SELECT * FROM clothing_items
+        WHERE user_id = ${userId} AND (id = ${idsToQuery[0]} OR id = ${idsToQuery[1]} OR id = ${idsToQuery[2]} OR id = ${idsToQuery[3]})
+        LIMIT 5
+      `;
+      return result.rows as ClothingItem[];
+    } else {
+      const result = await sql`
+        SELECT * FROM clothing_items
+        WHERE user_id = ${userId} AND (id = ${idsToQuery[0]} OR id = ${idsToQuery[1]} OR id = ${idsToQuery[2]} OR id = ${idsToQuery[3]} OR id = ${idsToQuery[4]})
+        LIMIT 5
+      `;
+      return result.rows as ClothingItem[];
+    }
+  });
 }
 
 /**
@@ -721,28 +729,30 @@ export async function getClothingItemOffers(
   clothingItemId: string,
   limit?: number
 ): Promise<ClothingItemOffer[]> {
-  let result;
-  
-  if (limit) {
-    result = await sql`
-      SELECT o.*
-      FROM clothing_item_offers o
-      INNER JOIN clothing_items c ON c.id = o.clothing_item_id
-      WHERE c.user_id = ${userId} AND o.clothing_item_id = ${clothingItemId}
-      ORDER BY o.total_price ASC
-      LIMIT ${limit}
-    `;
-  } else {
-    result = await sql`
-      SELECT o.*
-      FROM clothing_item_offers o
-      INNER JOIN clothing_items c ON c.id = o.clothing_item_id
-      WHERE c.user_id = ${userId} AND o.clothing_item_id = ${clothingItemId}
-      ORDER BY o.total_price ASC
-    `;
-  }
+  return withClothingItemsTable(async () => {
+    let result;
+    
+    if (limit) {
+      result = await sql`
+        SELECT o.*
+        FROM clothing_item_offers o
+        INNER JOIN clothing_items c ON c.id = o.clothing_item_id
+        WHERE c.user_id = ${userId} AND o.clothing_item_id = ${clothingItemId}
+        ORDER BY o.total_price ASC
+        LIMIT ${limit}
+      `;
+    } else {
+      result = await sql`
+        SELECT o.*
+        FROM clothing_item_offers o
+        INNER JOIN clothing_items c ON c.id = o.clothing_item_id
+        WHERE c.user_id = ${userId} AND o.clothing_item_id = ${clothingItemId}
+        ORDER BY o.total_price ASC
+      `;
+    }
 
-  return result.rows as ClothingItemOffer[];
+    return result.rows as ClothingItemOffer[];
+  });
 }
 
 /**
@@ -759,11 +769,14 @@ export async function logAffiliateClick(data: {
   `;
 }
 
-// Helpers to lazily provision user_outfits storage when migrations haven't run
+// Helpers to lazily provision tables when migrations haven't run
+const CLOTHING_ITEMS_TABLE = "clothing_items";
+let clothingItemsTableReady: Promise<void> | null = null;
+
 const USER_OUTFITS_TABLE = "user_outfits";
 let userOutfitsTableReady: Promise<void> | null = null;
 
-const generateUuid = () => {
+function generateUuid(): string {
   if (typeof globalThis.crypto?.randomUUID === "function") {
     return globalThis.crypto.randomUUID();
   }
@@ -773,7 +786,7 @@ const generateUuid = () => {
     const v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
-};
+}
 
 const getErrorMessage = (error: unknown): string => {
   if (error instanceof Error) {
@@ -792,6 +805,61 @@ const getErrorMessage = (error: unknown): string => {
 const isMissingRelationError = (error: unknown, relation: string) => {
   return getErrorMessage(error).toLowerCase().includes(`relation "${relation.toLowerCase()}" does not exist`);
 };
+
+async function createClothingItemsTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS clothing_items (
+      id UUID PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      storage_key TEXT NOT NULL UNIQUE,
+      public_url TEXT NOT NULL,
+      category TEXT NOT NULL,
+      subcategory TEXT,
+      color TEXT,
+      style TEXT,
+      description TEXT NOT NULL,
+      tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      original_filename TEXT,
+      mime_type TEXT,
+      width INTEGER,
+      height INTEGER,
+      wearing_style TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS clothing_items_user_idx ON clothing_items (user_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS clothing_items_category_idx ON clothing_items (category)`;
+  await sql`CREATE INDEX IF NOT EXISTS clothing_items_tags_gin ON clothing_items USING GIN (tags)`;
+  await sql`CREATE INDEX IF NOT EXISTS clothing_items_created_at_idx ON clothing_items (created_at DESC)`;
+}
+
+async function ensureClothingItemsTable(forceRefresh = false): Promise<void> {
+  if (forceRefresh) {
+    clothingItemsTableReady = null;
+  }
+
+  if (!clothingItemsTableReady) {
+    clothingItemsTableReady = createClothingItemsTable().catch((error) => {
+      clothingItemsTableReady = null;
+      throw error;
+    });
+  }
+
+  return clothingItemsTableReady;
+}
+
+async function withClothingItemsTable<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    await ensureClothingItemsTable();
+    return await operation();
+  } catch (error) {
+    if (isMissingRelationError(error, CLOTHING_ITEMS_TABLE)) {
+      await ensureClothingItemsTable(true);
+      return await operation();
+    }
+    throw error;
+  }
+}
 
 async function createUserOutfitsTable() {
   await sql`
