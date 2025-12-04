@@ -759,6 +759,89 @@ export async function logAffiliateClick(data: {
   `;
 }
 
+// Helpers to lazily provision user_outfits storage when migrations haven't run
+const USER_OUTFITS_TABLE = "user_outfits";
+let userOutfitsTableReady: Promise<void> | null = null;
+
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "Unknown error";
+  }
+};
+
+const isMissingRelationError = (error: unknown, relation: string) => {
+  return getErrorMessage(error).toLowerCase().includes(`relation "${relation.toLowerCase()}" does not exist`);
+};
+
+const isMissingFunctionError = (error: unknown, fnName: string) => {
+  return getErrorMessage(error).toLowerCase().includes(`function ${fnName.toLowerCase()}`);
+};
+
+async function ensurePgcryptoExtension() {
+  await sql`CREATE EXTENSION IF NOT EXISTS "pgcrypto"`;
+}
+
+async function createUserOutfitsTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS user_outfits (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id TEXT NOT NULL,
+      image_url TEXT NOT NULL,
+      clothing_items JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS user_outfits_user_idx ON user_outfits (user_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS user_outfits_created_at_idx ON user_outfits (created_at DESC)`;
+}
+
+async function ensureUserOutfitsTable(forceRefresh = false): Promise<void> {
+  if (forceRefresh) {
+    userOutfitsTableReady = null;
+  }
+
+  if (!userOutfitsTableReady) {
+    userOutfitsTableReady = (async () => {
+      try {
+        await createUserOutfitsTable();
+      } catch (error) {
+        if (isMissingFunctionError(error, "gen_random_uuid")) {
+          await ensurePgcryptoExtension();
+          await createUserOutfitsTable();
+        } else {
+          throw error;
+        }
+      }
+    })().catch((error) => {
+      userOutfitsTableReady = null;
+      throw error;
+    });
+  }
+
+  return userOutfitsTableReady;
+}
+
+async function withUserOutfitsTable<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    await ensureUserOutfitsTable();
+    return await operation();
+  } catch (error) {
+    if (isMissingRelationError(error, USER_OUTFITS_TABLE)) {
+      await ensureUserOutfitsTable(true);
+      return await operation();
+    }
+    throw error;
+  }
+}
+
 // User Outfits Types
 export interface ClothingItemMetadata {
   filename: string;
@@ -789,15 +872,17 @@ export async function insertUserOutfit(
     clothingItems: ClothingItemMetadata[];
   }
 ): Promise<UserOutfit> {
-  const result = await sql`
-    INSERT INTO user_outfits (user_id, image_url, clothing_items)
-    VALUES (
-      ${userId},
-      ${data.imageUrl},
-      ${JSON.stringify(data.clothingItems)}::jsonb
-    )
-    RETURNING *
-  `;
+  const result = await withUserOutfitsTable(() =>
+    sql`
+      INSERT INTO user_outfits (user_id, image_url, clothing_items)
+      VALUES (
+        ${userId},
+        ${data.imageUrl},
+        ${JSON.stringify(data.clothingItems)}::jsonb
+      )
+      RETURNING *
+    `
+  );
 
   return result.rows[0] as UserOutfit;
 }
@@ -809,24 +894,26 @@ export async function getUserOutfits(
   userId: string,
   limit?: number
 ): Promise<UserOutfit[]> {
-  let result;
-  
-  if (limit) {
-    result = await sql`
-      SELECT * FROM user_outfits
-      WHERE user_id = ${userId}
-      ORDER BY created_at DESC
-      LIMIT ${limit}
-    `;
-  } else {
-    result = await sql`
-      SELECT * FROM user_outfits
-      WHERE user_id = ${userId}
-      ORDER BY created_at DESC
-    `;
-  }
+  return withUserOutfitsTable(async () => {
+    let result;
+    
+    if (limit) {
+      result = await sql`
+        SELECT * FROM user_outfits
+        WHERE user_id = ${userId}
+        ORDER BY created_at DESC
+        LIMIT ${limit}
+      `;
+    } else {
+      result = await sql`
+        SELECT * FROM user_outfits
+        WHERE user_id = ${userId}
+        ORDER BY created_at DESC
+      `;
+    }
 
-  return result.rows as UserOutfit[];
+    return result.rows as UserOutfit[];
+  });
 }
 
 /**
@@ -836,11 +923,13 @@ export async function deleteUserOutfit(
   userId: string,
   outfitId: string
 ): Promise<boolean> {
-  const result = await sql`
-    DELETE FROM user_outfits
-    WHERE id = ${outfitId} AND user_id = ${userId}
-    RETURNING id
-  `;
+  const result = await withUserOutfitsTable(() =>
+    sql`
+      DELETE FROM user_outfits
+      WHERE id = ${outfitId} AND user_id = ${userId}
+      RETURNING id
+    `
+  );
 
   return result.rows.length > 0;
 }

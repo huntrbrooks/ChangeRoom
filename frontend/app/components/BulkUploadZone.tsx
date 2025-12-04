@@ -99,7 +99,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
     if (filesToAnalyze.length === 0) return { files: [], analyses: [] };
 
     setIsAnalyzing(true);
-    setAnalysisProgress('Uploading and analyzing clothing items with OpenAI...');
+    setAnalysisProgress('Preparing clothing items for upload...');
     setProgressPercent(0);
     
     // Initialize items with 'analyzing' status for new files
@@ -121,8 +121,8 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
     try {
       const API_URL_FETCH = API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       
-      // Update progress
-      setProgressPercent(20);
+      // Update progress to reflect upload step
+      setProgressPercent(10);
       setAnalysisProgress('Sending images to backend for OpenAI analysis...');
       
       // Create FormData with files to analyze
@@ -143,19 +143,21 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         throw new Error(errorData.error || errorData.detail || `Analysis failed: ${response.statusText}`);
       }
 
-      setProgressPercent(80);
-      setAnalysisProgress('Processing results...');
+      setProgressPercent(65);
+      setAnalysisProgress('Analyzing clothing with OpenAI...');
 
       // Parse JSON response
       const result = await response.json();
+      setProgressPercent(85);
+      setAnalysisProgress('Processing results...');
       const processedItems = result.items || [];
 
       if (processedItems.length === 0) {
         throw new Error('No items returned from preprocessing');
       }
 
-      setProgressPercent(100);
-      setAnalysisProgress('Analysis complete!');
+      setProgressPercent(90);
+      setAnalysisProgress('Finalizing analysis results...');
 
       // Transform backend response to frontend format
       const allAnalyses: AnalyzedItem[] = processedItems.map((item: {
@@ -328,6 +330,9 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         }
       }
 
+      setProgressPercent(100);
+      setAnalysisProgress('Analysis complete!');
+
       return { files: processedFiles, analyses: allAnalyses };
     } catch (error: unknown) {
       console.error('Error analyzing clothing items:', error);
@@ -496,7 +501,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                 <div 
                   className="bg-black h-2.5 sm:h-3 rounded-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(0,0,0,0.5)]"
                   style={{ 
-                    width: `${Math.max(progressPercent, 5)}%`,
+                    width: `${progressPercent}%`,
                     minWidth: progressPercent > 0 ? '8px' : '0px'
                   }}
                 />

@@ -1016,9 +1016,15 @@ function HomeContent() {
 }
 
 export default function Home() {
-  // During build/SSR, Clerk might not be available
-  // Return a loading state that will be replaced at runtime
-  if (typeof window === 'undefined') {
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  // Render the same loading shell during SSR and the first client render
+  // to avoid hydration mismatches while Clerk initializes.
+  if (!isClient) {
     return (
       <main className="min-h-screen bg-white text-black font-sans flex items-center justify-center">
         <div className="text-center">
@@ -1028,6 +1034,6 @@ export default function Home() {
       </main>
     );
   }
-  
+
   return <HomeContent />;
 }

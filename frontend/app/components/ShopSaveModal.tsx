@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   AlertCircle,
@@ -74,6 +74,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [localResults, setLocalResults] = useState<ShopSaveResult[]>([]);
+  const hasRequestedItemsRef = useRef(false);
 
   useEffect(() => {
     if (!isOpen) {
@@ -120,10 +121,16 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
   }, []);
 
   useEffect(() => {
-    if (isOpen && items.length === 0 && !loadingItems) {
-      void fetchItems();
+    if (!isOpen) {
+      hasRequestedItemsRef.current = false;
+      return;
     }
-  }, [fetchItems, isOpen, items.length, loadingItems]);
+    if (hasRequestedItemsRef.current || loadingItems) {
+      return;
+    }
+    hasRequestedItemsRef.current = true;
+    void fetchItems();
+  }, [fetchItems, isOpen, loadingItems]);
 
   const toggleSelect = useCallback(
     (id: string) => {
