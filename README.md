@@ -86,6 +86,14 @@ All Gemini API calls are implemented in:
 2. Deploy backend service
 3. Update frontend `NEXT_PUBLIC_API_URL` to point to your Render backend
 
+### YOLOv8 Demo Services
+
+The repository now includes `my-yolov8-app/`, a standalone Flask + React experience for running YOLOv8 detections. To deploy it:
+
+1. Provision the `yolo-backend` service defined in `render.yaml` (Docker runtime pointing at `my-yolov8-app/backend`).
+2. Create a Render Static Site (or add to `render.yaml`) for `my-yolov8-app/frontend`, setting `REACT_APP_API_URL` to the backend URL.
+3. Review `my-yolov8-app/README.md` for local setup, environment variables, and health checks.
+
 ## License
 
 MIT

@@ -9,3 +9,18 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.0
+  - type: web
+    name: yolo-backend
+    runtime: docker
+    repo: https://github.com/huntrbrooks/ChangeRoom
+    plan: starter
+    dockerContext: my-yolov8-app/backend
+    dockerfilePath: Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: YOLO_ALLOWED_ORIGINS
+        value: https://yolo-frontend.onrender.com
+      - key: YOLO_ENVIRONMENT
+        value: production
+      - key: PORT
+        value: "5000"

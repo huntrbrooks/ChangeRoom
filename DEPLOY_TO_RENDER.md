@@ -45,6 +45,43 @@ After adding all three environment variables:
 
 Once deployed, your backend should now use OAuth2 authentication for Google GenAI API image generation!
 
+---
+
+## YOLOv8 Demo Deployment (New)
+
+The repository now ships with `my-yolov8-app/`, which should run as its own Render stack so detections can scale independently.
+
+### Backend (`yolo-backend`)
+
+1. In Render, create a new **Web Service** from the same repository.
+2. Choose **Environment: Docker** and point the service at:
+   - **Docker Context:** `my-yolov8-app/backend`
+   - **Dockerfile Path:** `Dockerfile`
+   - **Plan:** Starter (upgrade when you need more compute)
+3. Add env vars (see `my-yolov8-app/backend/env.example` for the full list). Minimum production set:
+
+| Key | Example |
+| --- | --- |
+| `YOLO_ALLOWED_ORIGINS` | `https://yolo-frontend.onrender.com` |
+| `YOLO_MODEL_PATH` | `yolov8n.pt` |
+| `YOLO_CONFIDENCE` | `0.25` |
+| `YOLO_MAX_FILE_MB` | `15` |
+| `YOLO_ENVIRONMENT` | `production` |
+| `PORT` | `5000` |
+
+4. Deploy and confirm `https://<service>/health` returns `{"status":"ok"}`.
+
+### Frontend (Static Site)
+
+1. Create a Render **Static Site** using context `my-yolov8-app/frontend`.
+2. Build config:
+   - **Build Command:** `npm ci && npm run build`
+   - **Publish Directory:** `my-yolov8-app/frontend/build`
+3. Add env var `REACT_APP_API_URL=https://<yolo-backend>.onrender.com`.
+4. Deploy and validate uploads complete successfully.
+
+> The `render.yaml` at the repo root already defines the `yolo-backend` service so you can manage it via Git infra-as-code.
+
 ## Local Development
 
 The refresh token has also been added to your local `.env` file, so you can test locally:
