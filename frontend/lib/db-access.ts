@@ -763,6 +763,18 @@ export async function logAffiliateClick(data: {
 const USER_OUTFITS_TABLE = "user_outfits";
 let userOutfitsTableReady: Promise<void> | null = null;
 
+const generateUuid = () => {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  // Fallback for environments without Web Crypto support
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+};
+
 const getErrorMessage = (error: unknown): string => {
   if (error instanceof Error) {
     return error.message;
@@ -781,18 +793,10 @@ const isMissingRelationError = (error: unknown, relation: string) => {
   return getErrorMessage(error).toLowerCase().includes(`relation "${relation.toLowerCase()}" does not exist`);
 };
 
-const isMissingFunctionError = (error: unknown, fnName: string) => {
-  return getErrorMessage(error).toLowerCase().includes(`function ${fnName.toLowerCase()}`);
-};
-
-async function ensurePgcryptoExtension() {
-  await sql`CREATE EXTENSION IF NOT EXISTS "pgcrypto"`;
-}
-
 async function createUserOutfitsTable() {
   await sql`
     CREATE TABLE IF NOT EXISTS user_outfits (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      id UUID PRIMARY KEY,
       user_id TEXT NOT NULL,
       image_url TEXT NOT NULL,
       clothing_items JSONB NOT NULL,
@@ -809,18 +813,7 @@ async function ensureUserOutfitsTable(forceRefresh = false): Promise<void> {
   }
 
   if (!userOutfitsTableReady) {
-    userOutfitsTableReady = (async () => {
-      try {
-        await createUserOutfitsTable();
-      } catch (error) {
-        if (isMissingFunctionError(error, "gen_random_uuid")) {
-          await ensurePgcryptoExtension();
-          await createUserOutfitsTable();
-        } else {
-          throw error;
-        }
-      }
-    })().catch((error) => {
+    userOutfitsTableReady = createUserOutfitsTable().catch((error) => {
       userOutfitsTableReady = null;
       throw error;
     });
@@ -872,10 +865,13 @@ export async function insertUserOutfit(
     clothingItems: ClothingItemMetadata[];
   }
 ): Promise<UserOutfit> {
+  const outfitId = generateUuid();
+
   const result = await withUserOutfitsTable(() =>
     sql`
-      INSERT INTO user_outfits (user_id, image_url, clothing_items)
+      INSERT INTO user_outfits (id, user_id, image_url, clothing_items)
       VALUES (
+        ${outfitId},
         ${userId},
         ${data.imageUrl},
         ${JSON.stringify(data.clothingItems)}::jsonb

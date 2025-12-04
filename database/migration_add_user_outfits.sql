@@ -2,7 +2,7 @@
 -- Each user can save their try-on results as outfits
 
 CREATE TABLE IF NOT EXISTS user_outfits (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY,
   user_id TEXT NOT NULL,                    -- Clerk userId
   image_url TEXT NOT NULL,                  -- URL of the generated try-on image
   clothing_items JSONB NOT NULL,            -- Array of clothing item metadata
