@@ -38,6 +38,7 @@ export interface AnalyzedItem {
   file_url?: string;
   saved_filename?: string;
   saved_file?: string;
+  storage_path?: string;
 }
 
 interface BulkUploadZoneProps {
@@ -169,6 +170,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         file_url?: string;
         saved_filename?: string;
         saved_file?: string;
+      storage_path?: string;
         metadata?: Record<string, unknown>;
         body_region?: string;
         category?: string;
@@ -205,6 +207,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         },
         saved_filename: item.filename || item.saved_filename,
         file_url: item.url || item.file_url,
+        storage_path: item.storage_path,
         status: (item.status === 'error' ? 'error' : item.status === 'analyzing' ? 'analyzing' : 'success') as 'analyzing' | 'success' | 'error'
       };
       });

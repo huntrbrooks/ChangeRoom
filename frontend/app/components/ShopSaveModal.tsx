@@ -47,6 +47,7 @@ interface ShopSaveModalProps {
   isOpen: boolean;
   onClose: () => void;
   onResults: (results: ShopSaveResult[]) => void;
+  clientItems?: ShopSaveClothingItem[];
 }
 
 const MAX_SELECTION = 5;
@@ -67,8 +68,9 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
   isOpen,
   onClose,
   onResults,
+  clientItems = [],
 }) => {
-  const [items, setItems] = useState<ShopSaveClothingItem[]>([]);
+  const [items, setItems] = useState<ShopSaveClothingItem[]>(clientItems);
   const [loadingItems, setLoadingItems] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -94,6 +96,27 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
     return () => document.removeEventListener('keydown', handleKey);
   }, [isOpen, onClose]);
 
+  const mergeItems = useCallback((incoming: ShopSaveClothingItem[]) => {
+    if (!incoming || incoming.length === 0) {
+      return;
+    }
+    setItems((prev) => {
+      const map = new Map<string, ShopSaveClothingItem>();
+      [...prev, ...incoming].forEach((item) => {
+        if (!item || !item.id) {
+          return;
+        }
+        const existing = map.get(item.id) || {};
+        map.set(item.id, { ...existing, ...item });
+      });
+      return Array.from(map.values());
+    });
+  }, []);
+
+  useEffect(() => {
+    mergeItems(clientItems);
+  }, [clientItems, mergeItems]);
+
   const fetchItems = useCallback(async () => {
     setLoadingItems(true);
     setItemsError(null);
@@ -101,7 +124,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
       const response = await axios.get('/api/my/clothing-items', {
         params: { limit: 50 },
       });
-      setItems(response.data?.clothingItems || []);
+      mergeItems(response.data?.clothingItems || []);
     } catch (error: unknown) {
       console.error('Failed to load wardrobe items', error);
       if (axios.isAxiosError(error)) {
@@ -119,7 +142,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
     } finally {
       setLoadingItems(false);
     }
-  }, []);
+  }, [mergeItems]);
 
   useEffect(() => {
     if (!isOpen) {

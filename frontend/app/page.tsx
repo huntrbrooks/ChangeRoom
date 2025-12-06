@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { useUser } from '@clerk/nextjs';
 import axios from 'axios';
@@ -10,7 +10,7 @@ import { VirtualMirror } from './components/VirtualMirror';
 import { ProductCard } from './components/ProductCard';
 import { PaywallModal } from './components/PaywallModal';
 import { MyOutfits } from './components/MyOutfits';
-import { ShopSaveModal, type ShopSaveResult } from './components/ShopSaveModal';
+import { ShopSaveModal, type ShopSaveResult, type ShopSaveClothingItem } from './components/ShopSaveModal';
 import { Sparkles, Search, Loader2, CreditCard, Zap, Shirt } from 'lucide-react';
 import { getWearingStylePromptText } from '@/lib/wearingStyles';
 import { isBypassUser } from '@/lib/bypass-config';
@@ -57,6 +57,7 @@ function HomeContent() {
   interface ImageWithAnalysis {
     file: File;
     analysis?: AnalyzedItem;
+    clothingItemId?: string;
   }
   const [wardrobeItems, setWardrobeItems] = useState<ImageWithAnalysis[]>([]);
   
@@ -142,6 +143,7 @@ function HomeContent() {
     file_url?: string;
     saved_filename?: string;
     saved_file?: string;
+    storage_path?: string;
   }
 
   interface FileWithMetadata extends File {
@@ -151,24 +153,128 @@ function HomeContent() {
     item_type?: string;
     wearing_style?: string;
     file_url?: string;
+    saved_filename?: string;
+    storage_path?: string;
+    clothing_item_id?: string;
   }
 
-  const handleBulkUpload = (files: File[], analyses: AnalyzedItem[], shouldReplace: boolean = false) => {
+  const persistClothingItems = useCallback(async (itemsToPersist: ImageWithAnalysis[]) => {
+    if (!itemsToPersist || itemsToPersist.length === 0) {
+      return;
+    }
+
+    const payload = itemsToPersist
+      .map((entry) => {
+        const analysisMeta = entry.analysis?.analysis;
+        const fileMeta = entry.file as FileWithMetadata;
+        const storageKey =
+          fileMeta.storage_path ||
+          entry.analysis?.storage_path ||
+          entry.analysis?.saved_filename;
+        const publicUrl =
+          fileMeta.file_url || entry.analysis?.file_url || null;
+
+        if (
+          entry.clothingItemId ||
+          fileMeta.clothing_item_id ||
+          !analysisMeta ||
+          !storageKey ||
+          !publicUrl
+        ) {
+          return null;
+        }
+
+        return {
+          storageKey,
+          publicUrl,
+          category:
+            analysisMeta.body_region ||
+            analysisMeta.category ||
+            entry.analysis?.analysis?.category ||
+            "unknown",
+          subcategory: analysisMeta.item_type || null,
+          color: analysisMeta.color || null,
+          style: analysisMeta.style || null,
+          description:
+            analysisMeta.description ||
+            analysisMeta.short_description ||
+            entry.analysis?.analysis?.detailed_description ||
+            "",
+          tags: analysisMeta.tags || [],
+          originalFilename:
+            entry.analysis?.original_filename || entry.file.name,
+          mimeType: entry.file.type || null,
+        };
+      })
+      .filter(
+        (item): item is NonNullable<typeof item> => item !== null
+      );
+
+    if (payload.length === 0) {
+      return;
+    }
+
+    try {
+      const response = await axios.post("/api/my/clothing-items", {
+        items: payload,
+      });
+      const savedItems = response.data?.clothingItems || [];
+      if (savedItems.length === 0) {
+        return;
+      }
+
+      const savedMap = new Map<string, (typeof savedItems)[number]>();
+      savedItems.forEach((saved: (typeof savedItems)[number]) => {
+        if (saved.storage_key) {
+          savedMap.set(saved.storage_key, saved);
+        }
+      });
+
+      setWardrobeItems((prev) =>
+        prev.map((entry) => {
+          const fileMeta = entry.file as FileWithMetadata;
+          const storageKey =
+            fileMeta.storage_path ||
+            entry.analysis?.storage_path ||
+            entry.analysis?.saved_filename;
+          const saved = storageKey ? savedMap.get(storageKey) : undefined;
+
+          if (saved) {
+            fileMeta.clothing_item_id = saved.id;
+            fileMeta.file_url = saved.public_url || fileMeta.file_url;
+            return {
+              ...entry,
+              clothingItemId: saved.id,
+            };
+          }
+
+          return entry;
+        })
+      );
+    } catch (error) {
+      console.error("Failed to persist clothing items", error);
+    }
+  }, []);
+
+  const handleBulkUpload = (
+    files: File[],
+    analyses: AnalyzedItem[],
+    shouldReplace: boolean = false
+  ) => {
+    const newItems: ImageWithAnalysis[] = files.map((file, idx) => ({
+      file,
+      analysis: analyses[idx],
+    }));
+
     if (shouldReplace) {
       // Replace all existing items with new batch
-      const newItems: ImageWithAnalysis[] = files.map((file, idx) => ({
-        file,
-        analysis: analyses[idx]
-      }));
       setWardrobeItems(newItems);
     } else {
       // Append new items to existing ones
-      const newItems: ImageWithAnalysis[] = files.map((file, idx) => ({
-        file,
-        analysis: analyses[idx]
-      }));
-      setWardrobeItems(prev => [...prev, ...newItems]);
+      setWardrobeItems((prev) => [...prev, ...newItems]);
     }
+
+    void persistClothingItems(newItems);
     console.log('Bulk upload complete. Analyzed items:', analyses);
   };
 
@@ -183,6 +289,42 @@ function HomeContent() {
       return newItems;
     });
   };
+
+  const shopSaveReadyItems = useMemo<ShopSaveClothingItem[]>(() => {
+    return wardrobeItems.reduce<ShopSaveClothingItem[]>((acc, entry) => {
+      const analysisMeta = entry.analysis?.analysis;
+      const fileMeta = entry.file as FileWithMetadata;
+      const id = entry.clothingItemId || fileMeta.clothing_item_id;
+      const publicUrl =
+        fileMeta.file_url || entry.analysis?.file_url || '';
+
+      if (!analysisMeta || !id || !publicUrl) {
+        return acc;
+      }
+
+      acc.push({
+        id,
+        public_url: publicUrl,
+        category:
+          analysisMeta.body_region ||
+          analysisMeta.category ||
+          'unknown',
+        subcategory: analysisMeta.item_type || null,
+        color: analysisMeta.color || null,
+        style: analysisMeta.style || null,
+        description:
+          analysisMeta.description ||
+          analysisMeta.short_description ||
+          '',
+        tags: analysisMeta.tags || [],
+        original_filename:
+          entry.analysis?.original_filename || entry.file.name,
+        created_at: null,
+      });
+
+      return acc;
+    }, []);
+  }, [wardrobeItems]);
 
   // Save outfit to My Outfits (persistent storage via API)
   const saveOutfitToMyOutfits = async (imageUrl: string, clothingFiles: File[], wardrobeItemsData: typeof wardrobeItems) => {
@@ -235,8 +377,10 @@ function HomeContent() {
       return;
     }
     
-    const activeItems = wardrobeItems.map(item => item.file);
-    if (activeItems.length === 0) {
+    const activeWardrobeItems = wardrobeItems.slice(0, 5);
+    const activeFiles = activeWardrobeItems.map(item => item.file);
+
+    if (activeFiles.length === 0) {
       const errorMsg = "Please upload at least one clothing item.";
       console.log("Validation failed:", errorMsg);
       setError(errorMsg);
@@ -291,6 +435,8 @@ function HomeContent() {
       originalError.apply(console, args);
     };
 
+    let preparedTryOnFiles: File[] = [];
+
     try {
       // Get API URL from environment or default to localhost
       const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -312,62 +458,43 @@ function HomeContent() {
       try {
         const tryOnFormData = new FormData();
         tryOnFormData.append('user_image', userImage);
-        
-        // Limit to 5 items for try-on
-        const itemsToTryOn = activeItems.slice(0, 5);
-        const fileUrls: string[] = [];
-        const filesToUpload: File[] = [];
-        
-        // Collect all items - separate those with file URLs from those that need upload
-        for (const item of itemsToTryOn) {
-          const itemData = item as FileWithMetadata;
-          if (itemData?.file_url) {
-            fileUrls.push(itemData.file_url);
-          } else if (item instanceof File) {
-            filesToUpload.push(item);
+        preparedTryOnFiles = activeWardrobeItems.map(item => item.file);
+
+        preparedTryOnFiles.forEach((file, index) => {
+          if (!file) {
+            throw new Error(`Missing file for wardrobe item index ${index}`);
           }
-        }
-        
-        // Send file URLs if we have any
-        if (fileUrls.length > 0) {
-          tryOnFormData.append('clothing_file_urls', fileUrls.join(','));
-          console.log(`Using ${fileUrls.length} saved file URL(s) for try-on`);
-        }
-        
-        // Send uploaded files if we have any
-        for (const file of filesToUpload) {
           tryOnFormData.append('clothing_images', file);
-        }
-        if (filesToUpload.length > 0) {
-          console.log(`Uploading ${filesToUpload.length} file(s) for try-on`);
-        }
-        
-        console.log(`Trying on ${itemsToTryOn.length} item(s): ${fileUrls.length} from URLs, ${filesToUpload.length} uploaded`);
-        
-        // Build metadata with per-item wearing styles
-        const metadata: Record<string, unknown> = {};
-        const firstItem = itemsToTryOn[0] as FileWithMetadata;
-        
-        // Build per-item wearing instructions
-        const itemWearingInstructions: string[] = [];
-        itemsToTryOn.forEach((item: FileWithMetadata, index: number) => {
-          if (item?.wearing_style && item?.category && item?.item_type) {
-            const promptText = getWearingStylePromptText(
-              item.category,
-              item.item_type,
-              item.wearing_style
-            );
-            if (promptText) {
-              itemWearingInstructions.push(`Item ${index + 1} (${item.item_type || item.category}): ${promptText}`);
-            }
-          }
         });
         
+        console.log(`Trying on ${preparedTryOnFiles.length} item(s) using direct file uploads to preserve ordering`);
+        
+        // Build metadata with per-item wearing styles
+        const metadata: Record<string, unknown> = {
+          strict_wearing_enforcement: true,
+          wearing_instruction_policy: 'non_negotiable',
+        };
+        const firstWardrobeItem = activeWardrobeItems[0];
+        const firstItem = firstWardrobeItem?.file as FileWithMetadata | undefined;
+        const firstItemAnalysis = firstWardrobeItem?.analysis?.analysis;
         // Build metadata in the format expected by the system prompt
-        if (firstItem?.metadata || firstItem?.category || firstItem?.detailed_description) {
-          // Map analyzed metadata to system prompt format
-          if (firstItem.metadata?.style) {
-            metadata.style = firstItem.metadata.style; // e.g., "studio", "streetwear", "mirror selfie"
+        if (
+          firstItem?.metadata ||
+          firstItem?.category ||
+          firstItem?.detailed_description ||
+          firstItemAnalysis
+        ) {
+          const metaRecord =
+            (firstItem?.metadata && typeof firstItem.metadata === 'object'
+              ? (firstItem.metadata as Record<string, unknown>)
+              : {}) || {};
+
+          const derivedStyle =
+            (metaRecord.style as string | undefined) ||
+            firstItemAnalysis?.style ||
+            undefined;
+          if (derivedStyle) {
+            metadata.style = derivedStyle; // e.g., "studio", "streetwear", "mirror selfie"
           }
           
           // Default to full body framing for fashion try-on
@@ -375,48 +502,117 @@ function HomeContent() {
           
           // Include any additional metadata as "extras"
           const extras: Record<string, unknown> = {};
-          if (firstItem.metadata && typeof firstItem.metadata === 'object') {
-            const meta = firstItem.metadata as Record<string, unknown>;
-            if (meta.color) extras.color = meta.color;
-            if (meta.material) extras.material = meta.material;
-            if (meta.fit) extras.fit = meta.fit;
+          if (metaRecord.color) extras.color = metaRecord.color;
+          if (metaRecord.material) extras.material = metaRecord.material;
+          if (metaRecord.fit) extras.fit = metaRecord.fit;
+          if (!extras.color && firstItemAnalysis?.color) extras.color = firstItemAnalysis.color;
+          if (!extras.material && firstItemAnalysis?.tags?.length) {
+            extras.tags = firstItemAnalysis.tags;
           }
-          if (firstItem.detailed_description) extras.detailed_description = firstItem.detailed_description;
-          
+          if (!extras.fit && firstItemAnalysis?.style) {
+            extras.style_hint = firstItemAnalysis.style;
+          }
+          if (firstItem?.detailed_description) {
+            extras.detailed_description = firstItem.detailed_description;
+          }
+          if (!extras.detailed_description && firstWardrobeItem?.analysis?.analysis?.description) {
+            extras.detailed_description = firstWardrobeItem.analysis.analysis.description;
+          }
           if (Object.keys(extras).length > 0) {
             metadata.extras = extras;
           }
         }
         
-        // Add wearing style instructions
+        type WearingContext = {
+          index: number;
+          descriptor: string;
+          promptText: string;
+          wearingStyle: string;
+          category: string;
+          itemType: string;
+        };
+        
+        const wearingContexts: WearingContext[] = activeWardrobeItems
+          .map((wardrobeItem, index) => {
+            const fileItem = wardrobeItem.file as FileWithMetadata;
+            const wearingStyle = fileItem?.wearing_style;
+            if (!wearingStyle) {
+              return null;
+            }
+
+            const analysisData = wardrobeItem.analysis?.analysis;
+            const rawCategory =
+              fileItem?.category ||
+              analysisData?.category ||
+              analysisData?.body_region ||
+              "unknown";
+            const rawItemType =
+              fileItem?.item_type ||
+              analysisData?.item_type ||
+              "";
+            const descriptor =
+              (rawItemType ||
+                analysisData?.short_description ||
+                analysisData?.detailed_description ||
+                rawCategory ||
+                `item ${index + 1}`).replace(/\s+/g, " ").trim();
+
+            const promptText =
+              getWearingStylePromptText(
+                rawCategory,
+                rawItemType || analysisData?.item_type,
+                wearingStyle
+              ) || wearingStyle.replace(/_/g, " ");
+            const normalizedPrompt = promptText.replace(/\s+/g, " ").trim();
+
+            if (!normalizedPrompt) {
+              return null;
+            }
+
+            return {
+              index,
+              descriptor,
+              promptText: normalizedPrompt,
+              wearingStyle,
+              category: rawCategory || "unknown",
+              itemType: rawItemType || rawCategory || "",
+            };
+          })
+          .filter((ctx): ctx is WearingContext => Boolean(ctx));
+        
+        const itemWearingInstructions = wearingContexts.map(
+          (ctx) =>
+            `MANDATORY: The ${ctx.descriptor} must be ${ctx.promptText}. This overrides any defaults—do not depict it differently.`
+        );
+        
         if (itemWearingInstructions.length > 0) {
           metadata.wearing_instructions = itemWearingInstructions;
+          metadata.wearing_instruction_summary = itemWearingInstructions.join(' ');
+          metadata.enforced_items_count = itemWearingInstructions.length;
         }
         
         // Add per-item wearing styles metadata
-        const itemsMetadata: Array<{
-          index: number;
-          category: string;
-          item_type: string;
-          wearing_style: string;
-        }> = [];
-        itemsToTryOn.forEach((item: FileWithMetadata, index: number) => {
-          if (item?.wearing_style) {
-            itemsMetadata.push({
-              index,
-              category: item.category || 'unknown',
-              item_type: item.item_type || '',
-              wearing_style: item.wearing_style,
-            });
-          }
-        });
+        const itemsMetadata = wearingContexts.map((ctx) => ({
+          index: ctx.index,
+          category: ctx.category || 'unknown',
+          item_type: ctx.itemType || '',
+          wearing_style: ctx.wearingStyle,
+          descriptor: ctx.descriptor,
+          prompt_text: ctx.promptText,
+        }));
         
         if (itemsMetadata.length > 0) {
           metadata.items_wearing_styles = itemsMetadata;
         }
         
+        const inferredCategory =
+          firstItem?.category ||
+          firstItemAnalysis?.category ||
+          firstItemAnalysis?.body_region ||
+          'upper_body';
+        
         tryOnFormData.append('garment_metadata', JSON.stringify(metadata));
-        tryOnFormData.append('category', firstItem?.category || 'upper_body');
+        tryOnFormData.append('category', inferredCategory);
         console.log("Using analyzed metadata for try-on:", metadata);
 
         console.log("Starting try-on generation...");
@@ -445,7 +641,7 @@ function HomeContent() {
           });
           
           // Save to My Outfits (use original URL)
-          saveOutfitToMyOutfits(imageUrl, activeItems, wardrobeItems);
+          saveOutfitToMyOutfits(imageUrl, preparedTryOnFiles, wardrobeItems);
           
           // Refresh billing info after successful try-on
           if (isLoaded && user) {
@@ -485,7 +681,11 @@ function HomeContent() {
       try {
         console.log("Starting product identification...");
         const identifyFormData = new FormData();
-        identifyFormData.append('clothing_image', activeItems[0]);
+        const primaryTryOnFile = preparedTryOnFiles[0] || activeWardrobeItems[0]?.file;
+        if (!primaryTryOnFile) {
+          throw new Error('No clothing item available for product identification');
+        }
+        identifyFormData.append('clothing_image', primaryTryOnFile);
         
         const analysisRes = await axios.post(`${API_URL}/api/identify-products`, identifyFormData, {
            headers: { 'Content-Type': 'multipart/form-data' },
@@ -560,12 +760,12 @@ function HomeContent() {
           <div className="flex items-center gap-3 flex-shrink-0">
             <img 
               src="/Logo.png" 
-              alt="Change Room Logo" 
+              alt="IGetChanged.Online Logo" 
               className="w-8 h-8 sm:w-10 sm:h-10 object-contain"
             />
             <img 
               src="/Font logo.png" 
-              alt="Change Room" 
+              alt="IGetChanged.Online" 
               className="h-5 sm:h-8 object-contain"
             />
           </div>
@@ -999,6 +1199,7 @@ function HomeContent() {
         isOpen={isShopSaveOpen}
         onClose={() => setIsShopSaveOpen(false)}
         onResults={(results) => setShopSaveResults(results)}
+        clientItems={shopSaveReadyItems}
       />
 
       {/* Paywall Modal */}
