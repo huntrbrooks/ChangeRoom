@@ -22,17 +22,19 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Change Room - Virtual Try-On & Shopping",
+  title: "IGetChanged.Online - Virtual Try-On & Shopping",
   description: "Try on clothes virtually and discover similar products to shop. Upload your photo and wardrobe items to see how they look on you.",
   icons: {
     icon: [
-      { url: '/favicon/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
-      { url: '/favicon/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/favicon_io%20(2)/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
+      { url: '/favicon_io%20(2)/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/favicon_io%20(2)/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/favicon_io%20(2)/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
     ],
-    shortcut: '/favicon/favicon.ico',
-    apple: '/favicon/apple-touch-icon.png',
+    shortcut: '/favicon_io%20(2)/favicon.ico',
+    apple: '/favicon_io%20(2)/apple-touch-icon.png',
   },
-  manifest: '/favicon/site.webmanifest',
+  manifest: '/favicon_io%20(2)/site.webmanifest',
 };
 
 export const viewport: Viewport = {

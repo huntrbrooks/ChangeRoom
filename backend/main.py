@@ -35,7 +35,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Change Room API")
+app = FastAPI(title="IGetChanged.Online API")
 
 # Configure CORS
 # For production, specify exact origins in ALLOWED_ORIGINS environment variable
@@ -97,7 +97,7 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 @app.get("/")
 async def root():
-    return {"message": "Change Room API is running"}
+    return {"message": "IGetChanged.Online API is running"}
 
 @app.post("/api/try-on")
 async def try_on(

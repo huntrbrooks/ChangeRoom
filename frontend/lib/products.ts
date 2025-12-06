@@ -32,7 +32,7 @@ export const productFeatures: Record<PlanType, ProductFeatures> = {
   free: {
     plan: 'free',
     name: 'Free',
-    description: 'Perfect for trying out Change Room',
+    description: 'Perfect for trying out IGetChanged.Online',
     price: {
       amount: 0,
       currency: 'USD',
@@ -191,6 +191,8 @@ export function compareFeatures(plan1: PlanType, plan2: PlanType): {
     common: features1.filter(f => ids2.has(f.id)),
   };
 }
+
+
 
 
 

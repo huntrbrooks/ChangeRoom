@@ -7,7 +7,7 @@ export function Footer() {
       <div className="container mx-auto px-4">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="text-sm">
-            <p>&copy; {new Date().getFullYear()} Change Room. All rights reserved.</p>
+            <p>&copy; {new Date().getFullYear()} IGetChanged.Online. All rights reserved.</p>
           </div>
           <nav className="flex flex-wrap justify-center gap-6 text-sm">
             <Link 

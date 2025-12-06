@@ -1,4 +1,4 @@
-# ChangeRoom
+# IGetChanged.Online
 
 Try on clothes & Save from the comfort of your own home
 

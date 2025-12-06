@@ -124,42 +124,121 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
         # Build text prompt for Gemini 3 Pro Image
         # Simple, clear instructions for virtual try-on
         text_prompt = (
-            "You are a fashion virtual try on engine. "
+            "You are a fashion virtual try-on engine. "
             "Use the first image as the person that must stay consistent. "
-            "Use the other images as clothing items. "
-            "Generate one photorealistic image of the same person wearing all of the clothes, "
-            "neutral clean studio background, flattering lighting, full body if possible."
+            "Use every additional image as a garment that must be worn by that same person. "
+            "Generate one photorealistic image of the person wearing all provided clothing items, "
+            "with a neutral clean studio background, flattering lighting, and full-body framing if possible. "
+            "Every user-specified wearing style or positioning instruction is mandatory and overrides any defaults. "
+            "Do not ignore, soften, or reinterpret those directives under any circumstance."
         )
         
         # Add wearing style instructions if provided
         if garment_metadata:
+            def _normalize_instruction(value):
+                if isinstance(value, str):
+                    cleaned = value.strip()
+                    if cleaned:
+                        return cleaned
+                return None
+            
+            def _extract_descriptor(item_info, fallback_index):
+                descriptor = (
+                    item_info.get('descriptor')
+                    or item_info.get('item_type')
+                    or item_info.get('category')
+                    or f"item {fallback_index + 1}"
+                )
+                if isinstance(descriptor, str):
+                    descriptor = descriptor.strip()
+                return descriptor or f"item {fallback_index + 1}"
+            
             # Extract wearing instructions if available
             wearing_instructions = garment_metadata.get('wearing_instructions')
             items_wearing_styles = garment_metadata.get('items_wearing_styles')
             
-            if wearing_instructions and isinstance(wearing_instructions, list) and len(wearing_instructions) > 0:
-                text_prompt += "\n\nImportant - How each clothing item should be worn:\n"
-                for instruction in wearing_instructions:
+            normalized_instructions = []
+            if isinstance(wearing_instructions, list):
+                for idx, instruction in enumerate(wearing_instructions):
+                    normalized = _normalize_instruction(instruction)
+                    if normalized:
+                        normalized_instructions.append(normalized)
+                    else:
+                        logger.warning(f"Wearing instruction at index {idx} is invalid and will be ignored: {instruction!r}")
+            else:
+                normalized = _normalize_instruction(wearing_instructions)
+                if normalized:
+                    normalized_instructions.append(normalized)
+            
+            if normalized_instructions:
+                text_prompt += "\n\nMANDATORY wearing directives (never override these):\n"
+                for instruction in normalized_instructions:
                     text_prompt += f"- {instruction}\n"
-                logger.info(f"Added {len(wearing_instructions)} wearing style instruction(s)")
+                logger.info(f"Added {len(normalized_instructions)} wearing style instruction(s)")
             
             # Add per-item wearing styles if available (alternative format)
             if items_wearing_styles and isinstance(items_wearing_styles, list) and len(items_wearing_styles) > 0:
-                text_prompt += "\n\nPer-item wearing instructions:\n"
-                for item_info in items_wearing_styles:
-                    item_idx = item_info.get('index', 0) + 2  # +2 because first image is person, items start at 2
-                    item_type = item_info.get('item_type', 'item')
-                    category = item_info.get('category', 'clothing')
-                    wearing_style = item_info.get('wearing_style', 'default')
+                text_prompt += "\n\nPer-item wearing instructions (non-negotiable):\n"
+                valid_item_styles = 0
+                for idx, item_info in enumerate(items_wearing_styles):
+                    if not isinstance(item_info, dict):
+                        logger.warning(f"Ignoring invalid item_wearing_styles entry at index {idx}: {item_info!r}")
+                        continue
                     
-                    # Build instruction based on wearing style
-                    style_desc = wearing_style.replace('_', ' ')
-                    text_prompt += f"- The {item_type} ({category}) shown in image {item_idx} should be worn {style_desc}\n"
-                logger.info(f"Added {len(items_wearing_styles)} per-item wearing style(s)")
+                    try:
+                        item_index = int(item_info.get('index', 0))
+                    except (TypeError, ValueError):
+                        item_index = 0
+                    
+                    descriptor = _extract_descriptor(item_info, item_index)
+                    wearing_style = item_info.get('wearing_style')
+                    prompt_text = item_info.get('prompt_text') or item_info.get('instruction')
+                    
+                    style_desc_source = prompt_text or wearing_style
+                    if not style_desc_source:
+                        logger.warning(f"No wearing_style or prompt_text for item {descriptor}, skipping")
+                        continue
+                    
+                    if not isinstance(style_desc_source, str):
+                        style_desc_source = str(style_desc_source)
+                    
+                    style_desc = style_desc_source.replace('_', ' ').strip()
+                    if not style_desc:
+                        logger.warning(f"Empty style description for item {descriptor}, skipping")
+                        continue
+                    
+                    image_reference = item_index + 2  # +2 because first image is person
+                    text_prompt += (
+                        f"- Image {image_reference}: Render the {descriptor} {style_desc}. "
+                        "This positioning is mandatory.\n"
+                    )
+                    valid_item_styles += 1
+                logger.info(f"Added {valid_item_styles} per-item wearing style(s)")
+            
+            if garment_metadata.get('strict_wearing_enforcement'):
+                text_prompt += (
+                    "\n\nSTRICT COMPLIANCE: Adjust garment fit, tuck, tilt, or orientation until every "
+                    "wearing instruction is satisfied exactly. Never revert to default placements."
+                )
+            
+            if garment_metadata.get('wearing_instruction_policy'):
+                policy = garment_metadata.get('wearing_instruction_policy')
+                text_prompt += f"\n\nWearing instruction policy: {policy}."
+            
+            if garment_metadata.get('wearing_instruction_summary'):
+                summary = garment_metadata.get('wearing_instruction_summary')
+                text_prompt += f"\n\nSummary of required styling outcomes: {summary}"
             
             # Add other metadata instructions
             other_metadata = {k: v for k, v in garment_metadata.items() 
-                            if k not in ['wearing_instructions', 'items_wearing_styles']}
+                            if k not in [
+                                'wearing_instructions',
+                                'items_wearing_styles',
+                                'strict_wearing_enforcement',
+                                'wearing_instruction_policy',
+                                'wearing_instruction_summary',
+                                'enforced_items_count'
+                            ]}
             if other_metadata:
                 metadata_str = json.dumps(other_metadata, indent=2, ensure_ascii=False)
                 text_prompt += f"\n\nAdditional styling instructions:\n{metadata_str}"

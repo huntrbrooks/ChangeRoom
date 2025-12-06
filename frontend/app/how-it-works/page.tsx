@@ -15,7 +15,7 @@ export default function HowItWorks() {
             <div className="w-8 h-8 bg-black text-white flex items-center justify-center rounded-full">
               <Shirt size={20} />
             </div>
-            <h1 className="text-xl font-bold tracking-tight">Change Room</h1>
+            <h1 className="text-xl font-bold tracking-tight">IGetChanged.Online</h1>
           </Link>
           <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-gray-600">
             <Link href="/how-it-works" className="hover:text-black transition-colors">How it Works</Link>

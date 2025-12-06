@@ -13,7 +13,7 @@ def test_root_endpoint(client: TestClient):
     assert response.status_code == 200
     data = response.json()
     assert "message" in data
-    assert "Change Room API" in data["message"]
+    assert "IGetChanged.Online API" in data["message"]
 
 
 def test_try_on_missing_user_image(client: TestClient):

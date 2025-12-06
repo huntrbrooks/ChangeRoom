@@ -627,7 +627,7 @@ def embed_metadata_in_image(image_bytes: bytes, metadata: Dict[str, Any]) -> byt
                     # Add custom tags for key metadata fields
                     # Store category, color, style in EXIF tags
                     if metadata.get("category"):
-                        exif_dict["0th"][piexif.ImageIFD.Software] = f"ChangeRoom-{metadata['category']}".encode('utf-8')
+                        exif_dict["0th"][piexif.ImageIFD.Software] = f"IGetChanged.Online-{metadata['category']}".encode('utf-8')
                     
                     # Convert EXIF dict to bytes
                     exif_bytes = piexif.dump(exif_dict)

@@ -1,4 +1,4 @@
--- Database schema for Change Room
+-- Database schema for IGetChanged.Online
 -- Designed for Neon (Postgres)
 
 -- clothing_items: Each uploaded clothing image, owned by a Clerk user

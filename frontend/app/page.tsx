@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useUser } from '@clerk/nextjs';
 import axios from 'axios';
 import { UploadZone } from './components/UploadZone';
@@ -763,10 +764,14 @@ function HomeContent() {
               alt="IGetChanged.Online Logo" 
               className="w-8 h-8 sm:w-10 sm:h-10 object-contain"
             />
-            <img 
+            <Image 
               src="/Font logo.png" 
-              alt="IGetChanged.Online" 
-              className="h-5 sm:h-8 object-contain"
+              alt="Change Room wordmark" 
+              width={920}
+              height={56}
+              priority
+              className="h-5 sm:h-8 w-auto object-contain"
+              sizes="(max-width: 640px) 112px, 200px"
             />
           </div>
           <nav className="flex items-center gap-2 sm:gap-4 md:gap-6 text-xs sm:text-sm font-medium flex-shrink-0 text-white">

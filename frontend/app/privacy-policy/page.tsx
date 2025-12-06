@@ -27,7 +27,7 @@ export default function PrivacyPolicy() {
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">1. Introduction</h2>
             <p className="leading-relaxed">
-              Change Room (&quot;we,&quot; &quot;our,&quot; or &quot;us&quot;) is committed to protecting your privacy. This Privacy Policy explains 
+              IGetChanged.Online (&quot;we,&quot; &quot;our,&quot; or &quot;us&quot;) is committed to protecting your privacy. This Privacy Policy explains 
               how we collect, use, disclose, and safeguard your information when you use our virtual try-on service and website.
             </p>
           </section>
