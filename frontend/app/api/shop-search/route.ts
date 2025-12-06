@@ -3,6 +3,8 @@ import { auth } from "@clerk/nextjs/server";
 import { findBestOffersForQuery, buildSearchQueryFromItem } from "@/lib/shop/providers";
 import { getClothingItemsByIds, upsertClothingItemOffers, getClothingItemOffers } from "@/lib/db-access";
 
+type DbClothingItem = Awaited<ReturnType<typeof getClothingItemsByIds>>[number];
+
 /**
  * POST /api/shop-search
  * Search for products/offers for one or more clothing items
@@ -11,6 +13,16 @@ import { getClothingItemsByIds, upsertClothingItemOffers, getClothingItemOffers 
  * 
  * Returns: { offers: Offer[] } grouped by clothing item
  */
+interface ItemMetadataInput {
+  id: string;
+  category?: string | null;
+  subcategory?: string | null;
+  color?: string | null;
+  style?: string | null;
+  description?: string | null;
+  tags?: string[] | null;
+}
+
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
 
@@ -20,7 +32,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { clothingItemIds } = body as { clothingItemIds: string[] };
+    const { clothingItemIds, itemMetadata } = body as {
+      clothingItemIds: string[];
+      itemMetadata?: ItemMetadataInput[];
+    };
 
     if (!clothingItemIds || !Array.isArray(clothingItemIds) || clothingItemIds.length === 0) {
       return NextResponse.json(
@@ -29,14 +44,33 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Fetch clothing items (scoped to user)
-    const clothingItems = await getClothingItemsByIds(userId, clothingItemIds);
-    if (clothingItems.length === 0) {
+    const fallbackMap = new Map(
+      (itemMetadata || [])
+        .filter((meta): meta is ItemMetadataInput => Boolean(meta?.id))
+        .map((meta) => [meta.id, meta])
+    );
+
+    let clothingItems: DbClothingItem[] = [];
+    try {
+      clothingItems = await getClothingItemsByIds(userId, clothingItemIds);
+    } catch (err) {
+      console.warn("getClothingItemsByIds failed, falling back to provided metadata", err);
+    }
+
+    if (clothingItems.length === 0 && fallbackMap.size === 0) {
       return NextResponse.json(
         { error: "No clothing items found" },
         { status: 404 }
       );
     }
+
+    const itemsToSearch: Array<DbClothingItem | ItemMetadataInput> = clothingItemIds
+      .map((id) => clothingItems.find((item) => item.id === id) || fallbackMap.get(id))
+      .filter((item): item is DbClothingItem | ItemMetadataInput => Boolean(item));
+
+    const isDatabaseItem = (item: DbClothingItem | ItemMetadataInput): item is DbClothingItem => {
+      return "user_id" in item;
+    };
 
     // Context: Australia first
     const ctx = { country: "AU" as const, currency: "AUD" as const };
@@ -44,7 +78,7 @@ export async function POST(req: NextRequest) {
     // Search for offers for each item
     const results: Record<string, any[]> = {};
 
-    for (const item of clothingItems) {
+    for (const item of itemsToSearch) {
       // Build search query from item metadata
       const query = buildSearchQueryFromItem({
         category: item.category,
@@ -61,7 +95,7 @@ export async function POST(req: NextRequest) {
       const topOffers = offers.slice(0, 5);
 
       // Save to database
-      if (topOffers.length > 0) {
+      if (topOffers.length > 0 && isDatabaseItem(item)) {
         await upsertClothingItemOffers(
           item.id,
           topOffers.map((offer) => ({
@@ -80,7 +114,8 @@ export async function POST(req: NextRequest) {
       }
 
       // Format for response
-      results[item.id] = topOffers.map((offer) => ({
+      const mapKey = item.id || "";
+      results[mapKey] = topOffers.map((offer) => ({
         id: offer.source, // Temporary ID, will be replaced with DB ID if needed
         source: offer.source,
         merchant: offer.merchant,

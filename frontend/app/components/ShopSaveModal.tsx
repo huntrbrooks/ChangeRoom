@@ -212,8 +212,22 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
     setIsSearching(true);
     setSearchError(null);
     try {
+      const selectedMetadata = selectedIds
+        .map((id) => items.find((item) => item.id === id))
+        .filter((item): item is ShopSaveClothingItem => Boolean(item))
+        .map((item) => ({
+          id: item.id,
+          category: item.category,
+          subcategory: item.subcategory,
+          color: item.color,
+          style: item.style,
+          description: item.description,
+          tags: item.tags,
+        }));
+
       const response = await axios.post('/api/shop-search', {
         clothingItemIds: selectedIds,
+        itemMetadata: selectedMetadata,
       });
       const offersMap = response.data?.offers || {};
       const results: ShopSaveResult[] = selectedIds.map((id) => {
