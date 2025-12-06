@@ -4,12 +4,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   AlertCircle,
-  CheckCircle2,
   DollarSign,
   Loader2,
   ShoppingBag,
   X,
 } from 'lucide-react';
+import { ShopSaveSelector } from './ShopSaveSelector';
 
 export interface ShopSaveClothingItem {
   id: string;
@@ -21,6 +21,7 @@ export interface ShopSaveClothingItem {
   description?: string | null;
   tags?: string[] | null;
   original_filename?: string | null;
+  created_at?: string | Date | null;
 }
 
 export interface ShopSaveOffer {
@@ -145,6 +146,39 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
       });
     },
     [setSelectedIds]
+  );
+
+  const notifySelection = useCallback(async (item: ShopSaveClothingItem) => {
+    try {
+      await axios.post('/api/shop/selection', {
+        clothingItemId: item.id,
+        metadata: {
+          category: item.category,
+          subcategory: item.subcategory,
+          color: item.color,
+          style: item.style,
+          tags: item.tags || [],
+        },
+      });
+    } catch (error) {
+      console.warn('Shop selection notification failed', error);
+    }
+  }, []);
+
+  const handleItemToggle = useCallback(
+    (item: ShopSaveClothingItem) => {
+      const alreadySelected = selectedIds.includes(item.id);
+      if (alreadySelected) {
+        toggleSelect(item.id);
+        return;
+      }
+      if (selectedIds.length >= MAX_SELECTION) {
+        return;
+      }
+      toggleSelect(item.id);
+      void notifySelection(item);
+    },
+    [notifySelection, selectedIds, toggleSelect]
   );
 
   const handleSearch = useCallback(async () => {
@@ -276,83 +310,12 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {items.map((item) => {
-                  const isSelected = selectedIds.includes(item.id);
-                  const isDisabled =
-                    !isSelected && selectedIds.length >= MAX_SELECTION;
-                  return (
-                    <div
-                      key={item.id}
-                      className={`relative rounded-xl border p-3 transition-all ${
-                        isSelected
-                          ? 'border-black bg-black/5 shadow-[0_0_15px_rgba(0,0,0,0.15)]'
-                          : 'border-black/15 hover:border-black/40'
-                      }`}
-                    >
-                      <div className="relative h-40 w-full overflow-hidden rounded-lg bg-gray-100">
-                        {item.public_url ? (
-                          <img
-                            src={item.public_url}
-                            alt={item.description || item.subcategory || 'Wardrobe item'}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-full items-center justify-center text-xs text-black/40">
-                            No image
-                          </div>
-                        )}
-                        {isSelected && (
-                          <span className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
-                            <CheckCircle2 size={12} />
-                            Selected
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-3 space-y-1">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-black/60">
-                          {item.category?.replace('_', ' ') || 'Item'}
-                        </p>
-                        <p className="text-sm font-bold">
-                          {item.subcategory || item.description || item.original_filename || 'Saved item'}
-                        </p>
-                        {(item.color || item.style) && (
-                          <p className="text-xs text-black/60">
-                            {item.color}
-                            {item.color && item.style ? ' · ' : ''}
-                            {item.style}
-                          </p>
-                        )}
-                        {item.tags && item.tags.length > 0 && (
-                          <div className="flex flex-wrap gap-1 pt-1">
-                            {item.tags.slice(0, 3).map((tag) => (
-                              <span
-                                key={tag}
-                                className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-black/70"
-                              >
-                                {tag}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => toggleSelect(item.id)}
-                        disabled={isDisabled}
-                        className={`mt-3 w-full rounded-full border px-3 py-2 text-xs font-semibold uppercase tracking-wide transition-colors ${
-                          isSelected
-                            ? 'border-black bg-black text-white'
-                            : isDisabled
-                            ? 'border-gray-300 text-gray-400'
-                            : 'border-black text-black hover:bg-black hover:text-white'
-                        }`}
-                      >
-                        {isSelected ? 'Remove' : isDisabled ? 'Limit Reached' : 'Select'}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+              <ShopSaveSelector
+                items={items}
+                selectedIds={selectedIds}
+                maxSelection={MAX_SELECTION}
+                onToggle={handleItemToggle}
+              />
 
               {selectedIds.length >= MAX_SELECTION && (
                 <p className="text-xs font-semibold uppercase tracking-wide text-black/60">
