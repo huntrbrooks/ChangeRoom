@@ -70,6 +70,16 @@ export interface TryOnSession {
   created_at: Date;
 }
 
+function errorMessageIncludes(error: unknown, text: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string" &&
+    ((error as { message: string }).message.includes(text))
+  );
+}
+
 /**
  * Get or create user billing record
  * Creates with free plan and default credits if doesn't exist
@@ -96,7 +106,7 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
           SELECT * FROM users_billing WHERE user_id = ${userId}
         `;
         return updated.rows[0] as UserBilling;
-      } catch (err) {
+      } catch {
         // If column doesn't exist, return with default value
         return { ...billing, trial_used: false };
       }
@@ -116,9 +126,9 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
     if (result.rows.length > 0) {
       return result.rows[0] as UserBilling;
     }
-  } catch (err: any) {
+  } catch (err: unknown) {
     // If trial_used column doesn't exist, try without it
-    if (err.message?.includes('trial_used')) {
+    if (errorMessageIncludes(err, 'trial_used')) {
       const result = await sql`
         INSERT INTO users_billing (user_id, plan, credits_available)
         VALUES (${userId}, 'free', ${appConfig.freeCredits})
@@ -226,9 +236,11 @@ export async function decrementCreditsIfAvailable(userId: string): Promise<boole
           RETURNING *
         `;
         return result.rows.length > 0;
-      } catch (err: any) {
+      } catch (err: unknown) {
         // If trial_used column doesn't exist, just allow the try-on
-        if (err.message?.includes('trial_used') || err.message?.includes('column')) {
+        const messageIncludesTrial =
+          errorMessageIncludes(err, 'trial_used') || errorMessageIncludes(err, 'column');
+        if (messageIncludesTrial) {
           return true;
         }
         throw err;
@@ -677,48 +689,51 @@ export async function upsertClothingItemOffers(
     totalPrice: number;
   }>
 ): Promise<ClothingItemOffer[]> {
-  // Delete existing offers for this item
-  await sql`
-    DELETE FROM clothing_item_offers
-    WHERE clothing_item_id = ${clothingItemId}
-  `;
-
-  // Insert new offers
-  const inserted: ClothingItemOffer[] = [];
-  for (const offer of offers) {
-    const result = await sql`
-      INSERT INTO clothing_item_offers (
-        clothing_item_id,
-        source,
-        merchant,
-        title,
-        price,
-        currency,
-        product_url,
-        affiliate_url,
-        thumbnail_url,
-        shipping_price,
-        total_price
-      )
-      VALUES (
-        ${clothingItemId},
-        ${offer.source},
-        ${offer.merchant},
-        ${offer.title},
-        ${offer.price},
-        ${offer.currency},
-        ${offer.productUrl},
-        ${offer.affiliateUrl},
-        ${offer.thumbnailUrl || null},
-        ${offer.shippingPrice || null},
-        ${offer.totalPrice}
-      )
-      RETURNING *
+  return withClothingItemOffersTable(async () => {
+    await sql`
+      DELETE FROM clothing_item_offers
+      WHERE clothing_item_id = ${clothingItemId}
     `;
-    inserted.push(result.rows[0] as ClothingItemOffer);
-  }
 
-  return inserted;
+    const inserted: ClothingItemOffer[] = [];
+    for (const offer of offers) {
+      const offerId = generateUuid();
+      const result = await sql`
+        INSERT INTO clothing_item_offers (
+          id,
+          clothing_item_id,
+          source,
+          merchant,
+          title,
+          price,
+          currency,
+          product_url,
+          affiliate_url,
+          thumbnail_url,
+          shipping_price,
+          total_price
+        )
+        VALUES (
+          ${offerId},
+          ${clothingItemId},
+          ${offer.source},
+          ${offer.merchant},
+          ${offer.title},
+          ${offer.price},
+          ${offer.currency},
+          ${offer.productUrl},
+          ${offer.affiliateUrl},
+          ${offer.thumbnailUrl || null},
+          ${offer.shippingPrice || null},
+          ${offer.totalPrice}
+        )
+        RETURNING *
+      `;
+      inserted.push(result.rows[0] as ClothingItemOffer);
+    }
+
+    return inserted;
+  });
 }
 
 /**
@@ -729,30 +744,32 @@ export async function getClothingItemOffers(
   clothingItemId: string,
   limit?: number
 ): Promise<ClothingItemOffer[]> {
-  return withClothingItemsTable(async () => {
-    let result;
-    
-    if (limit) {
-      result = await sql`
-        SELECT o.*
-        FROM clothing_item_offers o
-        INNER JOIN clothing_items c ON c.id = o.clothing_item_id
-        WHERE c.user_id = ${userId} AND o.clothing_item_id = ${clothingItemId}
-        ORDER BY o.total_price ASC
-        LIMIT ${limit}
-      `;
-    } else {
-      result = await sql`
-        SELECT o.*
-        FROM clothing_item_offers o
-        INNER JOIN clothing_items c ON c.id = o.clothing_item_id
-        WHERE c.user_id = ${userId} AND o.clothing_item_id = ${clothingItemId}
-        ORDER BY o.total_price ASC
-      `;
-    }
+  return withClothingItemOffersTable(() =>
+    withClothingItemsTable(async () => {
+      let result;
 
-    return result.rows as ClothingItemOffer[];
-  });
+      if (limit) {
+        result = await sql`
+          SELECT o.*
+          FROM clothing_item_offers o
+          INNER JOIN clothing_items c ON c.id = o.clothing_item_id
+          WHERE c.user_id = ${userId} AND o.clothing_item_id = ${clothingItemId}
+          ORDER BY o.total_price ASC
+          LIMIT ${limit}
+        `;
+      } else {
+        result = await sql`
+          SELECT o.*
+          FROM clothing_item_offers o
+          INNER JOIN clothing_items c ON c.id = o.clothing_item_id
+          WHERE c.user_id = ${userId} AND o.clothing_item_id = ${clothingItemId}
+          ORDER BY o.total_price ASC
+        `;
+      }
+
+      return result.rows as ClothingItemOffer[];
+    })
+  );
 }
 
 /**
@@ -763,15 +780,24 @@ export async function logAffiliateClick(data: {
   userId?: string | null;
   clickedUrl: string;
 }): Promise<void> {
-  await sql`
-    INSERT INTO affiliate_clicks (offer_id, user_id, clicked_url)
-    VALUES (${data.offerId || null}, ${data.userId || null}, ${data.clickedUrl})
-  `;
+  await withAffiliateClicksTable(async () => {
+    const clickId = generateUuid();
+    await sql`
+      INSERT INTO affiliate_clicks (id, offer_id, user_id, clicked_url)
+      VALUES (${clickId}, ${data.offerId || null}, ${data.userId || null}, ${data.clickedUrl})
+    `;
+  });
 }
 
 // Helpers to lazily provision tables when migrations haven't run
 const CLOTHING_ITEMS_TABLE = "clothing_items";
 let clothingItemsTableReady: Promise<void> | null = null;
+
+const CLOTHING_ITEM_OFFERS_TABLE = "clothing_item_offers";
+let clothingItemOffersTableReady: Promise<void> | null = null;
+
+const AFFILIATE_CLICKS_TABLE = "affiliate_clicks";
+let affiliateClicksTableReady: Promise<void> | null = null;
 
 const USER_OUTFITS_TABLE = "user_outfits";
 let userOutfitsTableReady: Promise<void> | null = null;
@@ -855,6 +881,131 @@ async function withClothingItemsTable<T>(operation: () => Promise<T>): Promise<T
   } catch (error) {
     if (isMissingRelationError(error, CLOTHING_ITEMS_TABLE)) {
       await ensureClothingItemsTable(true);
+      return await operation();
+    }
+    throw error;
+  }
+}
+
+async function createClothingItemOffersTable() {
+  await ensureClothingItemsTable();
+  await sql`
+    CREATE TABLE IF NOT EXISTS clothing_item_offers (
+      id UUID PRIMARY KEY,
+      clothing_item_id UUID NOT NULL,
+      source TEXT NOT NULL,
+      merchant TEXT NOT NULL,
+      title TEXT NOT NULL,
+      price NUMERIC(10, 2) NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'AUD',
+      product_url TEXT NOT NULL,
+      affiliate_url TEXT NOT NULL,
+      thumbnail_url TEXT,
+      shipping_price NUMERIC(10, 2),
+      total_price NUMERIC(10, 2) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'clothing_item_offers_clothing_item_id_fkey'
+      ) THEN
+        ALTER TABLE clothing_item_offers
+        ADD CONSTRAINT clothing_item_offers_clothing_item_id_fkey
+        FOREIGN KEY (clothing_item_id) REFERENCES clothing_items(id) ON DELETE CASCADE;
+      END IF;
+    END $$;
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS clothing_item_offers_clothing_item_idx ON clothing_item_offers (clothing_item_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS clothing_item_offers_source_idx ON clothing_item_offers (source)`;
+  await sql`CREATE INDEX IF NOT EXISTS clothing_item_offers_total_price_idx ON clothing_item_offers (total_price)`;
+  await sql`CREATE INDEX IF NOT EXISTS clothing_item_offers_created_at_idx ON clothing_item_offers (created_at)`;
+}
+
+async function ensureClothingItemOffersTable(forceRefresh = false): Promise<void> {
+  if (forceRefresh) {
+    clothingItemOffersTableReady = null;
+  }
+
+  if (!clothingItemOffersTableReady) {
+    clothingItemOffersTableReady = createClothingItemOffersTable().catch((error) => {
+      clothingItemOffersTableReady = null;
+      throw error;
+    });
+  }
+
+  return clothingItemOffersTableReady;
+}
+
+async function withClothingItemOffersTable<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    await ensureClothingItemOffersTable();
+    return await operation();
+  } catch (error) {
+    if (isMissingRelationError(error, CLOTHING_ITEM_OFFERS_TABLE)) {
+      await ensureClothingItemOffersTable(true);
+      return await operation();
+    }
+    throw error;
+  }
+}
+
+async function createAffiliateClicksTable() {
+  await ensureClothingItemOffersTable();
+  await sql`
+    CREATE TABLE IF NOT EXISTS affiliate_clicks (
+      id UUID PRIMARY KEY,
+      offer_id UUID,
+      user_id TEXT,
+      clicked_url TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'affiliate_clicks_offer_id_fkey'
+      ) THEN
+        ALTER TABLE affiliate_clicks
+        ADD CONSTRAINT affiliate_clicks_offer_id_fkey
+        FOREIGN KEY (offer_id) REFERENCES clothing_item_offers(id) ON DELETE SET NULL;
+      END IF;
+    END $$;
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS affiliate_clicks_offer_idx ON affiliate_clicks (offer_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS affiliate_clicks_user_idx ON affiliate_clicks (user_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS affiliate_clicks_created_at_idx ON affiliate_clicks (created_at)`;
+}
+
+async function ensureAffiliateClicksTable(forceRefresh = false): Promise<void> {
+  if (forceRefresh) {
+    affiliateClicksTableReady = null;
+  }
+
+  if (!affiliateClicksTableReady) {
+    affiliateClicksTableReady = createAffiliateClicksTable().catch((error) => {
+      affiliateClicksTableReady = null;
+      throw error;
+    });
+  }
+
+  return affiliateClicksTableReady;
+}
+
+async function withAffiliateClicksTable<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    await ensureAffiliateClicksTable();
+    return await operation();
+  } catch (error) {
+    if (isMissingRelationError(error, AFFILIATE_CLICKS_TABLE)) {
+      await ensureAffiliateClicksTable(true);
       return await operation();
     }
     throw error;
