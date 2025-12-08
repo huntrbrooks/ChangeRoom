@@ -15,6 +15,7 @@ import { ShopSaveModal, type ShopSaveResult, type ShopSaveClothingItem } from '.
 import { Sparkles, Search, Loader2, CreditCard, Zap, Shirt } from 'lucide-react';
 import { getWearingStylePromptText } from '@/lib/wearingStyles';
 import { isBypassUser } from '@/lib/bypass-config';
+import { ensureAbsoluteUrl } from '@/lib/url';
 
 // Force dynamic rendering to prevent static generation issues with Clerk
 export const dynamic = 'force-dynamic';
@@ -172,8 +173,9 @@ function HomeContent() {
           fileMeta.storage_path ||
           entry.analysis?.storage_path ||
           entry.analysis?.saved_filename;
-        const publicUrl =
-          fileMeta.file_url || entry.analysis?.file_url || null;
+        const publicUrl = ensureAbsoluteUrl(
+          fileMeta.file_url || entry.analysis?.file_url || null
+        );
 
         if (
           entry.clothingItemId ||
@@ -241,8 +243,9 @@ function HomeContent() {
           const saved = storageKey ? savedMap.get(storageKey) : undefined;
 
           if (saved) {
-            fileMeta.clothing_item_id = saved.id;
-            fileMeta.file_url = saved.public_url || fileMeta.file_url;
+          fileMeta.clothing_item_id = saved.id;
+          fileMeta.file_url =
+            ensureAbsoluteUrl(saved.public_url) || fileMeta.file_url;
             return {
               ...entry,
               clothingItemId: saved.id,
@@ -296,8 +299,9 @@ function HomeContent() {
       const analysisMeta = entry.analysis?.analysis;
       const fileMeta = entry.file as FileWithMetadata;
       const id = entry.clothingItemId || fileMeta.clothing_item_id;
-      const publicUrl =
-        fileMeta.file_url || entry.analysis?.file_url || '';
+      const publicUrl = ensureAbsoluteUrl(
+        fileMeta.file_url || entry.analysis?.file_url || null
+      );
 
       if (!analysisMeta || !id || !publicUrl) {
         return acc;
@@ -305,7 +309,7 @@ function HomeContent() {
 
       acc.push({
         id,
-        public_url: publicUrl,
+        public_url: publicUrl || '',
         category:
           analysisMeta.body_region ||
           analysisMeta.category ||
@@ -1106,15 +1110,17 @@ function HomeContent() {
                   Shop &amp; Save Deals
                 </h2>
                 <div className="space-y-4">
-                  {shopSaveResults.map((result) => (
+                  {shopSaveResults.map((result) => {
+                    const itemImageUrl = ensureAbsoluteUrl(result.item.public_url);
+                    return (
                     <div
                       key={result.item.id}
                       className="rounded-lg border border-black/15 bg-white/80 p-3 sm:p-4 shadow-[0_5px_20px_rgba(0,0,0,0.08)]"
                     >
                       <div className="flex gap-3">
-                        {result.item.public_url && (
+                        {itemImageUrl && (
                           <img
-                            src={result.item.public_url}
+                            src={itemImageUrl}
                             alt={result.item.description || result.item.subcategory || 'Wardrobe item'}
                             className="h-20 w-20 rounded-md border border-black/10 object-cover"
                           />
@@ -1190,7 +1196,8 @@ function HomeContent() {
                         </p>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </section>
             )}

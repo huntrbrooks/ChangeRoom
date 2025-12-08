@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { getUserClothingItems, insertClothingItems } from "@/lib/db-access";
+import { ensureAbsoluteUrl } from "@/lib/url";
 
 type ClothingItemInput = {
   storageKey: string;
@@ -41,7 +42,12 @@ export async function GET(req: NextRequest) {
       limit,
     });
 
-    return NextResponse.json({ clothingItems });
+    const normalizedItems = clothingItems.map((item) => ({
+      ...item,
+      public_url: ensureAbsoluteUrl(item.public_url) || item.public_url,
+    }));
+
+    return NextResponse.json({ clothingItems: normalizedItems });
   } catch (err: unknown) {
     console.error("get clothing-items error:", err);
     return NextResponse.json(
@@ -90,9 +96,12 @@ export async function POST(req: NextRequest) {
           return null;
         }
 
+        const normalizedPublicUrl =
+          ensureAbsoluteUrl(publicUrl) || publicUrl;
+
         return {
           storageKey,
-          publicUrl,
+          publicUrl: normalizedPublicUrl,
           category,
           subcategory:
             typeof item.subcategory === "string" ? item.subcategory : null,
@@ -122,8 +131,12 @@ export async function POST(req: NextRequest) {
     }
 
     const saved = await insertClothingItems(userId, normalized);
+    const normalizedSaved = saved.map((item) => ({
+      ...item,
+      public_url: ensureAbsoluteUrl(item.public_url) || item.public_url,
+    }));
 
-    return NextResponse.json({ clothingItems: saved });
+    return NextResponse.json({ clothingItems: normalizedSaved });
   } catch (err: unknown) {
     console.error("save clothing-items error:", err);
     return NextResponse.json(

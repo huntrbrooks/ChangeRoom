@@ -3,6 +3,7 @@
 import React, { useMemo } from 'react';
 import { CheckCircle2, ImageIcon } from 'lucide-react';
 import type { ShopSaveClothingItem } from './ShopSaveModal';
+import { ensureAbsoluteUrl } from '@/lib/url';
 
 interface ShopSaveSelectorProps {
   items: ShopSaveClothingItem[];
@@ -94,6 +95,8 @@ export const ShopSaveSelector: React.FC<ShopSaveSelectorProps> = ({
                 .filter(Boolean)
                 .join(', ');
 
+              const imageUrl = ensureAbsoluteUrl(item.public_url);
+
               return (
                 <button
                   key={item.id}
@@ -109,9 +112,9 @@ export const ShopSaveSelector: React.FC<ShopSaveSelectorProps> = ({
                   } ${selectionLimitReached ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-xl border border-black/10 bg-white">
-                    {item.public_url ? (
+                    {imageUrl ? (
                       <img
-                        src={item.public_url}
+                        src={imageUrl}
                         alt={item.description || item.subcategory || 'Wardrobe item'}
                         className="h-full w-full object-cover"
                         loading="lazy"

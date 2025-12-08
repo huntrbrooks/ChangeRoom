@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { ShopSaveSelector } from './ShopSaveSelector';
+import { ensureAbsoluteUrl } from '@/lib/url';
 
 export interface ShopSaveClothingItem {
   id: string;
@@ -106,8 +107,16 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
         if (!item || !item.id) {
           return;
         }
-        const existing = map.get(item.id) || {};
-        map.set(item.id, { ...existing, ...item });
+        const existing = map.get(item.id);
+        const merged = {
+          ...(existing || {}),
+          ...item,
+        } as ShopSaveClothingItem;
+        const normalizedUrl =
+          ensureAbsoluteUrl(merged.public_url) ||
+          merged.public_url ||
+          '';
+        map.set(item.id, { ...merged, public_url: normalizedUrl });
       });
       return Array.from(map.values());
     });
