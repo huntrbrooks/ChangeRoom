@@ -972,6 +972,12 @@ function HomeContent() {
                 selectedFile={userImage} 
                 onFileSelect={setUserImage}
                 onClear={() => setUserImage(null)}
+                optimizeConfig={{
+                  enabled: true,
+                  maxSizeMB: 9.5,
+                  maxDimension: 2200,
+                  preferredMimeType: 'image/jpeg',
+                }}
               />
             </section>
 
