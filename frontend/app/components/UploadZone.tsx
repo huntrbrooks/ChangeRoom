@@ -431,23 +431,13 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
             {showGuidance && (
               <div className="space-y-2">
                 <p className="font-semibold text-black text-sm">What to upload here</p>
-            <div className="grid grid-cols-2 gap-2 text-[11px] text-black/80">
-                  <div className="rounded border border-black/10 bg-white p-2">
-                    <p className="font-semibold text-[11px] mb-1">Angles</p>
-                    <div className="flex flex-wrap gap-1">
-                      <span className="px-2 py-1 rounded bg-black/5 border border-black/10">Front</span>
-                      <span className="px-2 py-1 rounded bg-black/5 border border-black/10">45°</span>
-                      <span className="px-2 py-1 rounded bg-black/5 border border-black/10">Profile</span>
-                    </div>
-                  </div>
-                  <div className="rounded border border-black/10 bg-white p-2">
-                    <p className="font-semibold text-[11px] mb-1">Quality</p>
-                    <div className="flex flex-wrap gap-1">
-                      <span className="px-2 py-1 rounded bg-black/5 border border-black/10">Good light</span>
-                      <span className="px-2 py-1 rounded bg-black/5 border border-black/10">Full body</span>
-                      <span className="px-2 py-1 rounded bg-black/5 border border-black/10">Face visible</span>
-                    </div>
-                  </div>
+                <div className="rounded border border-black/10 bg-white p-2 flex items-center justify-center">
+                  <img
+                    src="/example poses.jpeg"
+                    alt="Guidance showing acceptable angles and photo quality examples"
+                    className="w-full h-auto rounded"
+                    loading="lazy"
+                  />
                 </div>
               </div>
             )}
