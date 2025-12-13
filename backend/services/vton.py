@@ -242,7 +242,7 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
         
         user_refs = "image" if user_img_count == 1 else f"first {user_img_count} images"
         
-        text_prompt = (
+        base_text_prompt = (
             "You are a fashion virtual try-on engine. "
             f"Use the {user_refs} as the person reference. These images define the person's identity, body shape, and pose. "
             f"Use the subsequent {garment_img_count} images as garments that must be worn by that same person. "
@@ -299,14 +299,14 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                     normalized_instructions.append(sanitized)
             
             if normalized_instructions:
-                text_prompt += "\n\nMANDATORY wearing directives (never override these):\n"
+                base_text_prompt += "\n\nMANDATORY wearing directives (never override these):\n"
                 for instruction in normalized_instructions:
-                    text_prompt += f"- {instruction}\n"
+                    base_text_prompt += f"- {instruction}\n"
                 logger.info(f"Added {len(normalized_instructions)} wearing style instruction(s)")
             
             # Add per-item wearing styles if available (alternative format)
             if items_wearing_styles and isinstance(items_wearing_styles, list) and len(items_wearing_styles) > 0:
-                text_prompt += "\n\nPer-item wearing instructions (non-negotiable):\n"
+                base_text_prompt += "\n\nPer-item wearing instructions (non-negotiable):\n"
                 valid_item_styles = 0
                 for idx, item_info in enumerate(items_wearing_styles):
                     if not isinstance(item_info, dict):
@@ -345,7 +345,7 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                     # So image reference is user_img_count + item_index + 1
                     image_reference = user_img_count + item_index + 1
                     
-                    text_prompt += (
+                    base_text_prompt += (
                         f"- Image {image_reference}: Render the {safe_descriptor} {safe_style_desc}. "
                         "This positioning is mandatory.\n"
                     )
@@ -353,18 +353,18 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                 logger.info(f"Added {valid_item_styles} per-item wearing style(s)")
             
             if garment_metadata.get('strict_wearing_enforcement'):
-                text_prompt += (
+                base_text_prompt += (
                     "\n\nSTRICT COMPLIANCE: Adjust garment fit, tuck, tilt, or orientation until every "
                     "wearing instruction is satisfied exactly. Never revert to default placements."
                 )
             
             if garment_metadata.get('wearing_instruction_policy'):
                 policy = garment_metadata.get('wearing_instruction_policy')
-                text_prompt += f"\n\nWearing instruction policy: {policy}."
+                base_text_prompt += f"\n\nWearing instruction policy: {policy}."
             
             if garment_metadata.get('wearing_instruction_summary'):
                 summary = garment_metadata.get('wearing_instruction_summary')
-                text_prompt += f"\n\nSummary of required styling outcomes: {summary}"
+                base_text_prompt += f"\n\nSummary of required styling outcomes: {summary}"
             
             # Add other metadata instructions (sanitize any clothing descriptions)
             other_metadata = {k: v for k, v in garment_metadata.items()
@@ -389,12 +389,12 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                         sanitized_metadata[key] = value
 
                 metadata_str = json.dumps(sanitized_metadata, indent=2, ensure_ascii=False)
-                text_prompt += f"\n\nAdditional styling instructions:\n{metadata_str}"
+                base_text_prompt += f"\n\nAdditional styling instructions:\n{metadata_str}"
             
             logger.info(f"Using metadata: {list(garment_metadata.keys())}")
         
         # Add content filter avoidance instructions to the prompt
-        text_prompt += (
+        base_text_prompt += (
             "\n\nCONTENT FILTER AVOIDANCE: "
             "If this request involves any clothing that could be considered revealing or intimate, "
             "automatically add subtle opacity, coverage, or conservative styling to ensure the generated image "
@@ -402,37 +402,33 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
             "Make tasteful modifications as needed without changing the fundamental garment type or purpose."
         )
 
-        # Build parts array: text prompt first, then user images, then clothing images
-        # Gemini 3 Pro Image expects: text instructions + base images + clothing images
-        parts = [
-            {
-                "text": text_prompt
-            }
-        ]
-        
-        # Add user images
-        for item in user_data:
-             parts.append({
-                "inline_data": {
-                    "mime_type": item['mimeType'],
-                    "data": item['base64'],
+        def build_parts(text_prompt_value: str):
+            """Construct request parts with a given text prompt."""
+            parts_local = [
+                {
+                    "text": text_prompt_value
                 }
-            })
+            ]
+            for item in user_data:
+                parts_local.append({
+                    "inline_data": {
+                        "mime_type": item['mimeType'],
+                        "data": item['base64'],
+                    }
+                })
+            for item in garment_data:
+                parts_local.append({
+                    "inline_data": {
+                        "mime_type": item['mimeType'],
+                        "data": item['base64'],
+                    }
+                })
+            return parts_local
 
-        # Add clothing images
-        for item in garment_data:
-            parts.append({
-                "inline_data": {
-                    "mime_type": item['mimeType'],
-                    "data": item['base64'],
-                }
-            })
-        
         # Use Gemini 3 Pro Image for virtual try-on
         logger.info(f"🚀 Starting virtual try-on generation with Gemini 3 Pro Image")
         logger.info(f"   Person images: {len(limited_user_images)}")
         logger.info(f"   Clothing items: {len(limited_garments)}")
-        logger.info(f"   Total content parts: {len(parts)} (1 text + {len(limited_user_images) + len(limited_garments)} images)")
         
         base_url = "https://generativelanguage.googleapis.com/v1beta/models"
         model_name = "gemini-3-pro-image-preview"
@@ -458,31 +454,32 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
         except Exception as e:
             logger.warning(f"Could not verify model availability: {e}")
         
-        # Make async HTTP request using Gemini 3 Pro Image
+        max_attempts = 3
+        last_failure_details = {}
+
+        def summarize_candidate(candidate_obj):
+            finish_reason_local = candidate_obj.get("finishReason") or candidate_obj.get("finish_reason")
+            safety_ratings = candidate_obj.get("safetyRatings") or []
+            content_obj = candidate_obj.get("content", {}) or {}
+            parts_local = content_obj.get("parts", []) or []
+            texts = [str(p.get("text", "")) for p in parts_local if isinstance(p, dict) and "text" in p and p.get("text")]
+            return finish_reason_local, safety_ratings, parts_local, texts
+
         async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minute timeout for image generation
-            last_error = None
-            max_retries = 3
-            
-            for attempt in range(max_retries):
+            for attempt in range(1, max_attempts + 1):
+                retry_suffix = ""
+                if attempt > 1:
+                    retry_suffix = (
+                        f"\n\nRETRY {attempt}: If any garment or pose seems revealing or close to intimate apparel, "
+                        "automatically add opaque lining, adjust camera/framing to be professional, and avoid any adult or unsafe context. "
+                        "Prioritize modesty while keeping the garment recognizable."
+                    )
+                text_prompt = base_text_prompt + retry_suffix
+                parts = build_parts(text_prompt)
+
+                logger.info(f"Attempt {attempt}/{max_attempts} - calling Gemini 3 Pro Image: {model_name}")
                 try:
-                    # On retries, add stricter safety instructions
-                    if attempt > 0:
-                        logger.warning(f"Attempt {attempt + 1}/{max_retries}: Retrying with stricter safety/modesty instructions...")
-                        safety_override = (
-                            f"\n\nRETRY ATTEMPT {attempt + 1}: STRICT SAFETY COMPLIANCE REQUIRED.\n"
-                            "The previous generation was blocked by safety filters. You MUST modify the image to comply.\n"
-                            "1. INCREASE MODESTY: Add opaque fabric layers to cover any revealing areas (neckline, midriff, etc).\n"
-                            "2. REDUCE REALISM: If photorealism triggers filters, switch to a high-quality fashion illustration or mannequin style.\n"
-                            "3. NEUTRALIZE POSE: Ensure the pose is static, professional, and non-suggestive.\n"
-                            "4. ABSTRACT IF NEEDED: Focus on the garment technical details rather than the person if necessary.\n"
-                            "GENERATE A VALID IMAGE AT ALL COSTS WHILE MAINTAINING SAFETY."
-                        )
-                        # Append override to the text prompt
-                        parts[0]["text"] = text_prompt + safety_override
-                    
                     endpoint = f"{base_url}/{model_name}:generateContent"
-                    logger.info(f"Calling Gemini 3 Pro Image: {model_name} (Attempt {attempt + 1})")
-                        
                     response = await client.post(
                         f"{endpoint}?key={api_key}",
                         headers={
@@ -524,105 +521,127 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                         # #region agent log
                         try:
                             with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                                f.write(json_lib.dumps({"location":"vton.py:326","message":"Gemini API request failed","data":{"statusCode":response.status_code,"errorText":error_text[:500]},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
+                                f.write(json_lib.dumps({"location":"vton.py:326","message":"Gemini API request failed","data":{"statusCode":response.status_code,"errorText":error_text[:500],"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
                         except: pass
                         # #endregion
-                        logger.error(f"Gemini 3 Pro Image failed: {response.status_code} - {error_text}")
-                        # If it's a 400 or 500, it might be worth retrying, but usually these are permanent. 
-                        # However, for 429 (Too Many Requests) or 503, we should definitely retry.
-                        # For content issues, we usually get 200 OK but with finishReason=SAFETY.
-                        # But sometimes 400 INVALID_ARGUMENT happens. 
-                        # Let's verify if we should retry on non-success.
-                        if response.status_code in [429, 500, 503]:
-                             raise ValueError(f"Transient API error: {response.status_code}")
-                        raise ValueError(f"Gemini API error: {response.status_code} - {error_text}")
+                        logger.error(f"Gemini 3 Pro Image failed (attempt {attempt}): {response.status_code} - {error_text}")
+                        last_failure_details = {"status": response.status_code, "error": error_text[:500]}
+                        if attempt == max_attempts:
+                            raise ValueError(f"Gemini API error after {max_attempts} attempts: {response.status_code} - {error_text}")
+                        continue
                     
                     data = response.json()
                     # #region agent log
                     try:
                         with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                            f.write(json_lib.dumps({"location":"vton.py:331","message":"Gemini API response received","data":{"responseKeys":list(data.keys()) if isinstance(data,dict) else None,"hasCandidates":"candidates" in data if isinstance(data,dict) else False},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
+                            f.write(json_lib.dumps({"location":"vton.py:331","message":"Gemini API response received","data":{"responseKeys":list(data.keys()) if isinstance(data,dict) else None,"hasCandidates":"candidates" in data if isinstance(data,dict) else False,"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
                     except: pass
                     # #endregion
-                    
-                    # Log response structure for debugging
-                    logger.info(f"Gemini API response keys: {list(data.keys())}")
                     
                     # Extract image from response
                     candidates = data.get("candidates", [])
                     if not candidates:
-                        logger.error(f"No candidates in response. Full response: {json.dumps(data, indent=2)[:1000]}")
-                        raise ValueError("No candidates returned from Gemini 3 Pro Image")
+                        logger.error(f"No candidates in response (attempt {attempt}). Full response: {json.dumps(data, indent=2)[:1000]}")
+                        last_failure_details = {"reason": "no_candidates", "response": str(data)[:500]}
+                        if attempt == max_attempts:
+                            raise ValueError("No candidates returned from Gemini 3 Pro Image")
+                        continue
                     
                     candidate = candidates[0]
-                    # ... processing candidate ...
+                    finish_reason, safety_ratings, content_parts, text_parts = summarize_candidate(candidate)
+
+                    if safety_ratings:
+                        logger.warning(f"Safety ratings (attempt {attempt}): {safety_ratings}")
+                    if finish_reason:
+                        logger.info(f"Finish reason (attempt {attempt}): {finish_reason}")
+                        if finish_reason != "STOP":
+                            logger.warning(f"Unexpected finish reason (attempt {attempt}): {finish_reason}")
                     
-                    # Check for safety ratings or finish reasons
-                    if "safetyRatings" in candidate:
-                        logger.warning(f"Safety ratings: {candidate.get('safetyRatings')}")
-                    if "finishReason" in candidate:
-                        finish_reason = candidate.get("finishReason")
-                        logger.info(f"Finish reason: {finish_reason}")
-                        
-                    content = candidate.get("content", {})
-                    content_parts = content.get("parts", [])
+                    logger.info(f"Number of parts in response: {len(content_parts)}")
                     
-                    # Find image part
+                    for i, part in enumerate(content_parts):
+                        logger.info(f"Part {i} keys: {list(part.keys())}")
+                        if "text" in part:
+                            logger.info(f"Part {i} has text: {str(part.get('text', ''))[:100]}")
+                    
+                    # Find the first image in the response
                     image_part = None
                     for part in content_parts:
-                        if "inline_data" in part and part["inline_data"].get("data"):
-                            image_part = part["inline_data"]
-                            break
-                        elif "inlineData" in part and part["inlineData"].get("data"):
-                            image_part = part["inlineData"]
-                            break
+                        # Try snake_case first (Python API format)
+                        if "inline_data" in part:
+                            inline_data = part["inline_data"]
+                            if inline_data.get("data"):
+                                image_part = inline_data
+                                logger.info(f"Found image in part with inline_data (snake_case)")
+                                break
+                        # Try camelCase (JavaScript API format)
+                        elif "inlineData" in part:
+                            inline_data = part["inlineData"]
+                            if inline_data.get("data"):
+                                image_part = inline_data
+                                logger.info(f"Found image in part with inlineData (camelCase)")
+                                break
                     
-                    if not image_part:
-                        # Log full response structure
-                        logger.error(f"No image part found. Response structure: {json.dumps(data, indent=2)[:2000]}")
+                    if image_part and finish_reason in (None, "STOP"):
+                        image_base64 = image_part.get("data")
+                        mime_type = image_part.get("mime_type", "image/png")
                         
-                        finish_reason = candidate.get("finishReason")
-                        finish_message = candidate.get("finishMessage")
+                        if not image_base64:
+                            last_failure_details = {"reason": "empty_image_data", "finish_reason": finish_reason}
+                            if attempt == max_attempts:
+                                raise ValueError("Image data is empty in Gemini response")
+                            continue
                         
-                        if finish_reason in ["SAFETY", "OTHER", "RECITATION"]:
-                            # Force a retry
-                            raise ValueError(f"Blocked by filters ({finish_reason}). Message: {finish_message}")
-                        
-                        raise ValueError(f"No image generated. Finish reason: {finish_reason}. {finish_message or ''}")
+                        logger.info(f"✅ Successfully generated image using Gemini 3 Pro Image on attempt {attempt}")
+                        logger.info(f"   Image size: {len(image_base64)} characters (base64), MIME type: {mime_type}")
+                        return f"data:{mime_type};base64,{image_base64}"
                     
-                    # Success!
-                    image_base64 = image_part.get("data")
-                    mime_type = image_part.get("mime_type", "image/png")
+                    # If we get here, we either have no image or a non-STOP finish reason
+                    last_failure_details = {
+                        "reason": "no_image_or_finish_reason",
+                        "finish_reason": finish_reason,
+                        "text": text_parts[:2] if text_parts else [],
+                        "has_image": bool(image_part),
+                        "attempt": attempt,
+                    }
+                    logger.warning(f"No usable image on attempt {attempt}. Details: {last_failure_details}")
+                    # #region agent log
+                    try:
+                        with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
+                            f.write(json_lib.dumps({"location":"vton.py:386","message":"No image part in response","data":{"contentPartsCount":len(content_parts),"finishReason":finish_reason,"attempt":attempt,"text":text_parts[:2] if text_parts else []},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
+                    except: pass
+                    # #endregion
                     
-                    if not image_base64:
-                        raise ValueError("Image data is empty in Gemini response")
-                    
-                    logger.info(f"✅ Successfully generated image using Gemini 3 Pro Image (Attempt {attempt + 1})")
-                    return f"data:{mime_type};base64,{image_base64}"
-
-                except ValueError as e:
-                    last_error = e
-                    logger.warning(f"Generation attempt {attempt + 1} failed: {e}")
-                    # If this was the last attempt, raise the error
-                    if attempt == max_retries - 1:
-                        logger.error("All retry attempts failed.")
-                        raise last_error
-                    # Otherwise loop continues
+                    if attempt == max_attempts:
+                        readable_text = text_parts[0][:300] if text_parts else ""
+                        raise ValueError(f"No image generated after {max_attempts} attempts. Finish reason: {finish_reason or 'UNKNOWN'}. Model message: {readable_text}")
+                    # Otherwise retry with softer prompt
                     continue
-                    
+
+                except httpx.TimeoutException as e:
+                    # #region agent log
+                    try:
+                        with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
+                            f.write(json_lib.dumps({"location":"vton.py:401","message":"Gemini API timeout","data":{"error":str(e),"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"F"})+"\n")
+                    except: pass
+                    # #endregion
+                    logger.error(f"Timeout calling Gemini 3 Pro Image on attempt {attempt}: {e}")
+                    last_failure_details = {"reason": "timeout", "error": str(e), "attempt": attempt}
+                    if attempt == max_attempts:
+                        raise ValueError(f"Request timed out after {max_attempts} attempts. Please try again.")
+                    continue
                 except Exception as e:
-                    logger.error(f"Unexpected error in attempt {attempt + 1}: {e}", exc_info=True)
-                    if attempt == max_retries - 1:
-                        raise e
+                    # #region agent log
+                    try:
+                        with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
+                            f.write(json_lib.dumps({"location":"vton.py:404","message":"Gemini API call error","data":{"errorType":type(e).__name__,"errorMessage":str(e),"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
+                    except: pass
+                    # #endregion
+                    logger.error(f"Error calling Gemini 3 Pro Image on attempt {attempt}: {e}")
+                    last_failure_details = {"reason": "exception", "error": str(e), "attempt": attempt}
+                    if attempt == max_attempts:
+                        raise
                     continue
-                    
-            # Should be unreachable if logic is correct, but safe fallback
-            if last_error:
-                raise last_error
-            raise ValueError("Generation failed after multiple attempts (unknown error).")
-            
-        # Remove the old indentation level code below since we wrapped it
-
             
     except Exception as e:
         # #region agent log
