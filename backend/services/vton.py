@@ -460,157 +460,169 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
         
         # Make async HTTP request using Gemini 3 Pro Image
         async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minute timeout for image generation
-            try:
-                endpoint = f"{base_url}/{model_name}:generateContent"
-                logger.info(f"Calling Gemini 3 Pro Image: {model_name}")
+            last_error = None
+            max_retries = 3
+            
+            for attempt in range(max_retries):
+                try:
+                    # On retries, add stricter safety instructions
+                    if attempt > 0:
+                        logger.warning(f"Attempt {attempt + 1}/{max_retries}: Retrying with stricter safety/modesty instructions...")
+                        safety_override = (
+                            f"\n\nRETRY ATTEMPT {attempt + 1}: STRICT SAFETY COMPLIANCE REQUIRED.\n"
+                            "The previous generation was blocked by safety filters. You MUST modify the image to comply.\n"
+                            "1. INCREASE MODESTY: Add opaque fabric layers to cover any revealing areas (neckline, midriff, etc).\n"
+                            "2. REDUCE REALISM: If photorealism triggers filters, switch to a high-quality fashion illustration or mannequin style.\n"
+                            "3. NEUTRALIZE POSE: Ensure the pose is static, professional, and non-suggestive.\n"
+                            "4. ABSTRACT IF NEEDED: Focus on the garment technical details rather than the person if necessary.\n"
+                            "GENERATE A VALID IMAGE AT ALL COSTS WHILE MAINTAINING SAFETY."
+                        )
+                        # Append override to the text prompt
+                        parts[0]["text"] = text_prompt + safety_override
                     
-                response = await client.post(
-                    f"{endpoint}?key={api_key}",
-                    headers={
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "contents": [
-                            {
-                                "role": "user",
-                                "parts": parts,
-                            }
-                        ],
-                        "generationConfig": {
-                            "responseModalities": ["TEXT", "IMAGE"],  # Required for Gemini image models
+                    endpoint = f"{base_url}/{model_name}:generateContent"
+                    logger.info(f"Calling Gemini 3 Pro Image: {model_name} (Attempt {attempt + 1})")
+                        
+                    response = await client.post(
+                        f"{endpoint}?key={api_key}",
+                        headers={
+                            "Content-Type": "application/json",
                         },
-                        "safetySettings": [
-                            {
-                                "category": "HARM_CATEGORY_HARASSMENT",
-                                "threshold": "BLOCK_NONE"
+                        json={
+                            "contents": [
+                                {
+                                    "role": "user",
+                                    "parts": parts,
+                                }
+                            ],
+                            "generationConfig": {
+                                "responseModalities": ["TEXT", "IMAGE"],  # Required for Gemini image models
                             },
-                            {
-                                "category": "HARM_CATEGORY_HATE_SPEECH",
-                                "threshold": "BLOCK_NONE"
-                            },
-                            {
-                                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                                "threshold": "BLOCK_LOW_AND_ABOVE"
-                            },
-                            {
-                                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                                "threshold": "BLOCK_NONE"
-                            }
-                        ]
-                    },
-                )
-                
-                if not response.is_success:
-                    error_text = response.text
+                            "safetySettings": [
+                                {
+                                    "category": "HARM_CATEGORY_HARASSMENT",
+                                    "threshold": "BLOCK_NONE"
+                                },
+                                {
+                                    "category": "HARM_CATEGORY_HATE_SPEECH",
+                                    "threshold": "BLOCK_NONE"
+                                },
+                                {
+                                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                                    "threshold": "BLOCK_LOW_AND_ABOVE"
+                                },
+                                {
+                                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                                    "threshold": "BLOCK_NONE"
+                                }
+                            ]
+                        },
+                    )
+                    
+                    if not response.is_success:
+                        error_text = response.text
+                        # #region agent log
+                        try:
+                            with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
+                                f.write(json_lib.dumps({"location":"vton.py:326","message":"Gemini API request failed","data":{"statusCode":response.status_code,"errorText":error_text[:500]},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
+                        except: pass
+                        # #endregion
+                        logger.error(f"Gemini 3 Pro Image failed: {response.status_code} - {error_text}")
+                        # If it's a 400 or 500, it might be worth retrying, but usually these are permanent. 
+                        # However, for 429 (Too Many Requests) or 503, we should definitely retry.
+                        # For content issues, we usually get 200 OK but with finishReason=SAFETY.
+                        # But sometimes 400 INVALID_ARGUMENT happens. 
+                        # Let's verify if we should retry on non-success.
+                        if response.status_code in [429, 500, 503]:
+                             raise ValueError(f"Transient API error: {response.status_code}")
+                        raise ValueError(f"Gemini API error: {response.status_code} - {error_text}")
+                    
+                    data = response.json()
                     # #region agent log
                     try:
                         with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                            f.write(json_lib.dumps({"location":"vton.py:326","message":"Gemini API request failed","data":{"statusCode":response.status_code,"errorText":error_text[:500]},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
+                            f.write(json_lib.dumps({"location":"vton.py:331","message":"Gemini API response received","data":{"responseKeys":list(data.keys()) if isinstance(data,dict) else None,"hasCandidates":"candidates" in data if isinstance(data,dict) else False},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
                     except: pass
                     # #endregion
-                    logger.error(f"Gemini 3 Pro Image failed: {response.status_code} - {error_text}")
-                    raise ValueError(f"Gemini API error: {response.status_code} - {error_text}")
-                
-                data = response.json()
-                # #region agent log
-                try:
-                    with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                        f.write(json_lib.dumps({"location":"vton.py:331","message":"Gemini API response received","data":{"responseKeys":list(data.keys()) if isinstance(data,dict) else None,"hasCandidates":"candidates" in data if isinstance(data,dict) else False},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
-                except: pass
-                # #endregion
-                
-                # Log response structure for debugging
-                logger.info(f"Gemini API response keys: {list(data.keys())}")
-                
-                # Extract image from response
-                candidates = data.get("candidates", [])
-                if not candidates:
-                    logger.error(f"No candidates in response. Full response: {json.dumps(data, indent=2)[:1000]}")
-                    raise ValueError("No candidates returned from Gemini 3 Pro Image")
-                
-                candidate = candidates[0]
-                logger.info(f"Candidate keys: {list(candidate.keys())}")
-                
-                # Check for safety ratings or finish reasons
-                if "safetyRatings" in candidate:
-                    logger.warning(f"Safety ratings: {candidate.get('safetyRatings')}")
-                if "finishReason" in candidate:
-                    finish_reason = candidate.get("finishReason")
-                    logger.info(f"Finish reason: {finish_reason}")
-                    if finish_reason and finish_reason != "STOP":
-                        logger.warning(f"Unexpected finish reason: {finish_reason}")
-                
-                content = candidate.get("content", {})
-                logger.info(f"Content keys: {list(content.keys())}")
-                
-                content_parts = content.get("parts", [])
-                logger.info(f"Number of parts in response: {len(content_parts)}")
-                
-                # Log part types for debugging
-                for i, part in enumerate(content_parts):
-                    logger.info(f"Part {i} keys: {list(part.keys())}")
-                    if "text" in part:
-                        logger.info(f"Part {i} has text: {str(part.get('text', ''))[:100]}")
-                
-                # Find the first image in the response
-                # Check both snake_case (inline_data) and camelCase (inlineData)
-                image_part = None
-                for part in content_parts:
-                    # Try snake_case first (Python API format)
-                    if "inline_data" in part:
-                        inline_data = part["inline_data"]
-                        if inline_data.get("data"):
-                            image_part = inline_data
-                            logger.info(f"Found image in part with inline_data (snake_case)")
+                    
+                    # Log response structure for debugging
+                    logger.info(f"Gemini API response keys: {list(data.keys())}")
+                    
+                    # Extract image from response
+                    candidates = data.get("candidates", [])
+                    if not candidates:
+                        logger.error(f"No candidates in response. Full response: {json.dumps(data, indent=2)[:1000]}")
+                        raise ValueError("No candidates returned from Gemini 3 Pro Image")
+                    
+                    candidate = candidates[0]
+                    # ... processing candidate ...
+                    
+                    # Check for safety ratings or finish reasons
+                    if "safetyRatings" in candidate:
+                        logger.warning(f"Safety ratings: {candidate.get('safetyRatings')}")
+                    if "finishReason" in candidate:
+                        finish_reason = candidate.get("finishReason")
+                        logger.info(f"Finish reason: {finish_reason}")
+                        
+                    content = candidate.get("content", {})
+                    content_parts = content.get("parts", [])
+                    
+                    # Find image part
+                    image_part = None
+                    for part in content_parts:
+                        if "inline_data" in part and part["inline_data"].get("data"):
+                            image_part = part["inline_data"]
                             break
-                    # Try camelCase (JavaScript API format)
-                    elif "inlineData" in part:
-                        inline_data = part["inlineData"]
-                        if inline_data.get("data"):
-                            image_part = inline_data
-                            logger.info(f"Found image in part with inlineData (camelCase)")
+                        elif "inlineData" in part and part["inlineData"].get("data"):
+                            image_part = part["inlineData"]
                             break
-                
-                if not image_part:
-                    # #region agent log
-                    try:
-                        with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                            f.write(json_lib.dumps({"location":"vton.py:386","message":"No image part in response","data":{"contentPartsCount":len(content_parts)},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
-                    except: pass
-                    # #endregion
-                    # Log full response structure for debugging
-                    logger.error(f"No image part found. Response structure: {json.dumps(data, indent=2)[:2000]}")
-                    raise ValueError("No image part in Gemini 3 Pro Image response. Check logs for response structure.")
-                
-                image_base64 = image_part.get("data")
-                mime_type = image_part.get("mime_type", "image/png")
-                
-                if not image_base64:
-                    raise ValueError("Image data is empty in Gemini response")
-                
-                logger.info(f"✅ Successfully generated image using Gemini 3 Pro Image")
-                logger.info(f"   Image size: {len(image_base64)} characters (base64), MIME type: {mime_type}")
-                # Return as data URL
-                return f"data:{mime_type};base64,{image_base64}"
-                
-            except httpx.TimeoutException as e:
-                # #region agent log
-                try:
-                    with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                        f.write(json_lib.dumps({"location":"vton.py:401","message":"Gemini API timeout","data":{"error":str(e)},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"F"})+"\n")
-                except: pass
-                # #endregion
-                logger.error(f"Timeout calling Gemini 3 Pro Image: {e}")
-                raise ValueError(f"Request timed out. Please try again.")
-            except Exception as e:
-                # #region agent log
-                try:
-                    with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                        f.write(json_lib.dumps({"location":"vton.py:404","message":"Gemini API call error","data":{"errorType":type(e).__name__,"errorMessage":str(e)},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
-                except: pass
-                # #endregion
-                logger.error(f"Error calling Gemini 3 Pro Image: {e}")
-                raise
+                    
+                    if not image_part:
+                        # Log full response structure
+                        logger.error(f"No image part found. Response structure: {json.dumps(data, indent=2)[:2000]}")
+                        
+                        finish_reason = candidate.get("finishReason")
+                        finish_message = candidate.get("finishMessage")
+                        
+                        if finish_reason in ["SAFETY", "OTHER", "RECITATION"]:
+                            # Force a retry
+                            raise ValueError(f"Blocked by filters ({finish_reason}). Message: {finish_message}")
+                        
+                        raise ValueError(f"No image generated. Finish reason: {finish_reason}. {finish_message or ''}")
+                    
+                    # Success!
+                    image_base64 = image_part.get("data")
+                    mime_type = image_part.get("mime_type", "image/png")
+                    
+                    if not image_base64:
+                        raise ValueError("Image data is empty in Gemini response")
+                    
+                    logger.info(f"✅ Successfully generated image using Gemini 3 Pro Image (Attempt {attempt + 1})")
+                    return f"data:{mime_type};base64,{image_base64}"
+
+                except ValueError as e:
+                    last_error = e
+                    logger.warning(f"Generation attempt {attempt + 1} failed: {e}")
+                    # If this was the last attempt, raise the error
+                    if attempt == max_retries - 1:
+                        logger.error("All retry attempts failed.")
+                        raise last_error
+                    # Otherwise loop continues
+                    continue
+                    
+                except Exception as e:
+                    logger.error(f"Unexpected error in attempt {attempt + 1}: {e}", exc_info=True)
+                    if attempt == max_retries - 1:
+                        raise e
+                    continue
+                    
+            # Should be unreachable if logic is correct, but safe fallback
+            if last_error:
+                raise last_error
+            raise ValueError("Generation failed after multiple attempts (unknown error).")
+            
+        # Remove the old indentation level code below since we wrapped it
+
             
     except Exception as e:
         # #region agent log
