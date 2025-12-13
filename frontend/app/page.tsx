@@ -53,7 +53,7 @@ const formatCurrency = (value?: number | null, currency?: string | null) => {
 
 function HomeContent() {
   const { user, isLoaded } = useUser();
-  const [userImage, setUserImage] = useState<File | null>(null);
+  const [userImages, setUserImages] = useState<File[]>([]);
   
   // Updated state structure to track images with their analyses
   interface ImageWithAnalysis {
@@ -380,7 +380,7 @@ function HomeContent() {
   };
 
   const handleGenerate = async () => {
-    console.log("handleGenerate called", { userImage: !!userImage, wardrobeItems: wardrobeItems.length, billing, isOnTrial });
+    console.log("handleGenerate called", { userImagesCount: userImages.length, wardrobeItems: wardrobeItems.length, billing, isOnTrial });
     
     // Prevent multiple simultaneous calls
     if (isGenerating) {
@@ -392,8 +392,8 @@ function HomeContent() {
       return;
     }
     
-    if (!userImage) {
-      const errorMsg = "Please upload a photo of yourself.";
+    if (userImages.length === 0) {
+      const errorMsg = "Please upload at least one photo of yourself.";
       console.log("Validation failed:", errorMsg);
       setError(errorMsg);
       return;
@@ -479,7 +479,16 @@ function HomeContent() {
       let tryOnRes;
       try {
         const tryOnFormData = new FormData();
-        tryOnFormData.append('user_image', userImage);
+        // Append all user images
+        userImages.forEach((img) => {
+          tryOnFormData.append('user_images', img);
+        });
+        
+        // Also append the first one as 'user_image' for backward compatibility
+        if (userImages.length > 0) {
+           tryOnFormData.append('user_image', userImages[0]);
+        }
+
         preparedTryOnFiles = activeWardrobeItems.map(item => item.file);
 
         preparedTryOnFiles.forEach((file, index) => {
@@ -639,7 +648,7 @@ function HomeContent() {
 
         console.log("Starting try-on generation...");
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/8b25fdd5-4589-4281-bfc2-e9bb432457fe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:640',message:'Frontend try-on request starting',data:{apiUrl:API_URL,userImageSize:userImage?.size,clothingItemsCount:preparedTryOnFiles.length,metadataKeys:Object.keys(metadata)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+        fetch('http://127.0.0.1:7242/ingest/8b25fdd5-4589-4281-bfc2-e9bb432457fe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:640',message:'Frontend try-on request starting',data:{apiUrl:API_URL,userImagesCount:userImages.length,clothingItemsCount:preparedTryOnFiles.length,metadataKeys:Object.keys(metadata)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
         // #endregion
         tryOnRes = await axios.post(`${API_URL}/api/try-on`, tryOnFormData, {
           headers: { 'Content-Type': 'multipart/form-data' },
@@ -998,15 +1007,17 @@ function HomeContent() {
                 Upload Yourself
               </h2>
               <UploadZone 
-                label="Your Photo" 
-                selectedFile={userImage} 
-                onFileSelect={(file) => {
+                label="Your Photos" 
+                multiple={true}
+                maxFiles={5}
+                selectedFiles={userImages} 
+                onFilesSelect={(files) => {
                   if (!requireAuth()) {
                     return;
                   }
-                  setUserImage(file);
+                  setUserImages(files);
                 }}
-                onClear={() => setUserImage(null)}
+                onClear={() => setUserImages([])}
                 isAuthenticated={isAuthenticated}
                 onAuthRequired={requireAuth}
                 blockedMessage="Please sign in to upload your photo."

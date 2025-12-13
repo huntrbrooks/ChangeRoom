@@ -12,13 +12,13 @@ logger = logging.getLogger(__name__)
 # This module uses direct REST API calls to Gemini API with API key authentication.
 # No SDKs or OAuth2 are required - just set GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable.
 
-async def generate_try_on(user_image_file, garment_image_files, category="upper_body", garment_metadata=None):
+async def generate_try_on(user_image_files, garment_image_files, category="upper_body", garment_metadata=None):
     """
     Uses Gemini 3 Pro (Nano Banana Pro) image editing to combine person and clothing images.
     Generates a photorealistic image of the person wearing all clothing items.
     
     Args:
-        user_image_file: File-like object of the person image (USER_IMAGE).
+        user_image_files: File-like object or list of File-like objects of the person image(s) (USER_IMAGE).
         garment_image_files: File-like object or list of File-like objects of clothing images (CLOTHING_IMAGES).
         category: Category of the garment (upper_body, lower_body, dresses) - kept for backward compatibility.
         garment_metadata: Optional metadata dict with styling instructions (background, style, framing, pose, camera, extras).
@@ -26,15 +26,19 @@ async def generate_try_on(user_image_file, garment_image_files, category="upper_
     Returns:
         str: Base64 data URL of the generated image.
     """
-    # Normalize to list if single file
+    # Normalize user images to list
+    if not isinstance(user_image_files, list):
+        user_image_files = [user_image_files]
+
+    # Normalize garments to list if single file
     if not isinstance(garment_image_files, list):
         garment_image_files = [garment_image_files]
     
     # Use Gemini 3 Pro for image generation
-    return await _generate_with_gemini(user_image_file, garment_image_files, category, garment_metadata)
+    return await _generate_with_gemini(user_image_files, garment_image_files, category, garment_metadata)
 
 
-async def _generate_with_gemini(user_image_file, garment_image_files, category="upper_body", garment_metadata=None):
+async def _generate_with_gemini(user_image_files, garment_image_files, category="upper_body", garment_metadata=None):
     """
     Uses Gemini 3 Pro Image for virtual try-on image generation.
     Generates a photorealistic image of the person wearing all clothing items.
@@ -51,7 +55,7 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
     Request Format: JSON with text prompt + images as base64 inline_data and responseModalities: ["TEXT", "IMAGE"]
     
     Args:
-        user_image_file: File-like object of the person image
+        user_image_files: List of file-like objects of the person image(s)
         garment_image_files: List of file-like objects of clothing images
         category: Category of the garment (for metadata)
         garment_metadata: Optional styling instructions dict
@@ -76,18 +80,17 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
         # #region agent log
         try:
             with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                f.write(json_lib.dumps({"location":"vton.py:69","message":"Before reading images","data":{"hasSeek":hasattr(user_image_file,'seek'),"hasRead":hasattr(user_image_file,'read'),"garmentFilesCount":len(garment_image_files)},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"C"})+"\n")
+                f.write(json_lib.dumps({"location":"vton.py:69","message":"Before reading images","data":{"userFilesCount":len(user_image_files),"garmentFilesCount":len(garment_image_files)},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"C"})+"\n")
         except: pass
         # #endregion
-        if hasattr(user_image_file, 'seek'):
-            user_image_file.seek(0)
-        user_image_bytes = user_image_file.read() if hasattr(user_image_file, 'read') else user_image_file
-        # #region agent log
-        try:
-            with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                f.write(json_lib.dumps({"location":"vton.py:73","message":"User image read","data":{"userImageSize":len(user_image_bytes) if user_image_bytes else 0},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"C"})+"\n")
-        except: pass
-        # #endregion
+        
+        user_image_bytes_list = []
+        for user_file in user_image_files:
+            if hasattr(user_file, 'seek'):
+                user_file.seek(0)
+            user_bytes = user_file.read() if hasattr(user_file, 'read') else user_file
+            user_image_bytes_list.append(user_bytes)
+
         # Read all clothing images into list
         garment_image_bytes_list = []
         for garment_file in garment_image_files:
@@ -102,7 +105,11 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
         except: pass
         # #endregion
         
-        # Limit to 5 clothing items (Gemini API supports up to 5 images per request)
+        # Limit to 5 user images and 5 clothing items (10 total max is safe for Gemini usually, but let's be reasonable)
+        limited_user_images = user_image_bytes_list[:5]
+        if len(user_image_bytes_list) > 5:
+            logger.warning(f"Limiting to 5 user images (received {len(user_image_bytes_list)})")
+
         limited_garments = garment_image_bytes_list[:5]
         if len(garment_image_bytes_list) > 5:
             logger.warning(f"Limiting to 5 clothing items (received {len(garment_image_bytes_list)})")
@@ -130,19 +137,17 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
                 logger.warning(f"Could not detect image format, using raw bytes: {e}")
                 return base64.b64encode(image_bytes).decode('utf-8'), 'image/jpeg'
         
-        # #region agent log
-        try:
-            with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                f.write(json_lib.dumps({"location":"vton.py:110","message":"Before image processing","data":{"limitedGarmentsCount":len(limited_garments)},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"B"})+"\n")
-        except: pass
-        # #endregion
-        user_img_base64, user_mime_type = image_to_base64(user_image_bytes)
-        # #region agent log
-        try:
-            with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                f.write(json_lib.dumps({"location":"vton.py:111","message":"User image processed","data":{"userImageBase64Length":len(user_img_base64),"userMimeType":user_mime_type},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"B"})+"\n")
-        except: pass
-        # #endregion
+        # Process user images
+        user_data = []
+        for idx, user_bytes in enumerate(limited_user_images):
+            user_base64, user_mime = image_to_base64(user_bytes)
+            user_data.append({
+                'base64': user_base64,
+                'mimeType': user_mime,
+                'id': f'user_{idx + 1}',
+            })
+
+        # Process garment images
         garment_data = []
         for idx, garment_bytes in enumerate(limited_garments):
             garment_base64, garment_mime = image_to_base64(garment_bytes)
@@ -153,14 +158,8 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
                 'slot': category if idx == 0 else 'accessory',
                 'layer_order': idx,
             })
-        # #region agent log
-        try:
-            with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                f.write(json_lib.dumps({"location":"vton.py:120","message":"Clothing images processed","data":{"garmentDataCount":len(garment_data)},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"B"})+"\n")
-        except: pass
-        # #endregion
         
-        logger.info(f"Generating image with {len(limited_garments)} clothing item(s)...")
+        logger.info(f"Generating image with {len(limited_user_images)} user images and {len(limited_garments)} clothing item(s)...")
         
         def _sanitize_clothing_description(description):
             """
@@ -237,10 +236,16 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
 
         # Build text prompt for Gemini 3 Pro Image
         # Include safety instructions to avoid content filter blocks
+        
+        user_img_count = len(limited_user_images)
+        garment_img_count = len(limited_garments)
+        
+        user_refs = "image" if user_img_count == 1 else f"first {user_img_count} images"
+        
         text_prompt = (
             "You are a fashion virtual try-on engine. "
-            "Use the first image as the person that must stay consistent. "
-            "Use every additional image as a garment that must be worn by that same person. "
+            f"Use the {user_refs} as the person reference. These images define the person's identity, body shape, and pose. "
+            f"Use the subsequent {garment_img_count} images as garments that must be worn by that same person. "
             "Generate one photorealistic image of the person wearing all provided clothing items, "
             "with a neutral clean studio background, flattering lighting, and full-body framing if possible. "
             "Every user-specified wearing style or positioning instruction is mandatory and overrides any defaults. "
@@ -334,7 +339,12 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
                     safe_descriptor = _sanitize_clothing_description(descriptor)
                     safe_style_desc = _sanitize_clothing_description(style_desc)
 
-                    image_reference = item_index + 2  # +2 because first image is person
+                    # Calculate correct image reference index:
+                    # User images come first (1 to user_img_count), then clothing images
+                    # item_index is 0-based index into garment list
+                    # So image reference is user_img_count + item_index + 1
+                    image_reference = user_img_count + item_index + 1
+                    
                     text_prompt += (
                         f"- Image {image_reference}: Render the {safe_descriptor} {safe_style_desc}. "
                         "This positioning is mandatory.\n"
@@ -392,19 +402,22 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
             "Make tasteful modifications as needed without changing the fundamental garment type or purpose."
         )
 
-        # Build parts array: text prompt first, then person image, then clothing images
-        # Gemini 3 Pro Image expects: text instructions + base image + clothing images
+        # Build parts array: text prompt first, then user images, then clothing images
+        # Gemini 3 Pro Image expects: text instructions + base images + clothing images
         parts = [
             {
                 "text": text_prompt
-            },
-            {
-                "inline_data": {
-                    "mime_type": user_mime_type,
-                    "data": user_img_base64,
-                }
             }
         ]
+        
+        # Add user images
+        for item in user_data:
+             parts.append({
+                "inline_data": {
+                    "mime_type": item['mimeType'],
+                    "data": item['base64'],
+                }
+            })
 
         # Add clothing images
         for item in garment_data:
@@ -417,9 +430,9 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
         
         # Use Gemini 3 Pro Image for virtual try-on
         logger.info(f"🚀 Starting virtual try-on generation with Gemini 3 Pro Image")
-        logger.info(f"   Person image: {len(user_img_base64)} chars (base64)")
+        logger.info(f"   Person images: {len(limited_user_images)}")
         logger.info(f"   Clothing items: {len(limited_garments)}")
-        logger.info(f"   Total content parts: {len(parts)} (1 text + {len(limited_garments) + 1} images)")
+        logger.info(f"   Total content parts: {len(parts)} (1 text + {len(limited_user_images) + len(limited_garments)} images)")
         
         base_url = "https://generativelanguage.googleapis.com/v1beta/models"
         model_name = "gemini-3-pro-image-preview"
@@ -465,25 +478,25 @@ async def _generate_with_gemini(user_image_file, garment_image_files, category="
                         ],
                         "generationConfig": {
                             "responseModalities": ["TEXT", "IMAGE"],  # Required for Gemini image models
-                            "safetySettings": [
-                                {
-                                    "category": "HARM_CATEGORY_HARASSMENT",
-                                    "threshold": "BLOCK_NONE"
-                                },
-                                {
-                                    "category": "HARM_CATEGORY_HATE_SPEECH",
-                                    "threshold": "BLOCK_NONE"
-                                },
-                                {
-                                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                                    "threshold": "BLOCK_LOW_AND_ABOVE"
-                                },
-                                {
-                                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                                    "threshold": "BLOCK_NONE"
-                                }
-                            ]
                         },
+                        "safetySettings": [
+                            {
+                                "category": "HARM_CATEGORY_HARASSMENT",
+                                "threshold": "BLOCK_NONE"
+                            },
+                            {
+                                "category": "HARM_CATEGORY_HATE_SPEECH",
+                                "threshold": "BLOCK_NONE"
+                            },
+                            {
+                                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                                "threshold": "BLOCK_LOW_AND_ABOVE"
+                            },
+                            {
+                                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                                "threshold": "BLOCK_NONE"
+                            }
+                        ]
                     },
                 )
                 
