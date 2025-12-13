@@ -447,108 +447,165 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       
       {/* Grid for multiple files or single preview */}
       {files.length > 0 && previewUrls.length > 0 ? (
-         <div className={`grid gap-2 ${multiple ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-1'}`}>
-            {files.map((file, idx) => (
-              <div
-                key={`${file.name}-${idx}`}
-                className="relative group"
-                draggable={multiple}
-                onDragStart={() => setDragIndex(idx)}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  if (dragIndex !== null && dragIndex !== idx) {
-                    e.currentTarget.classList.add('ring-2', 'ring-amber-300', 'ring-offset-2');
-                  }
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.currentTarget.classList.remove('ring-2', 'ring-amber-300', 'ring-offset-2');
-                  if (dragIndex !== null) {
-                    handleReorder(dragIndex, idx);
-                    setDragIndex(null);
-                  }
-                }}
-                onDragLeave={(e) => {
-                  e.currentTarget.classList.remove('ring-2', 'ring-amber-300', 'ring-offset-2');
-                }}
-                onDragEnd={(e) => {
-                  e.currentTarget.classList.remove('ring-2', 'ring-amber-300', 'ring-offset-2');
+        <div className="space-y-3">
+          {/* Main image centered */}
+          <div className="flex justify-center">
+            <div
+              className="relative group w-full max-w-2xl"
+              draggable={multiple}
+              onDragStart={() => setDragIndex(0)}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (dragIndex !== null && dragIndex !== 0) {
+                  e.currentTarget.classList.add('ring-2', 'ring-amber-300', 'ring-offset-2');
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.currentTarget.classList.remove('ring-2', 'ring-amber-300', 'ring-offset-2');
+                if (dragIndex !== null) {
+                  handleReorder(dragIndex, 0);
                   setDragIndex(null);
-                }}
-              >
-                 <img
-                   src={previewUrls[idx]}
-                   alt={`Preview ${idx + 1}`}
-                   className={`w-full h-32 sm:h-48 object-cover rounded border ${idx === 0 && highlightMainReference ? 'border-amber-400 ring-2 ring-amber-200' : 'border-black/10'}`}
-                 />
-                 {getQualityBadge(file.name)}
-                 <div className="absolute top-1 right-1 flex flex-col gap-1">
-                   <button
-                     onClick={(e) => {
-                       e.stopPropagation();
-                       if (multiple) {
-                         handleRemoveFile(idx);
-                       } else {
-                         handleClear(e);
-                       }
-                     }}
-                     className="bg-red-500 hover:bg-red-400 text-white p-1 rounded-full min-w-[24px] min-h-[24px] flex items-center justify-center touch-manipulation transition-colors shadow-sm"
-                     aria-label="Remove image"
-                   >
-                     <X size={14} />
-                   </button>
-                   {multiple && idx > 0 && highlightMainReference && (
-                     <button
-                       onClick={(e) => {
-                         e.stopPropagation();
-                         handleSetMainReference(idx);
-                       }}
-                       className="bg-white/90 hover:bg-white text-black border border-black/10 rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide flex items-center gap-1 shadow-sm"
-                       aria-label="Set as main reference"
-                     >
-                       <ArrowUpRight size={12} /> Set as Main
-                     </button>
-                   )}
-                 </div>
-                 {idx === 0 && highlightMainReference && (
-                   <span className="absolute bottom-1 left-1 inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide bg-white/90 text-amber-800 border border-amber-200 rounded shadow-sm">
-                     <Star size={12} /> Main Reference
-                   </span>
-                 )}
-                 {!multiple && (
-                    <p className="mt-1 text-xs text-black truncate px-1 uppercase tracking-wider text-center">
-                      {file.name}
-                    </p>
-                 )}
+                }
+              }}
+              onDragLeave={(e) => {
+                e.currentTarget.classList.remove('ring-2', 'ring-amber-300', 'ring-offset-2');
+              }}
+              onDragEnd={(e) => {
+                e.currentTarget.classList.remove('ring-2', 'ring-amber-300', 'ring-offset-2');
+                setDragIndex(null);
+              }}
+            >
+              <img
+                src={previewUrls[0]}
+                alt="Main reference"
+                className={`w-full h-56 sm:h-72 object-cover rounded border ${highlightMainReference ? 'border-amber-400 ring-2 ring-amber-200' : 'border-black/10'}`}
+              />
+              {getQualityBadge(files[0].name)}
+              <div className="absolute top-2 right-2 flex flex-col gap-1">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (multiple) {
+                      handleRemoveFile(0);
+                    } else {
+                      handleClear(e);
+                    }
+                  }}
+                  className="bg-red-500 hover:bg-red-400 text-white p-2 rounded-full min-w-[28px] min-h-[28px] flex items-center justify-center touch-manipulation transition-colors shadow-sm"
+                  aria-label="Remove image"
+                >
+                  <X size={14} />
+                </button>
               </div>
-            ))}
-            {/* Add button for multiple uploads if under limit */}
-            {multiple && files.length < maxFiles && (
-               <label 
-                 className={`
-                   border-2 border-dashed border-black/20 hover:border-black/40 active:border-black rounded p-4 flex flex-col items-center justify-center cursor-pointer min-h-[128px] sm:min-h-[192px] transition-all bg-black/5 hover:bg-black/10
-                   ${isOptimizing || !isAuthenticated ? 'opacity-50 cursor-not-allowed' : ''}
-                 `}
-               >
-                 {isOptimizing ? (
+              <span className="absolute top-2 left-2 inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide bg-white/90 text-amber-800 border border-amber-200 rounded-full shadow-sm">
+                <Star size={12} /> Main Image
+              </span>
+            </div>
+          </div>
+
+          {/* Secondary images row */}
+          {multiple && (
+            <div className="flex flex-wrap items-start justify-center gap-2">
+              {files.slice(1).map((file, idx) => {
+                const trueIndex = idx + 1;
+                return (
+                  <div
+                    key={`${file.name}-${trueIndex}`}
+                    className="relative group w-[46%] sm:w-40"
+                    draggable
+                    onDragStart={() => setDragIndex(trueIndex)}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (dragIndex !== null && dragIndex !== trueIndex) {
+                        e.currentTarget.classList.add('ring-2', 'ring-amber-300', 'ring-offset-2');
+                      }
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.currentTarget.classList.remove('ring-2', 'ring-amber-300', 'ring-offset-2');
+                      if (dragIndex !== null) {
+                        handleReorder(dragIndex, trueIndex);
+                        setDragIndex(null);
+                      }
+                    }}
+                    onDragLeave={(e) => {
+                      e.currentTarget.classList.remove('ring-2', 'ring-amber-300', 'ring-offset-2');
+                    }}
+                    onDragEnd={(e) => {
+                      e.currentTarget.classList.remove('ring-2', 'ring-amber-300', 'ring-offset-2');
+                      setDragIndex(null);
+                    }}
+                  >
+                    <img
+                      src={previewUrls[trueIndex]}
+                      alt={`Preview ${trueIndex + 1}`}
+                      className="w-full h-28 sm:h-32 object-cover rounded border border-black/10"
+                    />
+                    {getQualityBadge(file.name)}
+                    <div className="absolute top-1 right-1 flex flex-col gap-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveFile(trueIndex);
+                        }}
+                        className="bg-red-500 hover:bg-red-400 text-white p-1 rounded-full min-w-[24px] min-h-[24px] flex items-center justify-center touch-manipulation transition-colors shadow-sm"
+                        aria-label="Remove image"
+                      >
+                        <X size={14} />
+                      </button>
+                      {highlightMainReference && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSetMainReference(trueIndex);
+                          }}
+                          className="bg-white/90 hover:bg-white text-black border border-black/10 rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide flex items-center gap-1 shadow-sm"
+                          aria-label="Set as main reference"
+                        >
+                          <ArrowUpRight size={12} /> Set as Main
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Add button for multiple uploads if under limit */}
+              {files.length < maxFiles && (
+                <label
+                  className={`
+                    border-2 border-dashed border-black/20 hover:border-black/40 active:border-black rounded p-4 flex flex-col items-center justify-center cursor-pointer min-h-[112px] sm:min-h-[144px] w-[46%] sm:w-40 transition-all bg-black/5 hover:bg-black/10
+                    ${isOptimizing || !isAuthenticated ? 'opacity-50 cursor-not-allowed' : ''}
+                  `}
+                >
+                  {isOptimizing ? (
                     <Loader2 className="h-6 w-6 animate-spin text-black/50" />
-                 ) : (
+                  ) : (
                     <>
                       <Upload className="h-6 w-6 text-black/50 mb-2" />
                       <span className="text-xs font-semibold text-black/50 uppercase tracking-wide">Add</span>
                     </>
-                 )}
-                 <input
+                  )}
+                  <input
                     type="file"
                     className="hidden"
                     accept="image/*"
                     multiple
                     onChange={handleChange}
                     disabled={isOptimizing || !isAuthenticated}
-                 />
-               </label>
-            )}
-         </div>
+                  />
+                </label>
+              )}
+            </div>
+          )}
+
+          {!multiple && (
+            <p className="text-xs text-black truncate px-1 uppercase tracking-wider text-center">
+              {files[0].name}
+            </p>
+          )}
+        </div>
       ) : (
         <div
           onDragOver={(e) => e.preventDefault()}
