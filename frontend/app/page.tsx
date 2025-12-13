@@ -73,6 +73,9 @@ function HomeContent() {
   const [activeTab, setActiveTab] = useState<'try-on' | 'my-outfits'>('try-on');
   const [isShopSaveOpen, setIsShopSaveOpen] = useState(false);
   const [shopSaveResults, setShopSaveResults] = useState<ShopSaveResult[]>([]);
+  const cardClass =
+    "rounded-2xl border border-black/10 bg-white/95 shadow-[0_12px_40px_rgba(0,0,0,0.06)] backdrop-blur-sm";
+  const cardPadding = "p-3 sm:p-4 md:p-6";
 
   // Fetch billing info on mount and when user changes
   useEffect(() => {
@@ -849,7 +852,7 @@ function HomeContent() {
         </div>
       </header>
 
-      <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-6 md:py-8 pb-6 sm:pb-8">
+      <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-6 md:py-8 pb-28 sm:pb-12 lg:pb-10">
         
         {/* Main Heading */}
         <div className="text-center mb-6 sm:mb-8">
@@ -1001,7 +1004,10 @@ function HomeContent() {
           {/* Left Column: Inputs */}
           <div className="lg:col-span-7 space-y-3 sm:space-y-4 md:space-y-6 lg:space-y-8">
             
-            <section id="choose-wardrobe">
+            <section
+              id="choose-wardrobe"
+              className={`${cardClass} ${cardPadding} space-y-4`}
+            >
               <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
                 <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,0,0,0.5)]">1</span>
                 Upload Yourself
@@ -1030,7 +1036,7 @@ function HomeContent() {
               />
             </section>
 
-            <section>
+            <section className={`${cardClass} ${cardPadding} space-y-4`}>
               <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
                 <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,0,0,0.5)]">2</span>
                 Choose Wardrobe
@@ -1054,72 +1060,74 @@ function HomeContent() {
               )}
             </section>
 
-            <button
-              onClick={(e) => {
-                try {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  console.log("Try-on button clicked");
-                  if (isGenerating) {
-                    console.log("Button clicked but already generating, ignoring");
-                    return;
-                  }
-                  handleGenerate().catch((error) => {
-                    console.error('Error in handleGenerate:', error);
-                    setError('An error occurred while trying to generate your look. Please try again.');
-                    setIsGenerating(false);
-                  });
-                } catch (error) {
-                  console.error('Error in button onClick handler:', error);
-                  setError('An unexpected error occurred. Please try again.');
-                  setIsGenerating(false);
-                }
-              }}
-              onTouchStart={(e) => {
-                // Prevent double-tap zoom on mobile
-                if (e.touches.length > 1) {
-                  e.preventDefault();
-                }
-              }}
-              disabled={isGenerating}
-              type="button"
-              aria-label="Try on clothes"
-              className={`
-                w-full py-3.5 sm:py-4 rounded-none font-bold text-base sm:text-lg flex items-center justify-center gap-2 sm:gap-3 transition-all uppercase tracking-wider
-                min-h-[48px] touch-manipulation select-none
-                ${isGenerating 
-                  ? 'bg-gray-200 text-gray-500 cursor-not-allowed border border-gray-300 pointer-events-none' 
-                  : 'bg-black text-white hover:bg-gray-900 active:bg-gray-800 active:scale-[0.98] border-2 border-black'
-                }
-              `}
-            >
-              {isGenerating ? (
-                <>
-                  <Loader2 size={18} className="sm:w-5 sm:h-5 animate-spin" />
-                  <span>Generating your look...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles size={18} className="sm:w-5 sm:h-5" />
-                  <span>Try it on</span>
-                </>
-              )}
-            </button>
-            {isGenerating && (
+            <div className={`${cardClass} ${cardPadding} space-y-3`}>
               <button
-                onClick={() => abortController?.abort()}
-                className="mt-2 text-sm text-black hover:text-[#7C3AED] underline w-full text-center"
-                aria-label="Cancel operation"
+                onClick={(e) => {
+                  try {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log("Try-on button clicked");
+                    if (isGenerating) {
+                      console.log("Button clicked but already generating, ignoring");
+                      return;
+                    }
+                    handleGenerate().catch((error) => {
+                      console.error('Error in handleGenerate:', error);
+                      setError('An error occurred while trying to generate your look. Please try again.');
+                      setIsGenerating(false);
+                    });
+                  } catch (error) {
+                    console.error('Error in button onClick handler:', error);
+                    setError('An unexpected error occurred. Please try again.');
+                    setIsGenerating(false);
+                  }
+                }}
+                onTouchStart={(e) => {
+                  // Prevent double-tap zoom on mobile
+                  if (e.touches.length > 1) {
+                    e.preventDefault();
+                  }
+                }}
+                disabled={isGenerating}
+                type="button"
+                aria-label="Try on clothes"
+                className={`
+                  w-full py-3.5 sm:py-4 rounded-xl font-bold text-base sm:text-lg flex items-center justify-center gap-2 sm:gap-3 transition-all uppercase tracking-wider
+                  min-h-[52px] touch-manipulation select-none
+                  ${isGenerating 
+                    ? 'bg-gray-200 text-gray-500 cursor-not-allowed border border-gray-300 pointer-events-none' 
+                    : 'bg-black text-white hover:bg-gray-900 active:bg-gray-800 active:scale-[0.98] border-2 border-black'
+                  }
+                `}
               >
-                Cancel
+                {isGenerating ? (
+                  <>
+                    <Loader2 size={18} className="sm:w-5 sm:h-5 animate-spin" />
+                    <span>Generating your look...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={18} className="sm:w-5 sm:h-5" />
+                    <span>Try it on</span>
+                  </>
+                )}
               </button>
-            )}
+              {isGenerating && (
+                <button
+                  onClick={() => abortController?.abort()}
+                  className="text-sm text-black hover:text-[#7C3AED] underline w-full text-center"
+                  aria-label="Cancel operation"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Right Column: Results */}
           <div className="lg:col-span-5 space-y-3 sm:space-y-4 md:space-y-6 lg:space-y-8">
             
-            <section>
+            <section className={`${cardClass} ${cardPadding} space-y-4`}>
               <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
                 <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,0,0,0.5)]">3</span>
                 Virtual Mirror
@@ -1148,7 +1156,7 @@ function HomeContent() {
             </section>
 
             {products.length > 0 && (
-              <section>
+              <section className={`${cardClass} ${cardPadding} space-y-4`}>
                 <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
                   <Search size={18} className="sm:w-5 sm:h-5 text-black" />
                   Shop the Look
@@ -1162,7 +1170,7 @@ function HomeContent() {
             )}
 
             {shopSaveResults.length > 0 && (
-              <section>
+              <section className={`${cardClass} ${cardPadding} space-y-4`}>
                 <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
                   <Search size={18} className="sm:w-5 sm:h-5 text-black" />
                   Shop &amp; Save Deals
@@ -1271,6 +1279,34 @@ function HomeContent() {
         onResults={(results) => setShopSaveResults(results)}
         clientItems={shopSaveReadyItems}
       />
+
+      {activeTab === 'try-on' && (
+        <div className="lg:hidden fixed inset-x-0 bottom-0 z-40 px-3 pb-[calc(14px+env(safe-area-inset-bottom))] pt-3 bg-white/95 backdrop-blur-md border-t border-black/10 shadow-[0_-8px_30px_rgba(0,0,0,0.12)]">
+          <div className="flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-black/70">Ready to try-on?</p>
+              <p className="text-[11px] text-black/60 truncate">
+                {userImages.length ? `${userImages.length} selfie${userImages.length !== 1 ? 's' : ''}` : 'Add a selfie'}
+                {" • "}
+                {wardrobeItems.length ? `${wardrobeItems.length} item${wardrobeItems.length !== 1 ? 's' : ''}` : 'Add clothing items'}
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                if (isGenerating) return;
+                void handleGenerate();
+              }}
+              disabled={isGenerating}
+              className={`
+                rounded-xl px-4 py-3 text-xs font-bold uppercase tracking-wider min-w-[120px]
+                ${isGenerating ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-900 active:bg-gray-800'}
+              `}
+            >
+              {isGenerating ? 'Working...' : 'Try it on'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Paywall Modal */}
       {showPaywall && (

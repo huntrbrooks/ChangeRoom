@@ -24,7 +24,7 @@ if sys.stderr.encoding != 'utf-8':
 # Add current directory to path to find services module
 sys.path.insert(0, str(Path(__file__).parent))
 
-from services import vton, gemini, shop, analyze_clothing
+from services import vton, gemini, shop, analyze_clothing, analyze_user
 from services import preprocess_clothing
 
 load_dotenv()
@@ -321,6 +321,16 @@ async def try_on(
         logger.info(f"Try-on request received for category: {final_category} with {len(clothing_image_files)} clothing item(s)")
         if metadata:
             logger.info(f"Using metadata: {list(metadata.keys())}")
+            
+        # Analyze user attributes using AI (automatic metadata extraction)
+        user_attributes = {}
+        try:
+            # We use a copy of user files list for analysis to avoid seeking issues if not handled carefully,
+            # though the analysis function handles seeking.
+            logger.info("Starting automatic user attribute analysis...")
+            user_attributes = await analyze_user.analyze_user_attributes(user_image_files)
+        except Exception as e:
+            logger.warning(f"User attribute analysis failed (continuing without it): {e}")
         
         try:
             # #region agent log
@@ -333,7 +343,8 @@ async def try_on(
                 user_image_files, 
                 clothing_image_files, 
                 final_category,
-                metadata
+                metadata,
+                user_attributes=user_attributes
             )
             # #region agent log
             try:

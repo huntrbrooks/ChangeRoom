@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Upload, X, Info, Loader2 } from 'lucide-react';
+import { Upload, X, Info, Loader2, AlertTriangle, Star, ArrowUpRight } from 'lucide-react';
 import {
   optimizeImageFile,
   type OptimizeImageOptions,
@@ -24,6 +24,14 @@ interface UploadZoneProps {
   onAuthRequired?: () => void;
   /** Message shown when uploads are blocked. */
   blockedMessage?: string;
+  /** Show ghost guidance cards for expected shots */
+  showGuidance?: boolean;
+  /** Whether the first image should be highlighted as main reference */
+  highlightMainReference?: boolean;
+  /** Persist file order change upstream (optional) */
+  onOrderChange?: (files: File[]) => void;
+  /** Optional inline tip toggle */
+  showInlineTip?: boolean;
 }
 
 const formatBytes = (bytes: number) => {
@@ -52,11 +60,72 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
   isAuthenticated = true,
   onAuthRequired,
   blockedMessage = 'Please sign in to upload an image.',
+  showGuidance = true,
+  highlightMainReference = false,
+  onOrderChange,
+  showInlineTip = true,
 }) => {
   const [showTips, setShowTips] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [optimizationMessage, setOptimizationMessage] = useState<string | null>(null);
   const [optimizationError, setOptimizationError] = useState<string | null>(null);
+  const [qualityWarnings, setQualityWarnings] = useState<string[]>([]);
+  const [qualityByName, setQualityByName] = useState<Record<string, 'good' | 'fair' | 'poor'>>({});
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+
+  const analyzeImageQuality = useCallback(async (file: File) => {
+    try {
+      const bmp = await createImageBitmap(file);
+      const minDim = Math.min(bmp.width, bmp.height);
+      const aspect = bmp.width / Math.max(1, bmp.height);
+
+      // Scale down for faster analysis
+      const targetWidth = 512;
+      const scale = Math.min(1, targetWidth / bmp.width);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bmp.width * scale));
+      canvas.height = Math.max(1, Math.round(bmp.height * scale));
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) {
+        bmp.close();
+        return { minDim, aspect, brightness: null, sharpness: null };
+      }
+      ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      bmp.close();
+
+      // Compute average luminance and gradient-based sharpness
+      let lumSum = 0;
+      let gradSum = 0;
+      let samples = 0;
+      const stride = 4; // sample every 4 pixels for speed
+      for (let y = 1; y < height - 1; y += stride) {
+        for (let x = 1; x < width - 1; x += stride) {
+          const idx = (y * width + x) * 4;
+          const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+          lumSum += lum;
+
+          // Simple gradient magnitude approximation
+          const idxRight = (y * width + (x + 1)) * 4;
+          const idxDown = ((y + 1) * width + x) * 4;
+          const lumR = 0.299 * data[idxRight] + 0.587 * data[idxRight + 1] + 0.114 * data[idxRight + 2];
+          const lumD = 0.299 * data[idxDown] + 0.587 * data[idxDown + 1] + 0.114 * data[idxDown + 2];
+          const grad = Math.abs(lum - lumR) + Math.abs(lum - lumD);
+          gradSum += grad;
+
+          samples++;
+        }
+      }
+
+      const avgLum = samples ? lumSum / samples : null;
+      const avgGrad = samples ? gradSum / samples : null;
+
+      return { minDim, aspect, brightness: avgLum, sharpness: avgGrad };
+    } catch {
+      return { minDim: null, aspect: null, brightness: null, sharpness: null };
+    }
+  }, []);
   
   // Combine single and multiple file inputs for easier handling
   const files = useMemo(() => {
@@ -109,6 +178,15 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
      if (!multiple || !onFilesSelect) return;
      const newFiles = files.filter((_, idx) => idx !== indexToRemove);
      onFilesSelect(newFiles);
+     setQualityWarnings([]);
+     setQualityByName((prev) => {
+       const next = { ...prev };
+       const removed = files[indexToRemove]?.name;
+       if (removed) {
+         delete next[removed];
+       }
+       return next;
+     });
   }, [files, multiple, onFilesSelect]);
 
   const processFiles = useCallback(async (newFiles: File[]) => {
@@ -154,6 +232,59 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
           `Optimized ${optimizationCount} image${optimizationCount !== 1 ? 's' : ''} to fit limits.`
         );
       }
+      
+      // Perform quality checks (resolution, framing, brightness, sharpness)
+      const qualityResults = await Promise.all(
+        optimizedFiles.map(async (f) => {
+          const q = await analyzeImageQuality(f);
+          return { name: f.name, ...q };
+        })
+      );
+      
+      const warnings: string[] = [];
+      const lowResNames = qualityResults.filter(f => f.minDim !== null && f.minDim < 900).map(f => f.name);
+      const weirdAspect = qualityResults.filter(f => f.aspect !== null && (f.aspect < 0.5 || f.aspect > 2.0)).map(f => f.name);
+      const dark = qualityResults.filter(f => f.brightness !== null && f.brightness < 50).map(f => f.name);
+      const bright = qualityResults.filter(f => f.brightness !== null && f.brightness > 220).map(f => f.name);
+      const blurry = qualityResults.filter(f => f.sharpness !== null && f.sharpness < 8).map(f => f.name);
+
+      if (lowResNames.length > 0) {
+        warnings.push(`Low resolution detected (${lowResNames.length}). Results may be blurry.`);
+      }
+      if (weirdAspect.length > 0) {
+        warnings.push(`Unusual framing detected (${weirdAspect.length}). Try centered, full-body shots.`);
+      }
+      if (dark.length > 0) {
+        warnings.push(`Low lighting detected (${dark.length}). Use brighter, daylight photos.`);
+      }
+      if (bright.length > 0) {
+        warnings.push(`Overexposed photos detected (${bright.length}). Avoid harsh light.`);
+      }
+      if (blurry.length > 0) {
+        warnings.push(`Possible blur in ${blurry.length} photo(s). Ensure focus and steady camera.`);
+      }
+
+      // Build per-file quality status
+      const qualityStatus: Record<string, 'good' | 'fair' | 'poor'> = { ...qualityByName };
+      qualityResults.forEach((f) => {
+        const issues = [
+          f.minDim !== null && f.minDim < 900,
+          f.aspect !== null && (f.aspect < 0.5 || f.aspect > 2.0),
+          f.brightness !== null && (f.brightness < 50 || f.brightness > 220),
+          f.sharpness !== null && f.sharpness < 8,
+        ].filter(Boolean).length;
+        if (issues === 0) {
+          qualityStatus[f.name] = 'good';
+        } else if (issues === 1) {
+          qualityStatus[f.name] = 'fair';
+        } else {
+          qualityStatus[f.name] = 'poor';
+        }
+      });
+
+      setQualityWarnings(warnings);
+      setQualityByName(prev => ({ ...prev, ...qualityStatus }));
+
     } catch (error) {
       console.error('Image optimization failed', error);
       const message =
@@ -202,12 +333,62 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
     e.target.value = '';
   }, [handleBlockedUpload, isAuthenticated, isOptimizing, processFiles]);
 
+  const handleSetMainReference = useCallback((index: number) => {
+    if (!multiple || !onFilesSelect) return;
+    const newFiles = [...files];
+    const [chosen] = newFiles.splice(index, 1);
+    const reordered = [chosen, ...newFiles];
+    onFilesSelect(reordered);
+    if (onOrderChange) {
+      onOrderChange(reordered);
+    }
+  }, [files, multiple, onFilesSelect]);
+
+  const handleReorder = useCallback((from: number, to: number) => {
+    if (!multiple || !onFilesSelect || from === to) return;
+    const newFiles = [...files];
+    const [moved] = newFiles.splice(from, 1);
+    newFiles.splice(to, 0, moved);
+    onFilesSelect(newFiles);
+    if (onOrderChange) {
+      onOrderChange(newFiles);
+    }
+  }, [files, multiple, onFilesSelect]);
+
+  const getQualityBadge = useCallback((fileName: string) => {
+    const status = qualityByName[fileName];
+    if (!status) return null;
+    const labelMap = { good: 'Good', fair: 'Fair', poor: 'Poor' };
+    const styleMap = {
+      good: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+      fair: 'bg-amber-100 text-amber-800 border-amber-200',
+      poor: 'bg-red-100 text-red-800 border-red-200',
+    };
+    return (
+      <span className={`absolute top-1 left-1 inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide border rounded ${styleMap[status]}`}>
+        {labelMap[status]}
+      </span>
+    );
+  }, [qualityByName]);
+
   return (
     <div className="w-full">
-      <div className="flex items-center justify-between mb-2">
-        <label className="block text-xs sm:text-sm font-medium">
-          {label} {multiple && files.length > 0 && <span className="text-black/60">({files.length}/{maxFiles})</span>}
-        </label>
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <label className="block text-xs sm:text-sm font-medium">
+            {label} {multiple && files.length > 0 && <span className="text-black/60">({files.length}/{maxFiles})</span>}
+          </label>
+          {highlightMainReference && multiple && files.length > 0 && (
+            <span className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide bg-amber-100 text-amber-800 border border-amber-200 rounded">
+              <Star size={12} /> Main reference = first photo
+            </span>
+          )}
+          {showInlineTip && multiple && (
+            <span className="text-[10px] sm:text-xs text-black/60">
+              Drag to reorder; first photo is the Main Reference.
+            </span>
+          )}
+        </div>
         {files.length === 0 && (
           <button
             type="button"
@@ -225,25 +406,52 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
           Large mobile photos are automatically resized to stay under the 10MB limit.
         </p>
       )}
-      {showTips && files.length === 0 && (
+      {(showTips || showGuidance) && files.length === 0 && (
         <div className="mb-3 p-3 bg-black/5 rounded-none text-xs text-black border border-black/20">
-          <ul className="list-disc list-inside space-y-1">
-            {multiple ? (
-               <>
-                <li>Upload 3-5 photos for best results</li>
-                <li>Include varied angles (front, profile, 45°)</li>
-                <li>Different lighting conditions help accuracy</li>
-                <li>Full-body shots preferred</li>
-               </>
-            ) : (
-               <>
-                <li>Use a full-body photo for best results</li>
-                <li>Good lighting works best</li>
-                <li>Plain background recommended</li>
-                <li>Stand straight with arms at your sides</li>
-               </>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <p className="font-semibold text-black text-sm mb-1">Best results</p>
+              <ul className="list-disc list-inside space-y-1">
+                {multiple ? (
+                   <>
+                    <li>Upload 3-5 photos: front, 45°, side/profile.</li>
+                    <li>Full-body, face visible, no heavy shadows.</li>
+                    <li>Good lighting (natural/daylight), avoid backlight.</li>
+                    <li>Plain background preferred, avoid filters.</li>
+                   </>
+                ) : (
+                   <>
+                    <li>Full-body photo, face visible.</li>
+                    <li>Good lighting, minimal shadows.</li>
+                    <li>Plain background; avoid filters.</li>
+                   </>
+                )}
+              </ul>
+            </div>
+            {showGuidance && (
+              <div className="space-y-2">
+                <p className="font-semibold text-black text-sm">What to upload here</p>
+            <div className="grid grid-cols-2 gap-2 text-[11px] text-black/80">
+                  <div className="rounded border border-black/10 bg-white p-2">
+                    <p className="font-semibold text-[11px] mb-1">Angles</p>
+                    <div className="flex flex-wrap gap-1">
+                      <span className="px-2 py-1 rounded bg-black/5 border border-black/10">Front</span>
+                      <span className="px-2 py-1 rounded bg-black/5 border border-black/10">45°</span>
+                      <span className="px-2 py-1 rounded bg-black/5 border border-black/10">Profile</span>
+                    </div>
+                  </div>
+                  <div className="rounded border border-black/10 bg-white p-2">
+                    <p className="font-semibold text-[11px] mb-1">Quality</p>
+                    <div className="flex flex-wrap gap-1">
+                      <span className="px-2 py-1 rounded bg-black/5 border border-black/10">Good light</span>
+                      <span className="px-2 py-1 rounded bg-black/5 border border-black/10">Full body</span>
+                      <span className="px-2 py-1 rounded bg-black/5 border border-black/10">Face visible</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
-          </ul>
+          </div>
         </div>
       )}
       
@@ -251,26 +459,72 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       {files.length > 0 && previewUrls.length > 0 ? (
          <div className={`grid gap-2 ${multiple ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-1'}`}>
             {files.map((file, idx) => (
-              <div key={`${file.name}-${idx}`} className="relative group">
+              <div
+                key={`${file.name}-${idx}`}
+                className="relative group"
+                draggable={multiple}
+                onDragStart={() => setDragIndex(idx)}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (dragIndex !== null && dragIndex !== idx) {
+                    e.currentTarget.classList.add('ring-2', 'ring-amber-300', 'ring-offset-2');
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.currentTarget.classList.remove('ring-2', 'ring-amber-300', 'ring-offset-2');
+                  if (dragIndex !== null) {
+                    handleReorder(dragIndex, idx);
+                    setDragIndex(null);
+                  }
+                }}
+                onDragLeave={(e) => {
+                  e.currentTarget.classList.remove('ring-2', 'ring-amber-300', 'ring-offset-2');
+                }}
+                onDragEnd={(e) => {
+                  e.currentTarget.classList.remove('ring-2', 'ring-amber-300', 'ring-offset-2');
+                  setDragIndex(null);
+                }}
+              >
                  <img
                    src={previewUrls[idx]}
                    alt={`Preview ${idx + 1}`}
-                   className="w-full h-32 sm:h-48 object-cover rounded border border-black/10"
+                   className={`w-full h-32 sm:h-48 object-cover rounded border ${idx === 0 && highlightMainReference ? 'border-amber-400 ring-2 ring-amber-200' : 'border-black/10'}`}
                  />
-                 <button
-                   onClick={(e) => {
-                     e.stopPropagation();
-                     if (multiple) {
-                       handleRemoveFile(idx);
-                     } else {
-                       handleClear(e);
-                     }
-                   }}
-                   className="absolute top-1 right-1 bg-red-500 hover:bg-red-400 text-white p-1 rounded-full min-w-[24px] min-h-[24px] flex items-center justify-center touch-manipulation transition-colors shadow-sm"
-                   aria-label="Remove image"
-                 >
-                   <X size={14} />
-                 </button>
+                 {getQualityBadge(file.name)}
+                 <div className="absolute top-1 right-1 flex flex-col gap-1">
+                   <button
+                     onClick={(e) => {
+                       e.stopPropagation();
+                       if (multiple) {
+                         handleRemoveFile(idx);
+                       } else {
+                         handleClear(e);
+                       }
+                     }}
+                     className="bg-red-500 hover:bg-red-400 text-white p-1 rounded-full min-w-[24px] min-h-[24px] flex items-center justify-center touch-manipulation transition-colors shadow-sm"
+                     aria-label="Remove image"
+                   >
+                     <X size={14} />
+                   </button>
+                   {multiple && idx > 0 && highlightMainReference && (
+                     <button
+                       onClick={(e) => {
+                         e.stopPropagation();
+                         handleSetMainReference(idx);
+                       }}
+                       className="bg-white/90 hover:bg-white text-black border border-black/10 rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide flex items-center gap-1 shadow-sm"
+                       aria-label="Set as main reference"
+                     >
+                       <ArrowUpRight size={12} /> Set as Main
+                     </button>
+                   )}
+                 </div>
+                 {idx === 0 && highlightMainReference && (
+                   <span className="absolute bottom-1 left-1 inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide bg-white/90 text-amber-800 border border-amber-200 rounded shadow-sm">
+                     <Star size={12} /> Main Reference
+                   </span>
+                 )}
                  {!multiple && (
                     <p className="mt-1 text-xs text-black truncate px-1 uppercase tracking-wider text-center">
                       {file.name}
@@ -365,6 +619,16 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       )}
       {optimizationError && (
         <p className="mt-2 text-xs sm:text-sm text-red-600">{optimizationError}</p>
+      )}
+      {qualityWarnings.length > 0 && (
+        <div className="mt-2 p-2 rounded border border-amber-200 bg-amber-50 text-amber-800 text-xs flex items-start gap-2">
+          <AlertTriangle size={14} className="mt-0.5" />
+          <div className="space-y-1">
+            {qualityWarnings.map((w, i) => (
+              <p key={i}>{w}</p>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

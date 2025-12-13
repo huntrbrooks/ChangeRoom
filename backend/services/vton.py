@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # This module uses direct REST API calls to Gemini API with API key authentication.
 # No SDKs or OAuth2 are required - just set GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable.
 
-async def generate_try_on(user_image_files, garment_image_files, category="upper_body", garment_metadata=None):
+async def generate_try_on(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None):
     """
     Uses Gemini 3 Pro (Nano Banana Pro) image editing to combine person and clothing images.
     Generates a photorealistic image of the person wearing all clothing items.
@@ -22,6 +22,7 @@ async def generate_try_on(user_image_files, garment_image_files, category="upper
         garment_image_files: File-like object or list of File-like objects of clothing images (CLOTHING_IMAGES).
         category: Category of the garment (upper_body, lower_body, dresses) - kept for backward compatibility.
         garment_metadata: Optional metadata dict with styling instructions (background, style, framing, pose, camera, extras).
+        user_attributes: Optional dict of AI-extracted user attributes (body_type, etc.)
         
     Returns:
         str: Base64 data URL of the generated image.
@@ -35,10 +36,10 @@ async def generate_try_on(user_image_files, garment_image_files, category="upper
         garment_image_files = [garment_image_files]
     
     # Use Gemini 3 Pro for image generation
-    return await _generate_with_gemini(user_image_files, garment_image_files, category, garment_metadata)
+    return await _generate_with_gemini(user_image_files, garment_image_files, category, garment_metadata, user_attributes)
 
 
-async def _generate_with_gemini(user_image_files, garment_image_files, category="upper_body", garment_metadata=None):
+async def _generate_with_gemini(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None):
     """
     Uses Gemini 3 Pro Image for virtual try-on image generation.
     Generates a photorealistic image of the person wearing all clothing items.
@@ -245,11 +246,36 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
         base_text_prompt = (
             "You are a fashion virtual try-on engine. "
             f"Use the {user_refs} as the person reference. These images define the person's identity, body shape, and pose. "
-            f"Use the subsequent {garment_img_count} images as garments that must be worn by that same person. "
-            "Generate one photorealistic image of the person wearing all provided clothing items, "
-            "with a neutral clean studio background, flattering lighting, and full-body framing if possible. "
+            "The FIRST image in the person reference is the Main Reference Image. "
+            f"Use the subsequent {garment_img_count} images as new garments that must be worn by that same person. "
+            "Generate one photorealistic image of the person wearing all provided NEW clothing items. "
+            "CRITICAL OUTFIT PRESERVATION INSTRUCTION: "
+            "For any clothing articles or accessories NOT provided in the new garments list, you MUST faithfully reproduce "
+            "the items worn by the person in the Main Reference Image (the first user image). "
+            "Intelligently replace ONLY the garments that conflict with the new items. "
+            "For example, if the new item is a top, replace the original top but keep the original pants and shoes exactly as they appear in the Main Reference. "
+            "If the new item is a dress, replace both top and bottom. "
+            "Preserve the background, lighting, and overall context of the Main Reference Image as much as possible, unless it conflicts with a studio requirement. "
             "Every user-specified wearing style or positioning instruction is mandatory and overrides any defaults. "
             "Do not ignore, soften, or reinterpret those directives under any circumstance.\n\n"
+        )
+        
+        # Inject extracted user attributes to reinforce identity
+        if user_attributes:
+            text_prompt += "\nPHYSICAL ATTRIBUTES (Reinforce these features found in the user images):\n"
+            if user_attributes.get('body_type'):
+                text_prompt += f"- Body Type: {user_attributes['body_type']}\n"
+            if user_attributes.get('skin_tone'):
+                text_prompt += f"- Skin Tone: {user_attributes['skin_tone']}\n"
+            if user_attributes.get('hair_color'):
+                text_prompt += f"- Hair: {user_attributes['hair_color']}\n"
+            if user_attributes.get('gender'):
+                text_prompt += f"- Gender Presentation: {user_attributes['gender']}\n"
+            if user_attributes.get('age_range'):
+                text_prompt += f"- Age Group: {user_attributes['age_range']}\n"
+            text_prompt += "Ensure the generated person strictly adheres to these physical characteristics to maintain identity consistency.\n\n"
+
+        text_prompt += (
             "IMPORTANT SAFETY GUIDELINES: "
             "Generate appropriate, tasteful fashion content only. "
             "If any clothing appears potentially inappropriate, automatically modify it to be more modest and professional while maintaining the essential style and functionality. "
