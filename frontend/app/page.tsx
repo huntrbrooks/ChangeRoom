@@ -804,20 +804,15 @@ function HomeContent() {
       {/* Header */}
       <header className="border-b border-white/10 sticky top-0 bg-[#2C2C2C]/95 backdrop-blur-md z-50 safe-area-inset text-white">
         <div className="w-full px-3 sm:px-6 lg:px-10 py-2.5 sm:py-3 md:py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <img 
-              src="/Logo.png" 
-              alt="IGetChanged.Online Logo" 
-              className="w-8 h-8 sm:w-10 sm:h-10 object-contain"
-            />
+          <div className="flex items-center flex-shrink-0">
             <Image 
-              src="/Font logo.png" 
-              alt="Change Room wordmark" 
-              width={920}
-              height={56}
+              src="/main logo.png" 
+              alt="IGETDRESSED.ONLINE logo" 
+              width={5065}
+              height={1042}
               priority
-              className="h-5 sm:h-8 w-auto object-contain"
-              sizes="(max-width: 640px) 112px, 200px"
+              className="h-8 sm:h-10 w-auto object-contain"
+              sizes="(max-width: 640px) 180px, 260px"
             />
           </div>
           <nav className="flex items-center gap-2 sm:gap-4 md:gap-6 text-xs sm:text-sm font-medium flex-shrink-0 text-white">
