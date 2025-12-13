@@ -8,6 +8,7 @@ import os
 import sys
 import logging
 import json
+import json as json_lib
 import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
@@ -114,6 +115,12 @@ async def try_on(
     Can accept either uploaded files or URLs to saved files.
     Supports multiple clothing items for full outfit try-on.
     """
+    # #region agent log
+    try:
+        with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
+            f.write(json_lib.dumps({"location":"main.py:117","message":"Backend try-on endpoint entry","data":{"hasUserImage":user_image is not None,"clothingImagesCount":len(clothing_images) if clothing_images else 0,"hasCategory":category is not None,"hasMetadata":garment_metadata is not None},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"C"})+"\n")
+    except: pass
+    # #endregion
     try:
         # Validate user image
         is_valid, error_msg = validate_image_file(user_image)
@@ -239,6 +246,12 @@ async def try_on(
         # Parse metadata if provided
         metadata = None
         if garment_metadata:
+            # #region agent log
+            try:
+                with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
+                    f.write(json_lib.dumps({"location":"main.py:241","message":"Before metadata parsing","data":{"metadataType":type(garment_metadata).__name__,"metadataLength":len(str(garment_metadata)) if isinstance(garment_metadata,str) else None},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"D"})+"\n")
+            except: pass
+            # #endregion
             try:
                 import json
                 # Handle both string and dict inputs, ensure UTF-8 encoding
@@ -246,8 +259,20 @@ async def try_on(
                     metadata = json.loads(garment_metadata)
                 else:
                     metadata = garment_metadata
+                # #region agent log
+                try:
+                    with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
+                        f.write(json_lib.dumps({"location":"main.py:247","message":"Metadata parsing succeeded","data":{"metadataKeys":list(metadata.keys()) if isinstance(metadata,dict) else None},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"D"})+"\n")
+                except: pass
+                # #endregion
             except Exception as e:
                 logger.warning(f"Could not parse garment_metadata: {e}")
+                # #region agent log
+                try:
+                    with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
+                        f.write(json_lib.dumps({"location":"main.py:250","message":"Metadata parsing failed","data":{"error":str(e)},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"D"})+"\n")
+                except: pass
+                # #endregion
                 # Try to clean smart quotes if present
                 try:
                     if isinstance(garment_metadata, str):
@@ -264,12 +289,24 @@ async def try_on(
             logger.info(f"Using metadata: {list(metadata.keys())}")
         
         try:
+            # #region agent log
+            try:
+                with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
+                    f.write(json_lib.dumps({"location":"main.py:267","message":"Calling vton.generate_try_on","data":{"category":final_category,"clothingFilesCount":len(clothing_image_files),"hasMetadata":metadata is not None},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
+            except: pass
+            # #endregion
             result_url = await vton.generate_try_on(
                 user_image.file, 
                 clothing_image_files, 
                 final_category,
                 metadata
             )
+            # #region agent log
+            try:
+                with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
+                    f.write(json_lib.dumps({"location":"main.py:273","message":"vton.generate_try_on succeeded","data":{"hasResultUrl":result_url is not None,"resultUrlLength":len(result_url) if result_url else 0},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
+            except: pass
+            # #endregion
             logger.info(f"Try-on completed successfully. Result URL: {result_url}")
         finally:
             # Close any files we opened from URLs
@@ -285,10 +322,22 @@ async def try_on(
         raise
     except Exception as e:
         error_detail = str(e)
-        logger.error(f"Error in try-on endpoint: {e}", exc_info=True)
+        error_type = type(e).__name__
+        # #region agent log
+        try:
+            with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
+                f.write(json_lib.dumps({"location":"main.py:286","message":"Backend try-on endpoint error","data":{"errorType":error_type,"errorMessage":error_detail,"hasApiKeyError":"GEMINI_API_KEY" in error_detail or "GOOGLE_API_KEY" in error_detail},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+        except: pass
+        # #endregion
+        logger.error(f"Error in try-on endpoint: {error_type}: {error_detail}", exc_info=True)
         # Provide more helpful error messages
-        if "GEMINI_API_KEY" in error_detail or "GOOGLE_API_KEY" in error_detail:
-            error_detail = "Gemini API key not configured. Set GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable."
+        if "GEMINI_API_KEY" in error_detail or "GOOGLE_API_KEY" in error_detail or "environment variable is required" in error_detail:
+            error_detail = "Gemini API key not configured. Set GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable in Render dashboard."
+        elif "ValueError" in error_type and "required" in error_detail.lower():
+            # Catch any ValueError about missing required variables
+            error_detail = f"Configuration error: {error_detail}. Please check your Render environment variables."
+        # Log full error details for debugging (this will appear in Render logs)
+        logger.error(f"Full error details - Type: {error_type}, Message: {error_detail}, Exception: {repr(e)}")
         raise HTTPException(status_code=500, detail=error_detail)
 
 @app.post("/api/identify-products")

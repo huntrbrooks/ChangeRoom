@@ -10,6 +10,7 @@ import {
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Footer } from "./components/Footer";
+import PwaRegister from "./components/PwaRegister";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -22,19 +23,33 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  applicationName: "IGetChanged.Online",
   title: "IGetChanged.Online - Virtual Try-On & Shopping",
-  description: "Try on clothes virtually and discover similar products to shop. Upload your photo and wardrobe items to see how they look on you.",
+  description:
+    "Try on clothes virtually and discover similar products to shop. Upload your photo and wardrobe items to see how they look on you.",
+  manifest: "/manifest.webmanifest",
+  themeColor: "#000000",
   icons: {
     icon: [
-      { url: '/favicon_io%20(2)/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
-      { url: '/favicon_io%20(2)/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
-      { url: '/favicon_io%20(2)/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
-      { url: '/favicon_io%20(2)/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
+      { url: "/pwa/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+      { url: "/pwa/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+      { url: "/pwa/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/pwa/icon-512.png", sizes: "512x512", type: "image/png" },
     ],
-    shortcut: '/favicon_io%20(2)/favicon.ico',
-    apple: '/favicon_io%20(2)/apple-touch-icon.png',
+    shortcut: "/pwa/favicon.ico",
+    apple: [
+      {
+        url: "/pwa/apple-touch-icon.png",
+        sizes: "180x180",
+        type: "image/png",
+      },
+    ],
   },
-  manifest: '/favicon_io%20(2)/site.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "IGetChanged.Online",
+  },
 };
 
 export const viewport: Viewport = {
@@ -85,6 +100,7 @@ export default function RootLayout({
     return (
       <html lang="en">
         <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-black flex flex-col min-h-screen`}>
+          <PwaRegister />
           <header className="flex justify-end items-center p-4 gap-4 h-16 bg-white border-b border-black/10">
             {/* Clerk components unavailable - invalid or missing key */}
           </header>
@@ -110,6 +126,7 @@ export default function RootLayout({
         <body
           className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#FAF9F6] text-black flex flex-col min-h-screen`}
         >
+          <PwaRegister />
           <header className="flex justify-end items-center p-4 gap-4 h-16 bg-[#FAF9F6] border-b border-[#8B5CF6]/20">
             <SignedOut>
               <SignInButton />

@@ -11,6 +11,15 @@ interface UploadZoneProps {
   selectedFile: File | null;
   label: string;
   optimizeConfig?: (OptimizeImageOptions & { enabled?: boolean }) | null;
+  /**
+   * When false, uploads are blocked and the component will surface a message
+   * instead of processing the file. Defaults to true.
+   */
+  isAuthenticated?: boolean;
+  /** Called when a blocked upload is attempted (e.g., to prompt login). */
+  onAuthRequired?: () => void;
+  /** Message shown when uploads are blocked. */
+  blockedMessage?: string;
 }
 
 const formatBytes = (bytes: number) => {
@@ -32,6 +41,9 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
   selectedFile,
   label,
   optimizeConfig = null,
+  isAuthenticated = true,
+  onAuthRequired,
+  blockedMessage = 'Please sign in to upload an image.',
 }) => {
   const [showTips, setShowTips] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
@@ -60,6 +72,14 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
     setOptimizationMessage(null);
     setOptimizationError(null);
   }, []);
+
+  const handleBlockedUpload = useCallback(() => {
+    cleanupMessages();
+    setOptimizationError(blockedMessage);
+    if (onAuthRequired) {
+      onAuthRequired();
+    }
+  }, [blockedMessage, cleanupMessages, onAuthRequired]);
 
   const handleClear = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -124,21 +144,29 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
     if (isOptimizing) {
       return;
     }
+    if (!isAuthenticated) {
+      handleBlockedUpload();
+      return;
+    }
     const file = e.dataTransfer.files[0];
     if (file && file.type.startsWith('image/')) {
       void processFile(file);
     }
-  }, [isOptimizing, processFile]);
+  }, [handleBlockedUpload, isAuthenticated, isOptimizing, processFile]);
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (isOptimizing) {
+      return;
+    }
+    if (!isAuthenticated) {
+      handleBlockedUpload();
       return;
     }
     const file = e.target.files?.[0];
     if (file) {
       void processFile(file);
     }
-  }, [isOptimizing, processFile]);
+  }, [handleBlockedUpload, isAuthenticated, isOptimizing, processFile]);
 
   return (
     <div className="w-full">
@@ -179,12 +207,15 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
           ${
             isOptimizing
               ? 'opacity-70 pointer-events-none border-black/10'
+              : !isAuthenticated
+              ? 'opacity-60 border-black/10 cursor-not-allowed'
               : selectedFile
               ? 'border-black bg-black/5'
               : 'border-black/20 hover:border-black/40 active:border-black'
           }
         `}
         aria-busy={isOptimizing}
+        aria-disabled={!isAuthenticated}
       >
         {isOptimizing ? (
           <div className="flex flex-col items-center justify-center py-6 sm:py-10 gap-3">
@@ -229,6 +260,11 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
           </label>
         )}
       </div>
+      {!isAuthenticated && (
+        <p className="mt-2 text-xs sm:text-sm text-red-600">
+          {blockedMessage}
+        </p>
+      )}
       {optimizationMessage && (
         <p className="mt-2 text-xs sm:text-sm text-black/80">{optimizationMessage}</p>
       )}

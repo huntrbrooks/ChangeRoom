@@ -123,6 +123,15 @@ function HomeContent() {
   const isBypass = isBypassUser(userEmail);
 
   const isOnTrial = billing && !billing.trialUsed && !isBypass;
+  const isAuthenticated = isLoaded && !!user;
+
+  const requireAuth = useCallback(() => {
+    if (!isLoaded || !user) {
+      setError('Please sign in to upload images.');
+      return false;
+    }
+    return true;
+  }, [isLoaded, setError, user]);
 
   interface AnalyzedItem {
     index: number;
@@ -265,6 +274,10 @@ function HomeContent() {
     analyses: AnalyzedItem[],
     shouldReplace: boolean = false
   ) => {
+    if (!requireAuth()) {
+      return;
+    }
+
     const newItems: ImageWithAnalysis[] = files.map((file, idx) => ({
       file,
       analysis: analyses[idx],
@@ -372,6 +385,10 @@ function HomeContent() {
     // Prevent multiple simultaneous calls
     if (isGenerating) {
       console.log("Already generating, ignoring duplicate call");
+      return;
+    }
+
+    if (!requireAuth()) {
       return;
     }
     
@@ -621,11 +638,17 @@ function HomeContent() {
         console.log("Using analyzed metadata for try-on:", metadata);
 
         console.log("Starting try-on generation...");
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8b25fdd5-4589-4281-bfc2-e9bb432457fe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:640',message:'Frontend try-on request starting',data:{apiUrl:API_URL,userImageSize:userImage?.size,clothingItemsCount:preparedTryOnFiles.length,metadataKeys:Object.keys(metadata)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+        // #endregion
         tryOnRes = await axios.post(`${API_URL}/api/try-on`, tryOnFormData, {
           headers: { 'Content-Type': 'multipart/form-data' },
           timeout: 600000, // 10 minutes for Render wake-up + VTON generation
           signal: controller.signal,
         });
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8b25fdd5-4589-4281-bfc2-e9bb432457fe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:646',message:'Frontend try-on request succeeded',data:{status:tryOnRes?.status,hasImageUrl:!!tryOnRes?.data?.image_url},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+        // #endregion
 
         if (tryOnRes.data.image_url) {
           const imageUrl = tryOnRes.data.image_url;
@@ -657,6 +680,9 @@ function HomeContent() {
         }
       } catch (tryOnError: unknown) {
         const error = tryOnError as { name?: string; code?: string; response?: { status?: number; data?: { error?: string; detail?: string } }; message?: string };
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8b25fdd5-4589-4281-bfc2-e9bb432457fe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:683',message:'Frontend try-on request failed',data:{errorName:error?.name,errorCode:error?.code,status:error?.response?.status,errorDetail:error?.response?.data?.detail,errorData:error?.response?.data,errorMessage:error?.message,fullError:JSON.stringify(error?.response?.data||{})},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+        // #endregion
         if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
           setError('Operation cancelled');
           setIsGenerating(false);
@@ -673,9 +699,13 @@ function HomeContent() {
         }
         
         console.error("Error in try-on:", tryOnError);
+        // Log full error response for debugging
+        if (error.response?.data) {
+          console.error("Full error response:", JSON.stringify(error.response.data, null, 2));
+        }
         const errorMessage = error.code === 'ECONNABORTED' || error.message?.includes('timeout')
           ? `The try-on is taking longer than expected. This usually means our servers are busy. Please try again in a few moments.`
-          : error.response?.data?.detail || error.message || "We couldn't generate your try-on. Please check your photos and try again.";
+          : error.response?.data?.detail || error.response?.data?.error || error.message || "We couldn't generate your try-on. Please check your photos and try again.";
         setError(`Try-on failed: ${errorMessage}`);
         setIsGenerating(false);
         console.error = originalError; // Restore original error handler
@@ -970,8 +1000,16 @@ function HomeContent() {
               <UploadZone 
                 label="Your Photo" 
                 selectedFile={userImage} 
-                onFileSelect={setUserImage}
+                onFileSelect={(file) => {
+                  if (!requireAuth()) {
+                    return;
+                  }
+                  setUserImage(file);
+                }}
                 onClear={() => setUserImage(null)}
+                isAuthenticated={isAuthenticated}
+                onAuthRequired={requireAuth}
+                blockedMessage="Please sign in to upload your photo."
                 optimizeConfig={{
                   enabled: true,
                   maxSizeMB: 9.5,
@@ -992,6 +1030,9 @@ function HomeContent() {
                 onFilesUploaded={handleBulkUpload}
                 onItemRemove={handleItemRemove}
                 onItemReplace={handleItemReplace}
+                isAuthenticated={isAuthenticated}
+                onAuthRequired={requireAuth}
+                blockedMessage="Please sign in to upload clothing items."
               />
               {wardrobeItems.length > 1 && (
                 <div className="mt-3 p-3 bg-black/10 border border-black/30 rounded-lg shadow-[0_0_10px_rgba(0,0,0,0.2)]">

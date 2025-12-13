@@ -48,6 +48,15 @@ interface BulkUploadZoneProps {
   onItemRemove?: (index: number) => void;
   onItemReplace?: (index: number, file: File, analysis: AnalyzedItem) => void;
   API_URL?: string;
+  /**
+   * When false, uploads are blocked and a login prompt can be shown.
+   * Defaults to true to preserve existing behavior.
+   */
+  isAuthenticated?: boolean;
+  /** Optional callback when a blocked upload is attempted. */
+  onAuthRequired?: () => void;
+  /** Message shown when uploads are blocked. */
+  blockedMessage?: string;
 }
 
 export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({ 
@@ -56,7 +65,10 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
   onFilesUploaded,
   onItemRemove,
   onItemReplace,
-  API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+  API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+  isAuthenticated = true,
+  onAuthRequired,
+  blockedMessage = 'Please sign in to upload clothing items.'
 }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<string>('');
@@ -65,6 +77,18 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
   const [uploadedFiles, setUploadedFiles] = useState<File[]>(existingImages);
   const [wearingStyles, setWearingStyles] = useState<Map<number, string>>(new Map());
   const [objectUrls, setObjectUrls] = useState<Map<number, string>>(new Map());
+  const uploadsBlocked = !isAuthenticated;
+
+  const requireAuth = useCallback(() => {
+    if (isAuthenticated) {
+      return true;
+    }
+    setAnalysisProgress(blockedMessage);
+    if (onAuthRequired) {
+      onAuthRequired();
+    }
+    return false;
+  }, [blockedMessage, isAuthenticated, onAuthRequired]);
 
   // Sync with parent state when props change
   useEffect(() => {
@@ -98,6 +122,9 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
 
   const analyzeFiles = useCallback(async (filesToAnalyze: File[], startIndex: number = 0) => {
     if (filesToAnalyze.length === 0) return { files: [], analyses: [] };
+    if (!requireAuth()) {
+      return { files: [], analyses: [] };
+    }
 
     setIsAnalyzing(true);
     setAnalysisProgress('Preparing clothing items for upload...');
@@ -362,10 +389,13 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
     } finally {
       setIsAnalyzing(false);
     }
-  }, [API_URL]);
+  }, [API_URL, requireAuth]);
 
   const handleBulkUpload = useCallback(async (files: File[], shouldReplace: boolean = false) => {
     if (files.length === 0) return;
+    if (!requireAuth()) {
+      return;
+    }
     
     const currentCount = uploadedFiles.length;
     const totalAfterUpload = currentCount + files.length;
@@ -409,7 +439,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
       setUploadedFiles(newFiles);
       onFilesUploaded(result.files, result.analyses, false);
     }
-  }, [uploadedFiles, analyzeFiles, onFilesUploaded]);
+  }, [analyzeFiles, onFilesUploaded, requireAuth, uploadedFiles]);
 
   const handleFileInput = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -490,9 +520,12 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
           border-2 border-dashed rounded-lg p-4 sm:p-6 md:p-8 text-center cursor-pointer transition-colors touch-manipulation
           ${isAnalyzing 
             ? 'border-black bg-black/10 shadow-[0_0_20px_rgba(0,0,0,0.3)]' 
+            : uploadsBlocked
+            ? 'opacity-60 cursor-not-allowed border-black/10'
             : 'border-black/30 hover:border-black/50 active:border-black hover:bg-black/5'
           }
         `}
+        aria-disabled={uploadsBlocked}
       >
         {isAnalyzing ? (
           <div className="flex flex-col items-center w-full">
@@ -516,7 +549,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             </div>
           </div>
         ) : (
-          <label className="cursor-pointer block touch-manipulation">
+          <label className={`${uploadsBlocked ? 'cursor-not-allowed' : 'cursor-pointer'} block touch-manipulation`}>
             <Upload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-black" />
             <span className="mt-3 sm:mt-4 block text-sm sm:text-base font-medium text-black px-2">
               {uploadedFiles.length < 5 
@@ -533,10 +566,16 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
               accept="image/*"
               multiple
               onChange={handleFileInput}
+              disabled={uploadsBlocked}
             />
           </label>
         )}
       </div>
+      {uploadsBlocked && (
+        <p className="text-xs sm:text-sm text-red-600">
+          {blockedMessage}
+        </p>
+      )}
 
       {/* Display analyzed items horizontally */}
       {uploadedFiles.length > 0 && (
