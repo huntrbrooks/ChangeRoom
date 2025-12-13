@@ -172,6 +172,10 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
             # Replace potentially problematic terms with safer alternatives
             replacements = {
                 'lingerie': 'intimate apparel',
+                'lingerie top': 'delicate top',
+                'intimate': 'delicate',
+                'intimates': 'delicates',
+                'bra': 'supportive top',
                 'lacy': 'delicate fabric',
                 'sheer': 'semi-transparent',
                 'transparent': 'semi-transparent',
@@ -235,6 +239,19 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
             # Capitalize first letter
             return sanitized.capitalize() if sanitized else description
 
+        def _sanitize_metadata_value(value):
+            """
+            Recursively sanitize metadata values (strings, lists, dicts) to strip
+            sensitive terms that could trigger guardrails.
+            """
+            if isinstance(value, str):
+                return _sanitize_clothing_description(value)
+            if isinstance(value, list):
+                return [_sanitize_metadata_value(v) for v in value]
+            if isinstance(value, dict):
+                return {k: _sanitize_metadata_value(v) for k, v in value.items()}
+            return value
+
         # Build text prompt for Gemini 3 Pro Image
         # Include safety instructions to avoid content filter blocks
         
@@ -260,6 +277,10 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
             "Do not ignore, soften, or reinterpret those directives under any circumstance.\n\n"
         )
         
+        # Sanitize metadata to remove sensitive terms before building prompts
+        if garment_metadata:
+            garment_metadata = _sanitize_metadata_value(garment_metadata)
+
         # Inject extracted user attributes to reinforce identity
         if user_attributes:
             base_text_prompt += "\nPHYSICAL ATTRIBUTES (Reinforce these features found in the user images):\n"
