@@ -262,20 +262,20 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
         
         # Inject extracted user attributes to reinforce identity
         if user_attributes:
-            text_prompt += "\nPHYSICAL ATTRIBUTES (Reinforce these features found in the user images):\n"
+            base_text_prompt += "\nPHYSICAL ATTRIBUTES (Reinforce these features found in the user images):\n"
             if user_attributes.get('body_type'):
-                text_prompt += f"- Body Type: {user_attributes['body_type']}\n"
+                base_text_prompt += f"- Body Type: {user_attributes['body_type']}\n"
             if user_attributes.get('skin_tone'):
-                text_prompt += f"- Skin Tone: {user_attributes['skin_tone']}\n"
+                base_text_prompt += f"- Skin Tone: {user_attributes['skin_tone']}\n"
             if user_attributes.get('hair_color'):
-                text_prompt += f"- Hair: {user_attributes['hair_color']}\n"
+                base_text_prompt += f"- Hair: {user_attributes['hair_color']}\n"
             if user_attributes.get('gender'):
-                text_prompt += f"- Gender Presentation: {user_attributes['gender']}\n"
+                base_text_prompt += f"- Gender Presentation: {user_attributes['gender']}\n"
             if user_attributes.get('age_range'):
-                text_prompt += f"- Age Group: {user_attributes['age_range']}\n"
-            text_prompt += "Ensure the generated person strictly adheres to these physical characteristics to maintain identity consistency.\n\n"
+                base_text_prompt += f"- Age Group: {user_attributes['age_range']}\n"
+            base_text_prompt += "Ensure the generated person strictly adheres to these physical characteristics to maintain identity consistency.\n\n"
 
-        text_prompt += (
+        base_text_prompt += (
             "IMPORTANT SAFETY GUIDELINES: "
             "Generate appropriate, tasteful fashion content only. "
             "If any clothing appears potentially inappropriate, automatically modify it to be more modest and professional while maintaining the essential style and functionality. "
