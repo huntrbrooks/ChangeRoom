@@ -515,11 +515,16 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
         async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minute timeout for image generation
             for attempt in range(1, max_attempts + 1):
                 retry_suffix = ""
-                if attempt > 1:
+                if attempt == 2:
                     retry_suffix = (
-                        f"\n\nRETRY {attempt}: If any garment or pose seems revealing or close to intimate apparel, "
-                        "automatically add opaque lining, adjust camera/framing to be professional, and avoid any adult or unsafe context. "
-                        "Prioritize modesty while keeping the garment recognizable."
+                        "\n\nRETRY 2: If any garment or pose seems revealing, automatically style it as a layered top with opaque lining, "
+                        "add coverage, and use a professional studio framing. Avoid any adult or unsafe context while keeping the garment recognizable."
+                    )
+                elif attempt == 3:
+                    retry_suffix = (
+                        "\n\nRETRY 3 (STRICT SAFETY): If deemed inappropriate for any reason, add or modify the garment as needed "
+                        "to make it acceptable: apply opaque lining, increase coverage, soften transparency, and adjust camera/framing to a neutral studio view. "
+                        "Prioritize modesty and compliance over fidelity while keeping the outfit coherent."
                     )
                 text_prompt = base_text_prompt + retry_suffix
                 parts = build_parts(text_prompt)
