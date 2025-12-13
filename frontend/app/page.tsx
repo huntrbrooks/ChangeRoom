@@ -851,9 +851,17 @@ function HomeContent() {
         
         {/* Main Heading */}
         <div className="text-center mb-6 sm:mb-8">
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-black mb-3 sm:mb-4 uppercase tracking-tight">
-            Virtual Try-On & Shopping
-          </h1>
+          <h1 className="sr-only">Virtual Try-On & Shopping</h1>
+          <div className="flex justify-center mb-3 sm:mb-4">
+            <Image 
+              src="/main logo Black.png" 
+              alt="IGetChanged.Online" 
+              width={5065}
+              height={1042}
+              priority
+              className="h-10 sm:h-12 md:h-14 w-auto object-contain"
+            />
+          </div>
           <p className="text-sm sm:text-base text-gray-600 mb-4">
             Try on clothes virtually and discover similar products to shop
           </p>
