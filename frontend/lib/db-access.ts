@@ -588,18 +588,25 @@ export async function getSavedClothingItems(
 ): Promise<Array<ClothingItem & { saved_at: Date }>> {
   return withSavedClothingItemsTable(() =>
     withClothingItemsTable(async () => {
-      const limitClause =
-        options?.limit && Number.isFinite(options.limit)
-          ? sql`LIMIT ${options.limit}`
-          : sql``;
-      const result = await sql`
-        SELECT c.*, s.saved_at
-        FROM saved_clothing_items s
-        INNER JOIN clothing_items c ON c.id = s.clothing_item_id
-        WHERE s.user_id = ${userId}
-        ORDER BY s.saved_at DESC
-        ${limitClause}
-      `;
+      const limitValue =
+        typeof options?.limit === 'number' && Number.isFinite(options.limit) ? options.limit : null;
+
+      const result = limitValue
+        ? await sql`
+            SELECT c.*, s.saved_at
+            FROM saved_clothing_items s
+            INNER JOIN clothing_items c ON c.id = s.clothing_item_id
+            WHERE s.user_id = ${userId}
+            ORDER BY s.saved_at DESC
+            LIMIT ${limitValue}
+          `
+        : await sql`
+            SELECT c.*, s.saved_at
+            FROM saved_clothing_items s
+            INNER JOIN clothing_items c ON c.id = s.clothing_item_id
+            WHERE s.user_id = ${userId}
+            ORDER BY s.saved_at DESC
+          `;
       return result.rows as Array<ClothingItem & { saved_at: Date }>;
     })
   );
