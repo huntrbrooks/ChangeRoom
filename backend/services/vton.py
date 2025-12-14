@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # This module uses direct REST API calls to Gemini API with API key authentication.
 # No SDKs or OAuth2 are required - just set GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable.
 
-async def generate_try_on(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None):
+async def generate_try_on(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None, main_index=0, user_quality_flags=None):
     """
     Uses Gemini 3 Pro (Nano Banana Pro) image editing to combine person and clothing images.
     Generates a photorealistic image of the person wearing all clothing items.
@@ -39,7 +39,7 @@ async def generate_try_on(user_image_files, garment_image_files, category="upper
     return await _generate_with_gemini(user_image_files, garment_image_files, category, garment_metadata, user_attributes)
 
 
-async def _generate_with_gemini(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None):
+async def _generate_with_gemini(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None, main_index=0, user_quality_flags=None):
     """
     Uses Gemini 3 Pro Image for virtual try-on image generation.
     Generates a photorealistic image of the person wearing all clothing items.
@@ -262,20 +262,25 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
         
         base_text_prompt = (
             "You are a fashion virtual try-on engine. "
-            f"Use the {user_refs} as the person reference. These images define the person's identity, body shape, and pose. "
-            "The FIRST image in the person reference is the Main Reference Image. "
+            f"Use the {user_refs} as the person reference. These images define the person's identity (face, hair, eyes), body shape, stature/height impression, and overall appearance. "
+            f"The FIRST user image (index {main_index + 1}) is the Main Reference Image for preserving any non-conflicting garments. "
             f"Use the subsequent {garment_img_count} images as new garments that must be worn by that same person. "
             "Generate one photorealistic image of the person wearing all provided NEW clothing items. "
-            "CRITICAL OUTFIT PRESERVATION INSTRUCTION: "
-            "For any clothing articles or accessories NOT provided in the new garments list, you MUST faithfully reproduce "
-            "the items worn by the person in the Main Reference Image (the first user image). "
-            "Intelligently replace ONLY the garments that conflict with the new items. "
-            "For example, if the new item is a top, replace the original top but keep the original pants and shoes exactly as they appear in the Main Reference. "
-            "If the new item is a dress, replace both top and bottom. "
-            "Preserve the background, lighting, and overall context of the Main Reference Image as much as possible, unless it conflicts with a studio requirement. "
+            "OUTFIT PRESERVATION: For any clothing or accessories NOT provided in the new garments list, faithfully reproduce them from the Main Reference Image. "
+            "Replace ONLY the garments that conflict with the new items (e.g., new top replaces the old top, but keep the original pants/shoes if not replaced; a dress replaces both top and bottom). "
+            "BACKGROUND & POSE: Do NOT reuse the original background. Use a clean, neutral, flattering background. Do NOT lock the exact pose/angle—allow natural variation that still fits the person. "
+            "IDENTITY FIDELITY: All user images must be used to perfectly maintain the same face, hair, eyes, skin tone, and body shape/height impression in the final image. "
             "Every user-specified wearing style or positioning instruction is mandatory and overrides any defaults. "
             "Do not ignore, soften, or reinterpret those directives under any circumstance.\n\n"
         )
+
+        if user_quality_flags:
+            low_res_count = sum(1 for f in user_quality_flags if f.get("low_res"))
+            if low_res_count > 0:
+                base_text_prompt += (
+                    f"NOTE: Some user photos are lower resolution ({low_res_count}). "
+                    "Prioritize the sharpest, best-lit reference when ensuring identity fidelity.\n"
+                )
         
         # Sanitize metadata to remove sensitive terms before building prompts
         if garment_metadata:

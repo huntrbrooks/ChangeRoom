@@ -86,6 +86,7 @@ export async function POST(req: NextRequest) {
         color: item.color,
         style: item.style,
         description: item.description,
+        tags: item.tags,
       });
 
       // Fetch offers from all providers

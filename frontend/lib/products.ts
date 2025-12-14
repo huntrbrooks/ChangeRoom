@@ -32,7 +32,7 @@ export const productFeatures: Record<PlanType, ProductFeatures> = {
   free: {
     plan: 'free',
     name: 'Free',
-    description: 'Perfect for trying out IGetChanged.Online',
+    description: 'Perfect for trying out IGetDressed.Online',
     price: {
       amount: 0,
       currency: 'USD',

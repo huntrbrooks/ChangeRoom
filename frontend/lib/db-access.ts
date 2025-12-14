@@ -457,11 +457,16 @@ export async function getUserClothingItems(
     category?: string;
     tags?: string[];
     limit?: number;
+    since?: Date;
   }
 ): Promise<ClothingItem[]> {
   return withClothingItemsTable(async () => {
     // Build single query with all conditions
     let result;
+    const sinceClause =
+      filters?.since instanceof Date
+        ? sql`AND created_at >= ${filters.since}`
+        : sql``;
     
     if (filters?.category && filters?.tags && filters.tags.length > 0) {
       result = await sql`
@@ -469,6 +474,7 @@ export async function getUserClothingItems(
         WHERE user_id = ${userId}
         AND category = ${filters.category}
         AND tags @> ${JSON.stringify(filters.tags)}::jsonb
+        ${sinceClause}
         ORDER BY created_at DESC
       `;
     } else if (filters?.category) {
@@ -476,6 +482,7 @@ export async function getUserClothingItems(
         SELECT * FROM clothing_items
         WHERE user_id = ${userId}
         AND category = ${filters.category}
+        ${sinceClause}
         ORDER BY created_at DESC
       `;
     } else if (filters?.tags && filters.tags.length > 0) {
@@ -483,12 +490,14 @@ export async function getUserClothingItems(
         SELECT * FROM clothing_items
         WHERE user_id = ${userId}
         AND tags @> ${JSON.stringify(filters.tags)}::jsonb
+        ${sinceClause}
         ORDER BY created_at DESC
       `;
     } else {
       result = await sql`
         SELECT * FROM clothing_items
         WHERE user_id = ${userId}
+        ${sinceClause}
         ORDER BY created_at DESC
       `;
     }
@@ -501,6 +510,99 @@ export async function getUserClothingItems(
     }
     
     return items;
+  });
+}
+
+/**
+ * Utility: confirm clothing item belongs to user
+ */
+async function clothingItemBelongsToUser(
+  userId: string,
+  clothingItemId: string
+): Promise<boolean> {
+  const result = await sql`
+    SELECT id FROM clothing_items
+    WHERE user_id = ${userId} AND id = ${clothingItemId}
+    LIMIT 1
+  `;
+  return result.rows.length > 0;
+}
+
+/**
+ * Get IDs of saved clothing items for user
+ */
+export async function getSavedClothingItemIds(userId: string): Promise<string[]> {
+  return withSavedClothingItemsTable(async () => {
+    const result = await sql`
+      SELECT clothing_item_id
+      FROM saved_clothing_items
+      WHERE user_id = ${userId}
+      ORDER BY saved_at DESC
+    `;
+    return result.rows.map((row) => row.clothing_item_id as string);
+  });
+}
+
+/**
+ * Get saved clothing items (joined with clothing data)
+ */
+export async function getSavedClothingItems(
+  userId: string,
+  options?: { limit?: number }
+): Promise<Array<ClothingItem & { saved_at: Date }>> {
+  return withSavedClothingItemsTable(() =>
+    withClothingItemsTable(async () => {
+      const limitClause =
+        options?.limit && Number.isFinite(options.limit)
+          ? sql`LIMIT ${options.limit}`
+          : sql``;
+      const result = await sql`
+        SELECT c.*, s.saved_at
+        FROM saved_clothing_items s
+        INNER JOIN clothing_items c ON c.id = s.clothing_item_id
+        WHERE s.user_id = ${userId}
+        ORDER BY s.saved_at DESC
+        ${limitClause}
+      `;
+      return result.rows as Array<ClothingItem & { saved_at: Date }>;
+    })
+  );
+}
+
+/**
+ * Save or update a clothing item in the user's saved list
+ */
+export async function saveClothingItem(
+  userId: string,
+  clothingItemId: string
+): Promise<void> {
+  return withSavedClothingItemsTable(async () => {
+    const owned = await clothingItemBelongsToUser(userId, clothingItemId);
+    if (!owned) {
+      throw new Error("Clothing item not found for user");
+    }
+
+    await sql`
+      INSERT INTO saved_clothing_items (id, user_id, clothing_item_id)
+      VALUES (${generateUuid()}, ${userId}, ${clothingItemId})
+      ON CONFLICT (user_id, clothing_item_id)
+      DO UPDATE SET saved_at = now()
+    `;
+  });
+}
+
+/**
+ * Remove clothing item from saved list
+ */
+export async function removeSavedClothingItem(
+  userId: string,
+  clothingItemId: string
+): Promise<void> {
+  return withSavedClothingItemsTable(async () => {
+    await sql`
+      DELETE FROM saved_clothing_items
+      WHERE user_id = ${userId} AND clothing_item_id = ${clothingItemId}
+    `;
   });
 }
 
@@ -796,6 +898,9 @@ let clothingItemsTableReady: Promise<void> | null = null;
 const CLOTHING_ITEM_OFFERS_TABLE = "clothing_item_offers";
 let clothingItemOffersTableReady: Promise<void> | null = null;
 
+const SAVED_CLOTHING_ITEMS_TABLE = "saved_clothing_items";
+let savedClothingItemsTableReady: Promise<void> | null = null;
+
 const AFFILIATE_CLICKS_TABLE = "affiliate_clicks";
 let affiliateClicksTableReady: Promise<void> | null = null;
 
@@ -948,6 +1053,61 @@ async function withClothingItemOffersTable<T>(operation: () => Promise<T>): Prom
   } catch (error) {
     if (isMissingRelationError(error, CLOTHING_ITEM_OFFERS_TABLE)) {
       await ensureClothingItemOffersTable(true);
+      return await operation();
+    }
+    throw error;
+  }
+}
+
+async function createSavedClothingItemsTable() {
+  await ensureClothingItemsTable();
+  await sql`
+    CREATE TABLE IF NOT EXISTS saved_clothing_items (
+      id UUID PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      clothing_item_id UUID NOT NULL,
+      saved_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (user_id, clothing_item_id)
+    )
+  `;
+  await sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'saved_clothing_items_clothing_item_id_fkey'
+      ) THEN
+        ALTER TABLE saved_clothing_items
+        ADD CONSTRAINT saved_clothing_items_clothing_item_id_fkey
+        FOREIGN KEY (clothing_item_id) REFERENCES clothing_items(id) ON DELETE CASCADE;
+      END IF;
+    END $$;
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS saved_clothing_items_user_idx ON saved_clothing_items (user_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS saved_clothing_items_saved_at_idx ON saved_clothing_items (saved_at DESC)`;
+}
+
+async function ensureSavedClothingItemsTable(forceRefresh = false): Promise<void> {
+  if (forceRefresh) {
+    savedClothingItemsTableReady = null;
+  }
+
+  if (!savedClothingItemsTableReady) {
+    savedClothingItemsTableReady = createSavedClothingItemsTable().catch((error) => {
+      savedClothingItemsTableReady = null;
+      throw error;
+    });
+  }
+
+  return savedClothingItemsTableReady;
+}
+
+async function withSavedClothingItemsTable<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    await ensureSavedClothingItemsTable();
+    return await operation();
+  } catch (error) {
+    if (isMissingRelationError(error, SAVED_CLOTHING_ITEMS_TABLE)) {
+      await ensureSavedClothingItemsTable(true);
       return await operation();
     }
     throw error;

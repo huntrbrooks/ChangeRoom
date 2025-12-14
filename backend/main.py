@@ -36,7 +36,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="IGetChanged.Online API")
+app = FastAPI(title="IGetDressed.Online API")
 
 # Configure CORS
 # For production, specify exact origins in ALLOWED_ORIGINS environment variable
@@ -98,7 +98,7 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 @app.get("/")
 async def root():
-    return {"message": "IGetChanged.Online API is running"}
+    return {"message": "IGetDressed.Online API is running"}
 
 @app.post("/api/try-on")
 async def try_on(
@@ -109,7 +109,8 @@ async def try_on(
     category: Optional[str] = Form(None),
     garment_metadata: Optional[str] = Form(None),  # JSON string of metadata
     clothing_file_urls: Optional[str] = Form(None),  # Comma-separated URLs to saved files
-    clothing_file_url: Optional[str] = Form(None)  # Single URL for backward compatibility
+    clothing_file_url: Optional[str] = Form(None),  # Single URL for backward compatibility
+    main_index: Optional[int] = Form(None)  # Optional main reference index from frontend
 ):
     """
     Virtual try-on endpoint. Accepts user image(s) and clothing image(s).
@@ -125,6 +126,9 @@ async def try_on(
     try:
         # Collect user images
         user_image_files = []
+        user_quality_flags = []
+        MIN_DIM_HARD_FAIL = 400  # px
+        MIN_DIM_WARN = 900      # px
         
         # Handle multiple uploaded user images
         if user_images:
@@ -142,6 +146,34 @@ async def try_on(
                         detail=f"User image too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB"
                     )
                 img.file.seek(0)
+                # Resolution check
+                try:
+                    from PIL import Image as PILImage  # type: ignore
+                    pil_img = PILImage.open(io.BytesIO(img_bytes))
+                    w, h = pil_img.size
+                    min_dim = min(w, h)
+                    if min_dim < MIN_DIM_HARD_FAIL:
+                        raise HTTPException(
+                            status_code=422,
+                            detail="User image resolution too low. Please upload a higher-resolution photo."
+                        )
+                    user_quality_flags.append({
+                        "name": img.filename or f"user_{len(user_quality_flags)+1}",
+                        "width": w,
+                        "height": h,
+                        "min_dim": min_dim,
+                        "low_res": min_dim < MIN_DIM_WARN
+                    })
+                except HTTPException:
+                    raise
+                except Exception:
+                    user_quality_flags.append({
+                        "name": img.filename or f"user_{len(user_quality_flags)+1}",
+                        "width": None,
+                        "height": None,
+                        "min_dim": None,
+                        "low_res": False
+                    })
                 user_image_files.append(img.file)
                 
         # Handle single user image (backward compatibility) if no list provided
@@ -156,6 +188,33 @@ async def try_on(
                      status_code=413, 
                      detail=f"User image too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB"
                  )
+             try:
+                 from PIL import Image as PILImage  # type: ignore
+                 pil_img = PILImage.open(io.BytesIO(user_image_bytes))
+                 w, h = pil_img.size
+                 min_dim = min(w, h)
+                 if min_dim < MIN_DIM_HARD_FAIL:
+                     raise HTTPException(
+                         status_code=422,
+                         detail="User image resolution too low. Please upload a higher-resolution photo."
+                     )
+                 user_quality_flags.append({
+                     "name": user_image.filename or "user_image",
+                     "width": w,
+                     "height": h,
+                     "min_dim": min_dim,
+                     "low_res": min_dim < MIN_DIM_WARN
+                 })
+             except HTTPException:
+                 raise
+             except Exception:
+                 user_quality_flags.append({
+                     "name": user_image.filename or "user_image",
+                     "width": None,
+                     "height": None,
+                     "min_dim": None,
+                     "low_res": False
+                 })
              user_image.file.seek(0)
              user_image_files.append(user_image.file)
              
@@ -344,7 +403,9 @@ async def try_on(
                 clothing_image_files, 
                 final_category,
                 metadata,
-                user_attributes=user_attributes
+                user_attributes=user_attributes,
+                main_index=main_index if main_index is not None else 0,
+                user_quality_flags=user_quality_flags
             )
             # #region agent log
             try:

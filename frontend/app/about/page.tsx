@@ -15,7 +15,7 @@ export default function About() {
             <div className="w-8 h-8 bg-black text-white flex items-center justify-center rounded-full">
               <Shirt size={20} />
             </div>
-            <h1 className="text-xl font-bold tracking-tight">IGetChanged.Online</h1>
+            <h1 className="text-xl font-bold tracking-tight">IGetDressed.Online</h1>
           </Link>
           <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-gray-600">
             <Link href="/how-it-works" className="hover:text-black transition-colors">How it Works</Link>
@@ -33,7 +33,7 @@ export default function About() {
           Back to Home
         </Link>
 
-        <h1 className="text-4xl font-bold mb-4">About IGetChanged.Online</h1>
+        <h1 className="text-4xl font-bold mb-4">About IGetDressed.Online</h1>
         <p className="text-lg text-gray-600 mb-12">
           Revolutionizing online fashion shopping with cutting-edge AI technology.
         </p>
@@ -42,7 +42,7 @@ export default function About() {
           <section className="mb-12">
             <h2 className="text-2xl font-bold mb-4">Our Mission</h2>
             <p className="text-gray-700 leading-relaxed">
-              IGetChanged.Online was created to solve a fundamental problem in online shopping: you can&apos;t try on clothes before buying them. 
+              IGetDressed.Online was created to solve a fundamental problem in online shopping: you can&apos;t try on clothes before buying them. 
               We use advanced AI and machine learning to create realistic virtual try-on experiences, helping you make confident 
               fashion choices from the comfort of your home.
             </p>
@@ -99,7 +99,7 @@ export default function About() {
           <section className="mb-12">
             <h2 className="text-2xl font-bold mb-4">Technology Stack</h2>
             <p className="text-gray-700 leading-relaxed mb-4">
-              IGetChanged.Online is built with modern, reliable technologies:
+              IGetDressed.Online is built with modern, reliable technologies:
             </p>
             <ul className="list-disc list-inside space-y-2 text-gray-700 ml-4">
               <li><strong>Frontend:</strong> Next.js, React, TypeScript, Tailwind CSS</li>
@@ -126,7 +126,7 @@ export default function About() {
           <section className="p-6 bg-blue-50 rounded-xl border border-blue-200">
             <h2 className="text-2xl font-bold mb-4">Get Started</h2>
             <p className="text-gray-700 mb-6">
-              Ready to revolutionize your online shopping experience? Try IGetChanged.Online today!
+              Ready to revolutionize your online shopping experience? Try IGetDressed.Online today!
             </p>
             <Link
               href="/"

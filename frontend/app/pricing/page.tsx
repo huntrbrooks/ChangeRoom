@@ -84,7 +84,7 @@ function PricingPageContent() {
             <div>
               <h4 className="font-semibold text-[#8B5CF6] mb-2">How does the free try-on work?</h4>
               <p className="text-[#8B5CF6]/70 text-sm">
-                New users get 1 free try-on to experience IGetChanged.Online. No credit card required. 
+                New users get 1 free try-on to experience IGetDressed.Online. No credit card required. 
                 After your free try-on, choose a plan to continue.
               </p>
             </div>

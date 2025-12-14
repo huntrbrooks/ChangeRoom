@@ -11,15 +11,43 @@ import { amazonProvider } from "./amazon";
 // Provider priority: eBay and Amazon first (better affiliate rates), then Google Shopping as fallback
 const providers = [ebayProvider, amazonProvider, googleShoppingProvider];
 
+function tokenize(query: string): string[] {
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function scoreOfferRelevance(offer: Offer, tokens: string[]): number {
+  const title = (offer.title || "").toLowerCase();
+  const merchant = (offer.merchant || "").toLowerCase();
+
+  return tokens.reduce((score, token) => {
+    let next = score;
+    if (title.includes(token)) {
+      next += 3;
+    }
+    if (merchant.includes(token)) {
+      next += 1;
+    }
+    if (offer.thumbnailUrl) {
+      next += 0.5;
+    }
+    return next;
+  }, 0);
+}
+
 /**
  * Find best offers for a search query across all providers
- * Returns offers sorted by total price (cheapest first)
+ * Returns offers sorted by relevance to the query (ties broken by total price)
  */
 export async function findBestOffersForQuery(
   query: string,
   ctx: ProviderContext
 ): Promise<Offer[]> {
   const allOffers: Offer[] = [];
+  const tokens = tokenize(query);
 
   // Fetch from all providers in parallel
   const providerPromises = providers.map(async (provider) => {
@@ -44,10 +72,27 @@ export async function findBestOffersForQuery(
     (o) => o.currency === ctx.currency && o.totalPrice > 0
   );
 
-  // Sort by total price (cheapest first)
-  filtered.sort((a, b) => a.totalPrice - b.totalPrice);
+  // Deduplicate by product URL
+  const seenUrls = new Set<string>();
+  const deduped: Offer[] = [];
+  for (const offer of filtered) {
+    const key = (offer.productUrl || "").toLowerCase();
+    if (!key || seenUrls.has(key)) {
+      continue;
+    }
+    seenUrls.add(key);
+    deduped.push(offer);
+  }
 
-  return filtered;
+  // Sort by relevance to the query, then by total price
+  const scored = deduped
+    .map((offer) => ({
+      offer,
+      score: scoreOfferRelevance(offer, tokens),
+    }))
+    .sort((a, b) => b.score - a.score || a.offer.totalPrice - b.offer.totalPrice);
+
+  return scored.map((entry) => entry.offer);
 }
 
 /**
@@ -60,6 +105,7 @@ export function buildSearchQueryFromItem(item: {
   color?: string | null;
   style?: string | null;
   description?: string | null;
+  tags?: string[] | null;
 }): string {
   const parts: string[] = [];
 
@@ -78,6 +124,10 @@ export function buildSearchQueryFromItem(item: {
   // Add style if relevant
   if (item.style) {
     parts.push(item.style);
+  }
+
+  if (item.tags && item.tags.length > 0) {
+    parts.push(...item.tags.slice(0, 3));
   }
 
   // If we have a description, try to extract key terms

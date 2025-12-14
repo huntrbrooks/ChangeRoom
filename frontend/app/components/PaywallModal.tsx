@@ -123,7 +123,7 @@ export function PaywallModal({
           {creditsAvailable === 0 && !onTrial && !isBypass && (
             <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 sm:p-4 shadow-[0_0_15px_rgba(255,0,0,0.2)]">
               <p className="text-xs sm:text-sm text-red-300">
-                <strong>No Credits Remaining</strong> - Upgrade to a paid plan or purchase credits to continue using IGetChanged.Online.
+                <strong>No Credits Remaining</strong> - Upgrade to a paid plan or purchase credits to continue using IGetDressed.Online.
               </p>
             </div>
           )}

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { getUserClothingItems, insertClothingItems } from "@/lib/db-access";
+import {
+  getUserClothingItems,
+  getSavedClothingItemIds,
+  insertClothingItems,
+} from "@/lib/db-access";
 import { ensureAbsoluteUrl } from "@/lib/url";
 
 type ClothingItemInput = {
@@ -35,11 +39,19 @@ export async function GET(req: NextRequest) {
     const tags = tagsParam ? tagsParam.split(",") : undefined;
     const limitParam = searchParams.get("limit");
     const limit = limitParam ? parseInt(limitParam, 10) : undefined;
+    const sinceParam = searchParams.get("sinceHours");
+    const includeSaved = searchParams.get("includeSaved") === "true";
+
+    const since =
+      sinceParam && !Number.isNaN(Number(sinceParam))
+        ? new Date(Date.now() - Number(sinceParam) * 60 * 60 * 1000)
+        : undefined;
 
     const clothingItems = await getUserClothingItems(userId, {
       category,
       tags,
       limit,
+      since,
     });
 
     const normalizedItems = clothingItems.map((item) => ({
@@ -47,7 +59,11 @@ export async function GET(req: NextRequest) {
       public_url: ensureAbsoluteUrl(item.public_url) || item.public_url,
     }));
 
-    return NextResponse.json({ clothingItems: normalizedItems });
+    const savedIds = includeSaved
+      ? await getSavedClothingItemIds(userId)
+      : undefined;
+
+    return NextResponse.json({ clothingItems: normalizedItems, savedIds });
   } catch (err: unknown) {
     console.error("get clothing-items error:", err);
     return NextResponse.json(

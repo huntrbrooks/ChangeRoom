@@ -23,8 +23,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  applicationName: "IGetChanged.Online",
-  title: "IGetChanged.Online - Virtual Try-On & Shopping",
+  applicationName: "IGetDressed.Online",
+  title: "IGetDressed.Online - Virtual Try-On & Shopping",
   description:
     "Try on clothes virtually and discover similar products to shop. Upload your photo and wardrobe items to see how they look on you.",
   manifest: "/manifest.webmanifest",
@@ -48,7 +48,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "IGetChanged.Online",
+    title: "IGetDressed.Online",
   },
 };
 

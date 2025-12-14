@@ -27,7 +27,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">1. Acceptance of Terms</h2>
             <p className="leading-relaxed">
-              By accessing and using IGetChanged.Online (&quot;the Service&quot;), you accept and agree to be bound by the terms and provision of this agreement. 
+              By accessing and using IGetDressed.Online (&quot;the Service&quot;), you accept and agree to be bound by the terms and provision of this agreement. 
               If you do not agree to abide by the above, please do not use this service.
             </p>
           </section>
@@ -35,7 +35,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">2. Description of Service</h2>
             <p className="leading-relaxed mb-4">
-              IGetChanged.Online is a virtual try-on platform that uses artificial intelligence to generate images of clothing items on user-uploaded photos. 
+              IGetDressed.Online is a virtual try-on platform that uses artificial intelligence to generate images of clothing items on user-uploaded photos. 
               The Service also provides product recommendations and shopping links to third-party retailers.
             </p>
             <p className="leading-relaxed">
@@ -75,7 +75,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">5. Intellectual Property</h2>
             <p className="leading-relaxed mb-4">
-              The Service and its original content, features, and functionality are owned by IGetChanged.Online and are protected by international 
+              The Service and its original content, features, and functionality are owned by IGetDressed.Online and are protected by international 
               copyright, trademark, patent, trade secret, and other intellectual property laws.
             </p>
             <p className="leading-relaxed">
@@ -103,9 +103,9 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">7. Third-Party Services</h2>
             <p className="leading-relaxed">
-              The Service may contain links to third-party websites or services that are not owned or controlled by IGetChanged.Online. 
+              The Service may contain links to third-party websites or services that are not owned or controlled by IGetDressed.Online. 
               We have no control over, and assume no responsibility for, the content, privacy policies, or practices of any third-party 
-              websites or services. You acknowledge and agree that IGetChanged.Online shall not be responsible or liable for any damage or loss 
+              websites or services. You acknowledge and agree that IGetDressed.Online shall not be responsible or liable for any damage or loss 
               caused by your use of any third-party service.
             </p>
           </section>
@@ -125,7 +125,7 @@ export default function TermsOfService() {
               <li>Defects will be corrected</li>
             </ul>
             <p className="leading-relaxed mt-4">
-              IN NO EVENT SHALL IGETCHANGED.ONLINE BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, 
+              IN NO EVENT SHALL IGETDRESSED.ONLINE BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, 
               INCLUDING LOSS OF PROFITS, DATA, OR USE, ARISING OUT OF OR IN CONNECTION WITH YOUR USE OF THE SERVICE.
             </p>
           </section>
@@ -133,7 +133,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">9. Indemnification</h2>
             <p className="leading-relaxed">
-              You agree to indemnify, defend, and hold harmless IGetChanged.Online and its officers, directors, employees, and agents from and against 
+              You agree to indemnify, defend, and hold harmless IGetDressed.Online and its officers, directors, employees, and agents from and against 
               any claims, liabilities, damages, losses, and expenses, including reasonable attorneys&apos; fees, arising out of or in any way 
               connected with your access to or use of the Service, your violation of these Terms, or your infringement of any rights of another.
             </p>
@@ -159,7 +159,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">12. Governing Law</h2>
             <p className="leading-relaxed">
-              These Terms shall be governed and construed in accordance with the laws of the jurisdiction in which IGetChanged.Online operates, 
+              These Terms shall be governed and construed in accordance with the laws of the jurisdiction in which IGetDressed.Online operates, 
               without regard to its conflict of law provisions.
             </p>
           </section>
