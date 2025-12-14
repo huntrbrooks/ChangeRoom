@@ -32,6 +32,16 @@ function PricingPageContent() {
           <p className="text-lg text-[#8B5CF6]/70 max-w-2xl mx-auto">
             Pick a subscription or credit pack and checkout securely via Stripe.
           </p>
+          <div className="mt-4 flex justify-center">
+            <Link
+              href="https://billing.stripe.com/p/login/6oU14n1e8drn28E9D9bMQ00"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center rounded-full bg-[#8B5CF6] px-5 py-2.5 text-white font-semibold hover:bg-[#7a4ee2] transition-colors"
+            >
+              Manage billing / login
+            </Link>
+          </div>
         </div>
 
         <div className="bg-white border border-[#8B5CF6]/30 rounded-2xl p-4 md:p-6 shadow-sm">
