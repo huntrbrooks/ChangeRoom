@@ -12,6 +12,10 @@ declare global {
   }
 }
 
+export {};
+
+const StripePricingTable = 'stripe-pricing-table' as any;
+
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
 
@@ -54,7 +58,7 @@ function PricingPageContent() {
 
         <div className="bg-white border border-[#8B5CF6]/30 rounded-2xl p-4 md:p-6 shadow-sm">
           <Script async src="https://js.stripe.com/v3/pricing-table.js" />
-          <stripe-pricing-table
+          <StripePricingTable
             pricing-table-id="prctbl_1SeNAPDWNatk2HyVsLTh9hcr"
             publishable-key="pk_live_51SZUOrDWNatk2HyVZuCiy1P0yphrx9FH5jZRUyQGV9nL5lKpx9OIVh0s40AfXER63qZmWYyeyLdTmX9EgTXuciLa00YMzOtTB5"
           />
