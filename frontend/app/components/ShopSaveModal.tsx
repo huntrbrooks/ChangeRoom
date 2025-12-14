@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   AlertCircle,
@@ -44,11 +44,12 @@ export interface ShopSaveResult {
   offers: ShopSaveOffer[];
 }
 
-interface ShopSaveModalProps {
+export interface ShopSaveModalProps {
   isOpen: boolean;
   onClose: () => void;
   onResults: (results: ShopSaveResult[]) => void;
   clientItems?: ShopSaveClothingItem[];
+  onTryAgain?: (item: ShopSaveClothingItem) => void | Promise<void>;
 }
 
 const MAX_SELECTION = 5;
@@ -70,14 +71,18 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
   onClose,
   onResults,
   clientItems = [],
+  onTryAgain,
 }) => {
-  const [items, setItems] = useState<ShopSaveClothingItem[]>(clientItems);
+  const [recentItems, setRecentItems] = useState<ShopSaveClothingItem[]>(clientItems);
+  const [savedItems, setSavedItems] = useState<ShopSaveClothingItem[]>([]);
+  const [savedIds, setSavedIds] = useState<string[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [localResults, setLocalResults] = useState<ShopSaveResult[]>([]);
+  const [savingItemId, setSavingItemId] = useState<string | null>(null);
   const hasRequestedItemsRef = useRef(false);
 
   useEffect(() => {
@@ -97,61 +102,96 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
     return () => document.removeEventListener('keydown', handleKey);
   }, [isOpen, onClose]);
 
-  const mergeItems = useCallback((incoming: ShopSaveClothingItem[]) => {
+  const normalizeItem = useCallback((item: ShopSaveClothingItem) => {
+    const createdAt =
+      item.created_at && !Number.isNaN(new Date(item.created_at).getTime())
+        ? item.created_at
+        : new Date().toISOString();
+    return {
+      ...item,
+      created_at: createdAt,
+      public_url: ensureAbsoluteUrl(item.public_url) || item.public_url || "",
+    };
+  }, []);
+
+  const mergeRecentItems = useCallback((incoming: ShopSaveClothingItem[]) => {
     if (!incoming || incoming.length === 0) {
       return;
     }
-    setItems((prev) => {
+    setRecentItems((prev) => {
       const map = new Map<string, ShopSaveClothingItem>();
       [...prev, ...incoming].forEach((item) => {
-        if (!item || !item.id) {
+        if (!item?.id) {
           return;
         }
+        const normalized = normalizeItem(item);
         const existing = map.get(item.id);
-        const merged = {
+        const nextCreatedAt = normalized.created_at || existing?.created_at;
+        map.set(normalized.id, {
           ...(existing || {}),
-          ...item,
-        } as ShopSaveClothingItem;
-        const normalizedUrl =
-          ensureAbsoluteUrl(merged.public_url) ||
-          merged.public_url ||
-          '';
-        map.set(item.id, { ...merged, public_url: normalizedUrl });
+          ...normalized,
+          created_at: nextCreatedAt,
+        });
       });
-      return Array.from(map.values());
+      return Array.from(map.values()).sort(
+        (a, b) =>
+          new Date(b.created_at || "").getTime() -
+          new Date(a.created_at || "").getTime()
+      );
     });
-  }, []);
+  }, [normalizeItem]);
 
   useEffect(() => {
-    mergeItems(clientItems);
-  }, [clientItems, mergeItems]);
+    mergeRecentItems(clientItems);
+  }, [clientItems, mergeRecentItems]);
 
-  const fetchItems = useCallback(async () => {
+  const fetchRecentItems = useCallback(async () => {
     setLoadingItems(true);
     setItemsError(null);
     try {
-      const response = await axios.get('/api/my/clothing-items', {
-        params: { limit: 50 },
+      const response = await axios.get("/api/my/clothing-items", {
+        params: { limit: 50, sinceHours: 24, includeSaved: true },
       });
-      mergeItems(response.data?.clothingItems || []);
+      mergeRecentItems(response.data?.clothingItems || []);
+      if (Array.isArray(response.data?.savedIds)) {
+        setSavedIds(response.data.savedIds as string[]);
+      }
     } catch (error: unknown) {
-      console.error('Failed to load wardrobe items', error);
+      console.error("Failed to load recent wardrobe items", error);
       if (axios.isAxiosError(error)) {
         if (error.response?.status === 401) {
-          setItemsError('Sign in to view your saved wardrobe items.');
+          setItemsError("Sign in to view your recent try-ons.");
         } else {
           setItemsError(
             error.response?.data?.error ||
-              'Could not load your wardrobe. Please try again.'
+              "Could not load your wardrobe. Please try again."
           );
         }
       } else {
-        setItemsError('Could not load your wardrobe. Please try again.');
+        setItemsError("Could not load your wardrobe. Please try again.");
       }
     } finally {
       setLoadingItems(false);
     }
-  }, [mergeItems]);
+  }, [mergeRecentItems]);
+
+  const fetchSavedItems = useCallback(async () => {
+    try {
+      const response = await axios.get("/api/my/saved-clothing-items", {
+        params: { limit: 100 },
+      });
+      const items = Array.isArray(response.data?.clothingItems)
+        ? response.data.clothingItems
+        : [];
+      setSavedItems(items.map(normalizeItem));
+      if (Array.isArray(response.data?.savedIds)) {
+        setSavedIds(response.data.savedIds as string[]);
+      }
+    } catch (error) {
+      console.error("Failed to load saved wardrobe items", error);
+      // Non-blocking for modal, so we keep soft failure
+    }
+  }, [normalizeItem]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -162,8 +202,24 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
       return;
     }
     hasRequestedItemsRef.current = true;
-    void fetchItems();
-  }, [fetchItems, isOpen, loadingItems]);
+    void Promise.all([fetchRecentItems(), fetchSavedItems()]);
+  }, [fetchRecentItems, fetchSavedItems, isOpen, loadingItems]);
+
+  const allItems = useMemo(() => {
+    const map = new Map<string, ShopSaveClothingItem>();
+    [...recentItems, ...savedItems].forEach((item) => {
+      if (item?.id) {
+        map.set(item.id, item);
+      }
+    });
+    return Array.from(map.values());
+  }, [recentItems, savedItems]);
+
+  useEffect(() => {
+    setSelectedIds((prev) =>
+      prev.filter((id) => allItems.some((item) => item.id === id))
+    );
+  }, [allItems]);
 
   const toggleSelect = useCallback(
     (id: string) => {
@@ -213,6 +269,54 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
     [notifySelection, selectedIds, toggleSelect]
   );
 
+  const handleSaveToggle = useCallback(
+    async (item: ShopSaveClothingItem, shouldSave: boolean) => {
+      if (!item?.id) {
+        setSearchError("Item is missing an id and cannot be saved.");
+        return;
+      }
+      if (savingItemId === item.id) {
+        return;
+      }
+      try {
+        setSavingItemId(item.id);
+        if (shouldSave) {
+          await axios.post("/api/my/saved-clothing-items", {
+            clothingItemId: item.id,
+          });
+          setSavedIds((prev) => Array.from(new Set([...prev, item.id])));
+          setSavedItems((prev) => {
+            const map = new Map<string, ShopSaveClothingItem>();
+            [...prev, normalizeItem(item)].forEach((entry) => {
+              map.set(entry.id, entry);
+            });
+            return Array.from(map.values()).sort(
+              (a, b) =>
+                new Date(b.created_at || "").getTime() -
+                new Date(a.created_at || "").getTime()
+            );
+          });
+        } else {
+          await axios.delete("/api/my/saved-clothing-items", {
+            data: { clothingItemId: item.id },
+          });
+          setSavedIds((prev) => prev.filter((id) => id !== item.id));
+          setSavedItems((prev) => prev.filter((entry) => entry.id !== item.id));
+        }
+      } catch (error) {
+        console.error("Save toggle failed", error);
+        if (axios.isAxiosError(error) && error.response?.status === 401) {
+          setSearchError("Please sign in to save items.");
+        } else {
+          setSearchError("Could not update saved items. Please try again.");
+        }
+      } finally {
+        setSavingItemId(null);
+      }
+    },
+    [normalizeItem, savingItemId]
+  );
+
   const handleSearch = useCallback(async () => {
     if (selectedIds.length === 0) {
       setSearchError('Select at least one clothing item to continue.');
@@ -222,7 +326,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
     setSearchError(null);
     try {
       const selectedMetadata = selectedIds
-        .map((id) => items.find((item) => item.id === id))
+        .map((id) => allItems.find((item) => item.id === id))
         .filter((item): item is ShopSaveClothingItem => Boolean(item))
         .map((item) => ({
           id: item.id,
@@ -240,7 +344,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
       });
       const offersMap = response.data?.offers || {};
       const results: ShopSaveResult[] = selectedIds.map((id) => {
-        const item = items.find((it) => it.id === id);
+        const item = allItems.find((it) => it.id === id);
         const fallback: ShopSaveClothingItem = item || {
           id,
           public_url: '',
@@ -276,7 +380,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
     } finally {
       setIsSearching(false);
     }
-  }, [items, onResults, selectedIds]);
+  }, [allItems, onResults, selectedIds]);
 
   if (!isOpen) {
     return null;
@@ -323,7 +427,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
                     if (itemsError?.includes('Sign in')) {
                       window.location.href = '/sign-in';
                     } else {
-                      void fetchItems();
+                      void Promise.all([fetchRecentItems(), fetchSavedItems()]);
                     }
                   }}
                   className="mt-1 text-xs font-semibold underline"
@@ -339,29 +443,67 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
               <Loader2 className="h-8 w-8 animate-spin text-black" />
               <p className="mt-3 text-sm text-black/70">Loading your wardrobe...</p>
             </div>
-          ) : items.length === 0 ? (
-            <div className="rounded-xl border border-black/10 bg-black/5 p-6 text-center">
-              <ShoppingBag className="mx-auto h-10 w-10 text-black/50" />
-              <h3 className="mt-3 text-base font-semibold">No saved wardrobe items yet</h3>
-              <p className="mt-2 text-sm text-black/60">
-                Upload clothing items in the <strong>Choose Wardrobe</strong> step first, then come back to shop for deals.
-              </p>
-              <a
-                href="#choose-wardrobe"
-                onClick={onClose}
-                className="mt-4 inline-flex items-center justify-center rounded-full border border-black px-4 py-2 text-sm font-semibold uppercase tracking-wide"
-              >
-                Go to wardrobe
-              </a>
-            </div>
           ) : (
             <>
-              <ShopSaveSelector
-                items={items}
-                selectedIds={selectedIds}
-                maxSelection={MAX_SELECTION}
-                onToggle={handleItemToggle}
-              />
+              {recentItems.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold uppercase tracking-wide text-black/70">
+                      Recent try-ons (last 24h)
+                    </h3>
+                    <span className="text-[11px] text-black/50">
+                      {recentItems.length} item{recentItems.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  <ShopSaveSelector
+                    items={recentItems}
+                    selectedIds={selectedIds}
+                    maxSelection={MAX_SELECTION}
+                    onToggle={handleItemToggle}
+                    savedIds={savedIds}
+                    onSaveToggle={handleSaveToggle}
+                  />
+                </div>
+              )}
+
+              {savedItems.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold uppercase tracking-wide text-black/70">
+                      Saved items
+                    </h3>
+                    <span className="text-[11px] text-black/50">
+                      {savedItems.length} saved
+                    </span>
+                  </div>
+                  <ShopSaveSelector
+                    items={savedItems}
+                    selectedIds={selectedIds}
+                    maxSelection={MAX_SELECTION}
+                    onToggle={handleItemToggle}
+                    savedIds={savedIds}
+                    onSaveToggle={handleSaveToggle}
+                    onTryAgain={onTryAgain}
+                  />
+                </div>
+              )}
+
+              {!loadingItems && recentItems.length === 0 && savedItems.length === 0 && (
+                <div className="rounded-xl border border-black/10 bg-black/5 p-6 text-center">
+                  <ShoppingBag className="mx-auto h-10 w-10 text-black/50" />
+                  <h3 className="mt-3 text-base font-semibold">No recent try-ons yet</h3>
+                  <p className="mt-2 text-sm text-black/60">
+                    Upload clothing items in the <strong>Choose Wardrobe</strong> step first, then come back to shop for deals.
+                  </p>
+                  <a
+                    href="#choose-wardrobe"
+                    onClick={onClose}
+                    className="mt-4 inline-flex items-center justify-center rounded-full border border-black px-4 py-2 text-sm font-semibold uppercase tracking-wide"
+                  >
+                    Go to wardrobe
+                  </a>
+                </div>
+              )}
 
               {selectedIds.length >= MAX_SELECTION && (
                 <p className="text-xs font-semibold uppercase tracking-wide text-black/60">
@@ -375,7 +517,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
             <div className="mt-6 space-y-3 rounded-xl border border-black/10 bg-black/5 p-4">
               <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-black/70">
                 <DollarSign size={16} />
-                Cheapest offers
+                Matching offers
               </div>
               {localResults.map((result) => (
                 <div
@@ -446,7 +588,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
           )}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-xs text-black/60">
-              We&apos;ll use Google Shopping and partner feeds to find the lowest prices for your picks.
+              We&apos;ll use Google Shopping and partner feeds to surface exact or near-identical items across stores.
             </div>
             <button
               onClick={handleSearch}
@@ -460,12 +602,12 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
               {isSearching ? (
                 <>
                   <Loader2 size={16} className="animate-spin" />
-                  Searching...
+                    Searching matches...
                 </>
               ) : (
                 <>
                   <ShoppingBag size={16} />
-                  Find best prices
+                    Find matches
                 </>
               )}
             </button>
