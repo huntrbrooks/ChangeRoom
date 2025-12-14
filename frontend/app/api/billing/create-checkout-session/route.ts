@@ -11,7 +11,7 @@ import {
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
 function getStripe() {
   return new Stripe(stripeConfig.secretKey, {
-    apiVersion: "2025-02-24.acacia",
+    apiVersion: "2025-03-31.basil",
   });
 }
 
