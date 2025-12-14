@@ -73,6 +73,9 @@ function HomeContent() {
   const [activeTab, setActiveTab] = useState<'try-on' | 'my-outfits'>('try-on');
   const [isShopSaveOpen, setIsShopSaveOpen] = useState(false);
   const [shopSaveResults, setShopSaveResults] = useState<ShopSaveResult[]>([]);
+  const [pendingSavedItem, setPendingSavedItem] = useState<ShopSaveClothingItem | null>(null);
+  const [showWardrobeLimitModal, setShowWardrobeLimitModal] = useState(false);
+  const [isAddingSavedItem, setIsAddingSavedItem] = useState(false);
   const cardClass =
     "rounded-2xl border border-black/10 bg-white/95 shadow-[0_12px_40px_rgba(0,0,0,0.06)] backdrop-blur-sm";
   const cardPadding = "p-3 sm:p-4 md:p-6";
@@ -127,6 +130,8 @@ function HomeContent() {
 
   const isOnTrial = billing && !billing.trialUsed && !isBypass;
   const isAuthenticated = isLoaded && !!user;
+  const lacksCredits = !isBypass && !isOnTrial && (!billing || billing.creditsAvailable <= 0);
+  const canAttemptTryOn = isAuthenticated && !isGenerating;
 
   const requireAuth = useCallback(() => {
     if (!isLoaded || !user) {
@@ -340,12 +345,121 @@ function HomeContent() {
         tags: analysisMeta.tags || [],
         original_filename:
           entry.analysis?.original_filename || entry.file.name,
-        created_at: null,
+        created_at: new Date().toISOString(),
       });
 
       return acc;
     }, []);
   }, [wardrobeItems]);
+
+  const createWardrobeEntryFromSavedItem = useCallback(
+    async (item: ShopSaveClothingItem): Promise<ImageWithAnalysis> => {
+      const fileUrl = ensureAbsoluteUrl(item.public_url) || item.public_url;
+      if (!fileUrl) {
+        throw new Error("Saved item is missing a file URL.");
+      }
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        throw new Error("Could not download saved item.");
+      }
+      const blob = await response.blob();
+      const filename =
+        item.original_filename ||
+        item.subcategory ||
+        item.description ||
+        "saved-item.jpg";
+      const file = new File([blob], filename, {
+        type: blob.type || "image/jpeg",
+      }) as FileWithMetadata;
+      file.clothing_item_id = item.id;
+      file.file_url = fileUrl;
+
+      const analysis: AnalyzedItem = {
+        index: 0,
+        original_filename: filename,
+        analysis: {
+          body_region: item.category || "unknown",
+          category: item.category || "unknown",
+          item_type: item.subcategory || undefined,
+          short_description:
+            item.description || item.subcategory || filename || "Saved item",
+          description: item.description || undefined,
+          suggested_filename: filename,
+          color: item.color || undefined,
+          style: item.style || undefined,
+          tags: item.tags || [],
+        },
+        file_url: fileUrl,
+        saved_filename: filename,
+      storage_path: undefined,
+      };
+
+      return {
+        file,
+        analysis,
+        clothingItemId: item.id,
+      };
+    },
+    []
+  );
+
+  const addSavedItemToWardrobe = useCallback(
+    async (item: ShopSaveClothingItem, replaceAll = false) => {
+      const entry = await createWardrobeEntryFromSavedItem(item);
+      setWardrobeItems((prev) => (replaceAll ? [entry] : [...prev, entry]));
+    },
+    [createWardrobeEntryFromSavedItem]
+  );
+
+  const handleTryAgainFromSaved = useCallback(
+    async (item: ShopSaveClothingItem) => {
+      if (!requireAuth()) {
+        return;
+      }
+      if (!item?.id) {
+        setError("Saved item is missing required data.");
+        return;
+      }
+      try {
+        setIsAddingSavedItem(true);
+        if (wardrobeItems.length >= 5) {
+          setPendingSavedItem(item);
+          setShowWardrobeLimitModal(true);
+          return;
+        }
+        await addSavedItemToWardrobe(item);
+      } catch (error) {
+        console.error("Failed to re-add saved item", error);
+        setError("Could not add saved item. Please try again.");
+      } finally {
+        setIsAddingSavedItem(false);
+      }
+    },
+    [addSavedItemToWardrobe, requireAuth, wardrobeItems.length]
+  );
+
+  const handleConfirmNewWardrobe = useCallback(async () => {
+    if (!pendingSavedItem) {
+      setShowWardrobeLimitModal(false);
+      return;
+    }
+    try {
+      setIsAddingSavedItem(true);
+      await addSavedItemToWardrobe(pendingSavedItem, true);
+    } catch (error) {
+      console.error("Failed to start new wardrobe with saved item", error);
+      setError("Could not start a new wardrobe. Please try again.");
+    } finally {
+      setIsAddingSavedItem(false);
+      setPendingSavedItem(null);
+      setShowWardrobeLimitModal(false);
+    }
+  }, [addSavedItemToWardrobe, pendingSavedItem]);
+
+  const handleDismissWardrobeLimit = useCallback(() => {
+    setPendingSavedItem(null);
+    setShowWardrobeLimitModal(false);
+  }, []);
 
   // Save outfit to My Outfits (persistent storage via API)
   const saveOutfitToMyOutfits = async (imageUrl: string, clothingFiles: File[], wardrobeItemsData: typeof wardrobeItems) => {
@@ -394,6 +508,10 @@ function HomeContent() {
     if (!requireAuth()) {
       return;
     }
+    if (lacksCredits) {
+      setShowPaywall(true);
+      return;
+    }
     
     if (userImages.length === 0) {
       const errorMsg = "Please upload at least one photo of yourself.";
@@ -413,7 +531,7 @@ function HomeContent() {
     }
 
     // Check credits before proceeding (unless on trial or bypass user)
-    if (!isBypass && !isOnTrial && (!billing || billing.creditsAvailable <= 0)) {
+    if (lacksCredits) {
       console.log("No credits available, showing paywall");
       setShowPaywall(true);
       return;
@@ -491,6 +609,9 @@ function HomeContent() {
         if (userImages.length > 0) {
            tryOnFormData.append('user_image', userImages[0]);
         }
+
+      // Send main reference index (current first image after any reordering)
+      tryOnFormData.append('main_index', '0');
 
         preparedTryOnFiles = activeWardrobeItems.map(item => item.file);
 
@@ -855,7 +976,7 @@ function HomeContent() {
           <div className="flex justify-center mb-3 sm:mb-4">
             <Image 
               src="/main logo Black.png" 
-              alt="IGetChanged.Online" 
+              alt="IGetDressed.Online" 
               width={5065}
               height={1042}
               priority
@@ -1020,6 +1141,9 @@ function HomeContent() {
                 multiple={true}
                 maxFiles={5}
                 selectedFiles={userImages} 
+                showInlineTip={true}
+                highlightMainReference={true}
+                onOrderChange={(files) => setUserImages(files)}
                 onFilesSelect={(files) => {
                   if (!requireAuth()) {
                     return;
@@ -1037,6 +1161,9 @@ function HomeContent() {
                   preferredMimeType: 'image/jpeg',
                 }}
               />
+              <p className="mt-2 text-[11px] sm:text-xs text-black/70">
+                Tip: Drag to reorder; the first photo is used as the main reference. Aim for front / 45° / profile in good light.
+              </p>
             </section>
 
             <section className={`${cardClass} ${cardPadding} space-y-4`}>
@@ -1070,8 +1197,16 @@ function HomeContent() {
                     e.preventDefault();
                     e.stopPropagation();
                     console.log("Try-on button clicked");
+                    if (!isAuthenticated) {
+                      setError('Please sign in to try on.');
+                      return;
+                    }
                     if (isGenerating) {
                       console.log("Button clicked but already generating, ignoring");
+                      return;
+                    }
+                    if (lacksCredits) {
+                      setShowPaywall(true);
                       return;
                     }
                     handleGenerate().catch((error) => {
@@ -1091,7 +1226,7 @@ function HomeContent() {
                     e.preventDefault();
                   }
                 }}
-                disabled={isGenerating}
+                disabled={!canAttemptTryOn}
                 type="button"
                 aria-label="Try on clothes"
                 className={`
@@ -1099,6 +1234,8 @@ function HomeContent() {
                   min-h-[52px] touch-manipulation select-none
                   ${isGenerating 
                     ? 'bg-gray-200 text-gray-500 cursor-not-allowed border border-gray-300 pointer-events-none' 
+                    : !isAuthenticated
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
                     : 'bg-black text-white hover:bg-gray-900 active:bg-gray-800 active:scale-[0.98] border-2 border-black'
                   }
                 `}
@@ -1107,6 +1244,11 @@ function HomeContent() {
                   <>
                     <Loader2 size={18} className="sm:w-5 sm:h-5 animate-spin" />
                     <span>Generating your look...</span>
+                  </>
+                ) : !isAuthenticated ? (
+                  <>
+                    <Sparkles size={18} className="sm:w-5 sm:h-5" />
+                    <span>Sign in to try on</span>
                   </>
                 ) : (
                   <>
@@ -1281,7 +1423,39 @@ function HomeContent() {
         onClose={() => setIsShopSaveOpen(false)}
         onResults={(results) => setShopSaveResults(results)}
         clientItems={shopSaveReadyItems}
+        onTryAgain={handleTryAgainFromSaved}
       />
+
+      {showWardrobeLimitModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-black/10">
+            <h3 className="text-lg font-bold text-black">Start a new wardrobe?</h3>
+            <p className="mt-2 text-sm text-black/70">
+              If not, an item needs to be removed in order to add this item.
+            </p>
+            <div className="mt-4 flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={handleConfirmNewWardrobe}
+                disabled={isAddingSavedItem}
+                className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold uppercase tracking-wide border border-black transition-colors ${
+                  isAddingSavedItem
+                    ? "bg-black/10 text-black/40 cursor-not-allowed"
+                    : "bg-black text-white hover:bg-black/90"
+                }`}
+              >
+                {isAddingSavedItem ? "Adding..." : "Start new wardrobe"}
+              </button>
+              <button
+                onClick={handleDismissWardrobeLimit}
+                disabled={isAddingSavedItem}
+                className="flex-1 rounded-lg px-4 py-2 text-sm font-semibold uppercase tracking-wide border border-black/20 bg-white hover:border-black/60 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeTab === 'try-on' && (
         <div className="lg:hidden fixed inset-x-0 bottom-0 z-40 px-3 pb-[calc(14px+env(safe-area-inset-bottom))] pt-3 bg-white/95 backdrop-blur-md border-t border-black/10 shadow-[0_-8px_30px_rgba(0,0,0,0.12)]">
@@ -1296,16 +1470,24 @@ function HomeContent() {
             </div>
             <button
               onClick={() => {
+                if (!isAuthenticated) {
+                  setError('Please sign in to try on.');
+                  return;
+                }
                 if (isGenerating) return;
+                if (lacksCredits) {
+                  setShowPaywall(true);
+                  return;
+                }
                 void handleGenerate();
               }}
-              disabled={isGenerating}
+              disabled={!canAttemptTryOn}
               className={`
                 rounded-xl px-4 py-3 text-xs font-bold uppercase tracking-wider min-w-[120px]
-                ${isGenerating ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-900 active:bg-gray-800'}
+                ${isGenerating ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : !isAuthenticated ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-900 active:bg-gray-800'}
               `}
             >
-              {isGenerating ? 'Working...' : 'Try it on'}
+              {isGenerating ? 'Working...' : !isAuthenticated ? 'Sign in to try on' : 'Try it on'}
             </button>
           </div>
         </div>
