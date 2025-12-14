@@ -1,5 +1,6 @@
-import React from 'react';
-import { Sparkles, Download, Share2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Download, Share2 } from 'lucide-react';
+import { TryOnProgressLoader } from './TryOnProgressLoader';
 
 interface VirtualMirrorProps {
   imageUrl: string | null;
@@ -7,22 +8,34 @@ interface VirtualMirrorProps {
 }
 
 export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoading }) => {
+  const [showLoader, setShowLoader] = useState(false);
+
+  useEffect(() => {
+    if (isLoading) {
+      setShowLoader(true);
+    }
+  }, [isLoading]);
+
+  useEffect(() => {
+    if (!isLoading && !imageUrl) {
+      setShowLoader(false);
+    }
+  }, [isLoading, imageUrl]);
+
+  const handleLoaderFinished = () => {
+    setShowLoader(false);
+  };
+
   return (
     <div className="w-full aspect-[3/4] bg-white rounded-none overflow-hidden relative border-2 border-black/20">
-      {isLoading && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm z-10">
-          <div className="relative">
-            <div className="absolute inset-0 animate-ping rounded-full bg-black opacity-75"></div>
-            <div className="relative bg-black rounded-full p-3 sm:p-4">
-              <Sparkles className="text-white animate-spin w-6 h-6 sm:w-8 sm:h-8" />
-            </div>
-          </div>
-          <p className="mt-3 sm:mt-4 text-sm sm:text-lg font-semibold text-black uppercase tracking-wider animate-pulse px-4 text-center">
-            Weaving your new look...
-          </p>
-        </div>
+      {showLoader && (
+        <TryOnProgressLoader
+          isActive={isLoading}
+          isComplete={!isLoading && Boolean(imageUrl)}
+          onFinished={handleLoaderFinished}
+        />
       )}
-      
+
       {imageUrl ? (
         <>
           <img 

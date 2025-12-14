@@ -10,6 +10,9 @@ interface ShopSaveSelectorProps {
   selectedIds: string[];
   maxSelection: number;
   onToggle: (item: ShopSaveClothingItem) => void;
+  savedIds: string[];
+  onSaveToggle?: (item: ShopSaveClothingItem, shouldSave: boolean) => void;
+  onTryAgain?: (item: ShopSaveClothingItem) => void;
 }
 
 interface GroupedItems {
@@ -48,6 +51,9 @@ export const ShopSaveSelector: React.FC<ShopSaveSelectorProps> = ({
   selectedIds,
   maxSelection,
   onToggle,
+  savedIds,
+  onSaveToggle,
+  onTryAgain,
 }) => {
   const grouped = useMemo(() => {
     const groups = new Map<string, GroupedItems>();
@@ -86,6 +92,7 @@ export const ShopSaveSelector: React.FC<ShopSaveSelectorProps> = ({
               const isSelected = selectedIds.includes(item.id);
               const selectionLimitReached =
                 !isSelected && selectedIds.length >= maxSelection;
+              const isSaved = savedIds.includes(item.id);
               const itemTitle =
                 item.subcategory ||
                 item.description ||
@@ -157,6 +164,38 @@ export const ShopSaveSelector: React.FC<ShopSaveSelectorProps> = ({
                               {tag}
                             </span>
                           ))}
+                        </div>
+                      )}
+                      {(onSaveToggle || onTryAgain) && (
+                        <div className="flex flex-wrap items-center gap-2 pt-2">
+                          {onSaveToggle && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onSaveToggle(item, !isSaved);
+                              }}
+                              className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide transition-colors ${
+                                isSaved
+                                  ? 'bg-black text-white border border-black'
+                                  : 'bg-white text-black border border-black/30 hover:border-black'
+                              }`}
+                            >
+                              {isSaved ? 'Saved' : 'Save'}
+                            </button>
+                          )}
+                          {onTryAgain && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onTryAgain(item);
+                              }}
+                              className="rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide border border-black/20 bg-black text-white hover:bg-black/90 transition-colors"
+                            >
+                              Try on again
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
