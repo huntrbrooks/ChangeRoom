@@ -463,10 +463,11 @@ export async function getUserClothingItems(
   return withClothingItemsTable(async () => {
     // Build single query with all conditions
     let result;
-    const sinceClause =
-      filters?.since instanceof Date
-        ? sql`AND created_at >= ${filters.since}`
-        : sql``;
+    const sinceValue =
+      filters?.since instanceof Date && !Number.isNaN(filters.since.getTime())
+        ? filters.since.toISOString()
+        : null;
+    const sinceClause = sinceValue ? sql`AND created_at >= ${sinceValue}` : sql``;
     
     if (filters?.category && filters?.tags && filters.tags.length > 0) {
       result = await sql`
