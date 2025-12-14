@@ -4,6 +4,14 @@ import Link from 'next/link';
 import Script from 'next/script';
 import { ArrowLeft } from 'lucide-react';
 
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      'stripe-pricing-table': any;
+    }
+  }
+}
+
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
 
