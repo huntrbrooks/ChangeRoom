@@ -467,40 +467,75 @@ export async function getUserClothingItems(
       filters?.since instanceof Date && !Number.isNaN(filters.since.getTime())
         ? filters.since.toISOString()
         : null;
-    const sinceClause = sinceValue ? sql`AND created_at >= ${sinceValue}` : sql``;
     
     if (filters?.category && filters?.tags && filters.tags.length > 0) {
-      result = await sql`
-        SELECT * FROM clothing_items
-        WHERE user_id = ${userId}
-        AND category = ${filters.category}
-        AND tags @> ${JSON.stringify(filters.tags)}::jsonb
-        ${sinceClause}
-        ORDER BY created_at DESC
-      `;
+      if (sinceValue) {
+        result = await sql`
+          SELECT * FROM clothing_items
+          WHERE user_id = ${userId}
+          AND category = ${filters.category}
+          AND tags @> ${JSON.stringify(filters.tags)}::jsonb
+          AND created_at >= ${sinceValue}
+          ORDER BY created_at DESC
+        `;
+      } else {
+        result = await sql`
+          SELECT * FROM clothing_items
+          WHERE user_id = ${userId}
+          AND category = ${filters.category}
+          AND tags @> ${JSON.stringify(filters.tags)}::jsonb
+          ORDER BY created_at DESC
+        `;
+      }
     } else if (filters?.category) {
-      result = await sql`
-        SELECT * FROM clothing_items
-        WHERE user_id = ${userId}
-        AND category = ${filters.category}
-        ${sinceClause}
-        ORDER BY created_at DESC
-      `;
+      if (sinceValue) {
+        result = await sql`
+          SELECT * FROM clothing_items
+          WHERE user_id = ${userId}
+          AND category = ${filters.category}
+          AND created_at >= ${sinceValue}
+          ORDER BY created_at DESC
+        `;
+      } else {
+        result = await sql`
+          SELECT * FROM clothing_items
+          WHERE user_id = ${userId}
+          AND category = ${filters.category}
+          ORDER BY created_at DESC
+        `;
+      }
     } else if (filters?.tags && filters.tags.length > 0) {
-      result = await sql`
-        SELECT * FROM clothing_items
-        WHERE user_id = ${userId}
-        AND tags @> ${JSON.stringify(filters.tags)}::jsonb
-        ${sinceClause}
-        ORDER BY created_at DESC
-      `;
+      if (sinceValue) {
+        result = await sql`
+          SELECT * FROM clothing_items
+          WHERE user_id = ${userId}
+          AND tags @> ${JSON.stringify(filters.tags)}::jsonb
+          AND created_at >= ${sinceValue}
+          ORDER BY created_at DESC
+        `;
+      } else {
+        result = await sql`
+          SELECT * FROM clothing_items
+          WHERE user_id = ${userId}
+          AND tags @> ${JSON.stringify(filters.tags)}::jsonb
+          ORDER BY created_at DESC
+        `;
+      }
     } else {
-      result = await sql`
-        SELECT * FROM clothing_items
-        WHERE user_id = ${userId}
-        ${sinceClause}
-        ORDER BY created_at DESC
-      `;
+      if (sinceValue) {
+        result = await sql`
+          SELECT * FROM clothing_items
+          WHERE user_id = ${userId}
+          AND created_at >= ${sinceValue}
+          ORDER BY created_at DESC
+        `;
+      } else {
+        result = await sql`
+          SELECT * FROM clothing_items
+          WHERE user_id = ${userId}
+          ORDER BY created_at DESC
+        `;
+      }
     }
     
     let items = result.rows as ClothingItem[];
