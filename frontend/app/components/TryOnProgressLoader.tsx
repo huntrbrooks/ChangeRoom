@@ -57,7 +57,7 @@ const STAGES: Stage[] = [
   },
 ]
 
-const MIN_STAGE_MS = 800
+const MIN_STAGE_MS = 5000
 const EXIT_FADE_MS = 500
 
 export function TryOnProgressLoader({ isActive, isComplete, onFinished }: TryOnProgressLoaderProps) {
@@ -65,6 +65,8 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished }: TryOnP
   const [stageIndex, setStageIndex] = useState(0)
   const [isExiting, setIsExiting] = useState(false)
   const progressRef = useRef(0)
+  const stageTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const stageUnlockRef = useRef<number | null>(null)
 
   // Reset when (re)activated
   useEffect(() => {
@@ -73,6 +75,7 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished }: TryOnP
       progressRef.current = 0
       setStageIndex(0)
       setIsExiting(false)
+      stageUnlockRef.current = Date.now() + MIN_STAGE_MS
     }
   }, [isActive])
 
@@ -89,15 +92,20 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished }: TryOnP
 
       const target = STAGES[Math.min(stageIndex, STAGES.length - 1)].targetPercent
       const isFinal = stageIndex >= STAGES.length - 1
-      const maxTarget = isFinal && isComplete ? 100 : Math.min(target, 96)
+      const allowedTarget = isFinal && isComplete ? 100 : target
 
-      // ease toward target
+      // ease toward target over ~5s
       const current = progressRef.current
-      const increment = Math.max(0.08, delta / 1200) * (maxTarget - current)
-      const next = Math.min(current + increment, maxTarget)
-      if (!Number.isNaN(next) && next !== current) {
-        progressRef.current = next
-        setProgress(next)
+      const remaining = allowedTarget - current
+      if (remaining > 0) {
+        const seconds = delta / 1000
+        const rate = remaining / 5
+        const increment = rate * seconds
+        const next = Math.min(current + increment, allowedTarget)
+        if (!Number.isNaN(next) && next !== current) {
+          progressRef.current = next
+          setProgress(next)
+        }
       }
 
       raf = requestAnimationFrame(tick)
@@ -107,20 +115,39 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished }: TryOnP
     return () => cancelAnimationFrame(raf)
   }, [isActive, isComplete, isExiting, stageIndex])
 
-  // Advance stages over time, but clamp to current progress thresholds
+  // Advance stages only after minimum time AND reaching the stage target
   useEffect(() => {
     if (!isActive || isExiting) return
 
-    let timeout: ReturnType<typeof setTimeout> | undefined
-    const advance = () => {
-      setStageIndex((prev) => Math.min(prev + 1, STAGES.length - 1))
+    if (stageTimerRef.current) {
+      clearInterval(stageTimerRef.current)
+      stageTimerRef.current = null
     }
 
-    timeout = setTimeout(advance, MIN_STAGE_MS)
+    stageUnlockRef.current = Date.now() + MIN_STAGE_MS
+
+    stageTimerRef.current = setInterval(() => {
+      const now = Date.now()
+      const unlockAt = stageUnlockRef.current ?? 0
+      const currentStage = STAGES[Math.min(stageIndex, STAGES.length - 1)]
+      const target = currentStage.targetPercent
+      const isFinal = stageIndex >= STAGES.length - 1
+      const allowedTarget = isFinal && isComplete ? 100 : target
+      const pct = progressRef.current
+
+      if (now >= unlockAt && pct >= allowedTarget - 0.5 && stageIndex < STAGES.length - 1) {
+        setStageIndex((prev) => Math.min(prev + 1, STAGES.length - 1))
+        stageUnlockRef.current = Date.now() + MIN_STAGE_MS
+      }
+    }, 250)
+
     return () => {
-      if (timeout) clearTimeout(timeout)
+      if (stageTimerRef.current) {
+        clearInterval(stageTimerRef.current)
+        stageTimerRef.current = null
+      }
     }
-  }, [isActive, isExiting, stageIndex])
+  }, [isActive, isExiting, stageIndex, isComplete])
 
   // Snap to final stage and fade out once complete
   useEffect(() => {
