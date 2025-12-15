@@ -58,15 +58,22 @@ const STAGES: Stage[] = [
 ]
 
 const MIN_STAGE_MS = 5000
-const EXIT_FADE_MS = 500
+const EXIT_FADE_MS = 2400
 
 export function TryOnProgressLoader({ isActive, isComplete, onFinished }: TryOnProgressLoaderProps) {
   const [progress, setProgress] = useState(0)
   const [stageIndex, setStageIndex] = useState(0)
   const [isExiting, setIsExiting] = useState(false)
   const progressRef = useRef(0)
-  const stageTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const stageUnlockRef = useRef<number | null>(null)
+  const isCompleteRef = useRef(isComplete)
+  const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const stage4GateRef = useRef(false)
+
+  // Track latest completion flag for timers without retriggering effects
+  useEffect(() => {
+    isCompleteRef.current = isComplete
+  }, [isComplete])
 
   // Reset when (re)activated
   useEffect(() => {
@@ -75,7 +82,16 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished }: TryOnP
       progressRef.current = 0
       setStageIndex(0)
       setIsExiting(false)
-      stageUnlockRef.current = Date.now() + MIN_STAGE_MS
+      stage4GateRef.current = false
+
+      if (stageTimerRef.current) {
+        clearTimeout(stageTimerRef.current)
+        stageTimerRef.current = null
+      }
+      if (fadeTimerRef.current) {
+        clearTimeout(fadeTimerRef.current)
+        fadeTimerRef.current = null
+      }
     }
   }, [isActive])
 
@@ -91,8 +107,7 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished }: TryOnP
       last = now
 
       const target = STAGES[Math.min(stageIndex, STAGES.length - 1)].targetPercent
-      const isFinal = stageIndex >= STAGES.length - 1
-      const allowedTarget = isFinal && isComplete ? 100 : target
+      const allowedTarget = target
 
       // ease toward target over ~5s
       const current = progressRef.current
@@ -113,57 +128,94 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished }: TryOnP
 
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [isActive, isComplete, isExiting, stageIndex])
+  }, [isActive, isExiting, stageIndex])
 
-  // Advance stages only after minimum time AND reaching the stage target
+  // Advance stages with fixed timing: stages 1-3 always 5s, stage 4 waits for min 5s then image ready
   useEffect(() => {
     if (!isActive || isExiting) return
 
     if (stageTimerRef.current) {
-      clearInterval(stageTimerRef.current)
+      clearTimeout(stageTimerRef.current)
       stageTimerRef.current = null
     }
 
-    stageUnlockRef.current = Date.now() + MIN_STAGE_MS
-
-    stageTimerRef.current = setInterval(() => {
-      const now = Date.now()
-      const unlockAt = stageUnlockRef.current ?? 0
-      const currentStage = STAGES[Math.min(stageIndex, STAGES.length - 1)]
-      const target = currentStage.targetPercent
-      const isFinal = stageIndex >= STAGES.length - 1
-      const allowedTarget = isFinal && isComplete ? 100 : target
-      const pct = progressRef.current
-
-      if (now >= unlockAt && pct >= allowedTarget - 0.5 && stageIndex < STAGES.length - 1) {
-        setStageIndex((prev) => Math.min(prev + 1, STAGES.length - 1))
-        stageUnlockRef.current = Date.now() + MIN_STAGE_MS
+    // Stages 1-3 (indices 0-2): advance every 5s regardless of image readiness
+    if (stageIndex <= 2) {
+      stageTimerRef.current = setTimeout(() => {
+        setStageIndex((prev) => Math.min(prev + 1, STAGES.length - 2)) // move toward stage 4
+      }, MIN_STAGE_MS)
+      return () => {
+        if (stageTimerRef.current) {
+          clearTimeout(stageTimerRef.current)
+          stageTimerRef.current = null
+        }
       }
-    }, 250)
+    }
+
+    // Stage 4: enforce 5s minimum, then wait for image to be ready before stage 5
+    if (stageIndex === 3) {
+      stage4GateRef.current = false
+      stageTimerRef.current = setTimeout(() => {
+        stage4GateRef.current = true
+        if (isCompleteRef.current) {
+          setStageIndex(STAGES.length - 1)
+        }
+      }, MIN_STAGE_MS)
+    }
 
     return () => {
       if (stageTimerRef.current) {
-        clearInterval(stageTimerRef.current)
+        clearTimeout(stageTimerRef.current)
         stageTimerRef.current = null
       }
     }
-  }, [isActive, isExiting, stageIndex, isComplete])
+  }, [isActive, isExiting, stageIndex])
 
-  // Snap to final stage and fade out once complete
+  // If image finishes after stage 4 min time, advance to stage 5
   useEffect(() => {
-    if (!isActive || !isComplete || isExiting) return
-    setStageIndex(STAGES.length - 1)
-    setProgress(100)
+    if (!isActive || isExiting) return
+    if (stageIndex === 3 && stage4GateRef.current && isComplete) {
+      setStageIndex(STAGES.length - 1)
+    }
+  }, [isActive, isExiting, isComplete, stageIndex])
+
+  // Enter stage 5, snap to 100%, then fade out over EXIT_FADE_MS before invoking onFinished
+  useEffect(() => {
+    if (!isActive) return
+    if (stageIndex !== STAGES.length - 1) return
+
     progressRef.current = 100
+    setProgress(100)
     setIsExiting(true)
 
-    const timer = setTimeout(() => {
+    if (fadeTimerRef.current) {
+      clearTimeout(fadeTimerRef.current)
+    }
+    fadeTimerRef.current = setTimeout(() => {
       onFinished?.()
       setIsExiting(false)
     }, EXIT_FADE_MS)
 
-    return () => clearTimeout(timer)
-  }, [isActive, isComplete, isExiting, onFinished])
+    return () => {
+      if (fadeTimerRef.current) {
+        clearTimeout(fadeTimerRef.current)
+        fadeTimerRef.current = null
+      }
+    }
+  }, [stageIndex, isActive, onFinished])
+
+  // Cleanup timers if loader deactivates
+  useEffect(() => {
+    if (isActive) return
+    if (stageTimerRef.current) {
+      clearTimeout(stageTimerRef.current)
+      stageTimerRef.current = null
+    }
+    if (fadeTimerRef.current) {
+      clearTimeout(fadeTimerRef.current)
+      fadeTimerRef.current = null
+    }
+  }, [isActive])
 
   const stage = useMemo(() => STAGES[Math.min(stageIndex, STAGES.length - 1)], [stageIndex])
   const percentInt = Math.round(progress)
@@ -172,9 +224,10 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished }: TryOnP
     <div
       className={`
         absolute inset-0 z-10 flex flex-col items-center justify-center 
-        bg-white/92 backdrop-blur-sm transition-opacity duration-500
+        bg-white/92 backdrop-blur-sm transition-opacity
         ${isExiting ? 'opacity-0' : 'opacity-100'}
       `}
+      style={{ transitionDuration: `${EXIT_FADE_MS}ms` }}
       aria-live="polite"
       role="status"
     >

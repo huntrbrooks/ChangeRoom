@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
 import axios from 'axios';
 import { UploadZone } from './components/UploadZone';
@@ -53,6 +54,7 @@ const formatCurrency = (value?: number | null, currency?: string | null) => {
 
 function HomeContent() {
   const { user, isLoaded } = useUser();
+  const router = useRouter();
   const [userImages, setUserImages] = useState<File[]>([]);
   
   // Updated state structure to track images with their analyses
@@ -127,6 +129,9 @@ function HomeContent() {
   // Check if user email is in bypass list
   const userEmail = user?.emailAddresses?.[0]?.emailAddress;
   const isBypass = isBypassUser(userEmail);
+  const redirectToPricing = useCallback(() => {
+    router.push('/pricing');
+  }, [router]);
 
   const isOnTrial = billing && !billing.trialUsed && !isBypass;
   const isAuthenticated = isLoaded && !!user;
@@ -509,7 +514,7 @@ function HomeContent() {
       return;
     }
     if (lacksCredits) {
-      setShowPaywall(true);
+      redirectToPricing();
       return;
     }
     
@@ -532,8 +537,8 @@ function HomeContent() {
 
     // Check credits before proceeding (unless on trial or bypass user)
     if (lacksCredits) {
-      console.log("No credits available, showing paywall");
-      setShowPaywall(true);
+      console.log("No credits available, redirecting to pricing");
+      redirectToPricing();
       return;
     }
 
@@ -548,7 +553,7 @@ function HomeContent() {
         `You have ${billing.creditsAvailable} credit${billing.creditsAvailable !== 1 ? 's' : ''} remaining. Continue?`
       );
       if (!proceed) {
-        setShowPaywall(true);
+        redirectToPricing();
         return;
       }
     }
@@ -825,7 +830,7 @@ function HomeContent() {
         
         // Handle no credits error
         if (error.response?.status === 402 || error.response?.data?.error === 'no_credits') {
-          setShowPaywall(true);
+          redirectToPricing();
           setIsGenerating(false);
           console.error = originalError;
           return;
@@ -947,7 +952,7 @@ function HomeContent() {
                   </div>
                 ) : (
                   <Link 
-                    href="/billing" 
+                    href="/pricing" 
                     className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-white/10 hover:bg-white/20 border border-white/30 rounded-lg transition-colors text-white min-h-[36px] sm:min-h-[40px] touch-manipulation"
                   >
                     <CreditCard size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
@@ -1066,10 +1071,10 @@ function HomeContent() {
               </div>
             </div>
             <Link 
-              href="/billing"
+              href="/pricing"
               className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-black text-white rounded-lg font-semibold hover:bg-[#7C3AED] transition-colors text-sm shadow-[0_0_15px_rgba(0,0,0,0.5)] text-center min-h-[44px] flex items-center justify-center touch-manipulation"
             >
-              Upgrade
+              Go to Pricing
             </Link>
           </div>
         )}
@@ -1086,12 +1091,12 @@ function HomeContent() {
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => setShowPaywall(true)}
+            <Link
+              href="/pricing"
               className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-yellow-500 text-black rounded-lg font-semibold hover:bg-yellow-400 transition-colors text-sm shadow-[0_0_15px_rgba(255,255,0,0.3)] text-center min-h-[44px] flex items-center justify-center touch-manipulation"
             >
-              Buy Credits
-            </button>
+              Go to Pricing
+            </Link>
           </div>
         )}
 
@@ -1105,12 +1110,12 @@ function HomeContent() {
                 <p className="text-xs sm:text-sm text-orange-600 mt-0.5">Upgrade or purchase credits to continue</p>
               </div>
             </div>
-            <button
-              onClick={() => setShowPaywall(true)}
+            <Link
+              href="/pricing"
               className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-orange-500 text-white rounded-lg font-semibold hover:bg-orange-400 transition-colors text-sm shadow-[0_0_15px_rgba(255,165,0,0.3)] text-center min-h-[44px] flex items-center justify-center touch-manipulation"
             >
-              Upgrade Now
-            </button>
+              Go to Pricing
+            </Link>
           </div>
         )}
 
@@ -1206,7 +1211,7 @@ function HomeContent() {
                       return;
                     }
                     if (lacksCredits) {
-                      setShowPaywall(true);
+                      redirectToPricing();
                       return;
                     }
                     handleGenerate().catch((error) => {
@@ -1476,7 +1481,7 @@ function HomeContent() {
                 }
                 if (isGenerating) return;
                 if (lacksCredits) {
-                  setShowPaywall(true);
+                  redirectToPricing();
                   return;
                 }
                 void handleGenerate();

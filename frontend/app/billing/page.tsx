@@ -6,9 +6,8 @@ import { useUser } from '@clerk/nextjs';
 import { CreditCard, Zap, Crown, Sparkles, Settings, ArrowLeft, Check } from 'lucide-react';
 import Link from 'next/link';
 import axios from 'axios';
-import { stripeConfig, appConfig } from '@/lib/config';
+import { appConfig } from '@/lib/config';
 import { getProductFeatures } from '@/lib/products';
-import { trackCheckoutInitiated, trackUpgradeClick } from '@/lib/clerk-tracking';
 import { PaywallModal } from '../components/PaywallModal';
 
 // Force dynamic rendering to prevent static generation issues with Clerk
@@ -27,7 +26,6 @@ function BillingPageContent() {
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [portalLoading, setPortalLoading] = useState(false);
-  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
 
   useEffect(() => {
@@ -62,46 +60,6 @@ function BillingPageContent() {
       alert(axiosError?.response?.data?.error || 'Failed to open billing portal');
     } finally {
       setPortalLoading(false);
-    }
-  };
-
-  const handleCheckout = async (priceId: string, mode: 'subscription' | 'payment', startTrial?: boolean, planType?: 'standard' | 'pro' | 'credit-pack') => {
-    // Validate price ID before proceeding
-    if (!priceId || !priceId.trim() || !priceId.startsWith('price_')) {
-      console.error('Invalid price ID:', priceId);
-      alert('Payment configuration error. Please contact support.');
-      return;
-    }
-
-    setCheckoutLoading(priceId);
-    try {
-      // Track checkout
-      if (user && planType && billing) {
-        if (planType === 'standard' || planType === 'pro') {
-          await trackUpgradeClick(user, billing.plan, planType);
-        }
-        await trackCheckoutInitiated(user, planType, priceId);
-      }
-
-      const response = await axios.post('/api/billing/create-checkout-session', {
-        priceId,
-        mode,
-        startTrial,
-      });
-      if (response.data?.url) {
-        window.location.href = response.data.url;
-      } else {
-        throw new Error('No checkout URL returned');
-      }
-    } catch (error: unknown) {
-      console.error('Checkout error:', error);
-      const axiosError = error && typeof error === 'object' && 'response' in error 
-        ? (error as { response?: { data?: { error?: string; details?: string } } })
-        : null;
-      const errorMessage = axiosError?.response?.data?.error || 'Failed to start checkout';
-      const errorDetails = axiosError?.response?.data?.details || '';
-      alert(errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage);
-      setCheckoutLoading(null);
     }
   };
 
@@ -228,13 +186,12 @@ function BillingPageContent() {
                   ))}
                 </div>
 
-                <button
-                  onClick={() => handleCheckout(stripeConfig.standardPriceId, 'subscription', true, 'standard')}
-                  disabled={checkoutLoading !== null}
-                  className="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                <Link
+                  href="/pricing"
+                  className="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors text-center block"
                 >
-                  {checkoutLoading === stripeConfig.standardPriceId ? 'Loading...' : 'Start Free Trial'}
-                </button>
+                  See Pricing
+                </Link>
               </div>
 
               {/* Pro Plan */}
@@ -262,13 +219,12 @@ function BillingPageContent() {
                   ))}
                 </div>
 
-                <button
-                  onClick={() => handleCheckout(stripeConfig.proPriceId, 'subscription', true, 'pro')}
-                  disabled={checkoutLoading !== null}
-                  className="w-full py-3 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition-colors disabled:opacity-50"
+                <Link
+                  href="/pricing"
+                  className="w-full py-3 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition-colors text-center block"
                 >
-                  {checkoutLoading === stripeConfig.proPriceId ? 'Loading...' : 'Start Free Trial'}
-                </button>
+                  See Pricing
+                </Link>
               </div>
             </div>
           </div>
@@ -286,13 +242,12 @@ function BillingPageContent() {
               <div className="mb-4">
                 <div className="text-2xl font-bold">{appConfig.creditPackSmallAmount} credits</div>
               </div>
-              <button
-                onClick={() => handleCheckout(stripeConfig.creditPackSmallPriceId, 'payment')}
-                disabled={checkoutLoading !== null}
-                className="w-full py-2 bg-gray-100 text-gray-900 rounded-lg font-semibold hover:bg-gray-200 transition-colors disabled:opacity-50"
+              <Link
+                href="/pricing"
+                className="w-full py-2 bg-gray-100 text-gray-900 rounded-lg font-semibold hover:bg-gray-200 transition-colors text-center block"
               >
-                {checkoutLoading === stripeConfig.creditPackSmallPriceId ? 'Loading...' : 'Buy Now'}
-              </button>
+                View Pricing
+              </Link>
             </div>
 
             <div className="border border-gray-200 rounded-lg p-5 hover:border-blue-500 transition-colors">
@@ -303,13 +258,12 @@ function BillingPageContent() {
               <div className="mb-4">
                 <div className="text-2xl font-bold">{appConfig.creditPackLargeAmount} credits</div>
               </div>
-              <button
-                onClick={() => handleCheckout(stripeConfig.creditPackLargePriceId, 'payment')}
-                disabled={checkoutLoading !== null}
-                className="w-full py-2 bg-gray-100 text-gray-900 rounded-lg font-semibold hover:bg-gray-200 transition-colors disabled:opacity-50"
+              <Link
+                href="/pricing"
+                className="w-full py-2 bg-gray-100 text-gray-900 rounded-lg font-semibold hover:bg-gray-200 transition-colors text-center block"
               >
-                {checkoutLoading === stripeConfig.creditPackLargePriceId ? 'Loading...' : 'Buy Now'}
-              </button>
+                View Pricing
+              </Link>
             </div>
           </div>
         </div>

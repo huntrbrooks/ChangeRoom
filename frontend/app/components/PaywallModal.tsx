@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
+import Link from 'next/link';
 import { X, Sparkles, Zap, Crown, CreditCard, Check } from 'lucide-react';
-import { stripeConfig, appConfig } from '@/lib/config';
+import { appConfig } from '@/lib/config';
 import { getProductFeatures } from '@/lib/products';
 import { useUser } from '@clerk/nextjs';
-import { trackCheckoutInitiated, trackProductView } from '@/lib/clerk-tracking';
+import { trackProductView } from '@/lib/clerk-tracking';
 import { isBypassUser } from '@/lib/bypass-config';
-import axios from 'axios';
 
 interface PaywallModalProps {
   isOpen: boolean;
@@ -25,7 +25,6 @@ export function PaywallModal({
   onTrial,
 }: PaywallModalProps) {
   const { user } = useUser();
-  const [loading, setLoading] = useState<string | null>(null);
   const standardFeatures = getProductFeatures('standard');
   const proFeatures = getProductFeatures('pro');
   const userEmail = user?.emailAddresses?.[0]?.emailAddress;
@@ -38,47 +37,6 @@ export function PaywallModal({
   }, [isOpen, user]);
 
   if (!isOpen) return null;
-
-  const handleCheckout = async (priceId: string, mode: 'subscription' | 'payment', startTrial?: boolean, planType?: 'standard' | 'pro' | 'credit-pack') => {
-    // Validate price ID before proceeding
-    if (!priceId || !priceId.trim() || !priceId.startsWith('price_')) {
-      console.error('Invalid price ID:', priceId);
-      alert('Payment configuration error. Please contact support.');
-      return;
-    }
-
-    setLoading(priceId);
-    try {
-      // Track checkout initiation
-      if (user && planType) {
-        try {
-          await trackCheckoutInitiated(user, planType, priceId);
-        } catch (trackError) {
-          console.warn('Tracking error (non-critical):', trackError);
-        }
-      }
-
-      const response = await axios.post('/api/billing/create-checkout-session', {
-        priceId,
-        mode,
-        startTrial,
-      });
-      if (response.data?.url) {
-        window.location.href = response.data.url;
-      } else {
-        throw new Error('No checkout URL returned');
-      }
-    } catch (error: unknown) {
-      console.error('Checkout error:', error);
-      const axiosError = error && typeof error === 'object' && 'response' in error 
-        ? (error as { response?: { data?: { error?: string; details?: string } } })
-        : null;
-      const errorMessage = axiosError?.response?.data?.error || 'Failed to start checkout. Please try again.';
-      const errorDetails = axiosError?.response?.data?.details || '';
-      alert(errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage);
-      setLoading(null);
-    }
-  };
 
 
   return (
@@ -171,28 +129,12 @@ export function PaywallModal({
                 ))}
               </div>
 
-              <button
-                onClick={() => {
-                  try {
-                    const priceId = stripeConfig.standardPriceId;
-                    if (!priceId) throw new Error('Standard price ID not configured');
-                    handleCheckout(priceId, 'subscription', !onTrial && plan === 'free', 'standard');
-                  } catch (err) {
-                    console.error('Error getting price ID:', err);
-                    alert('Configuration error. Please contact support.');
-                  }
-                }}
-                disabled={loading !== null}
-                className="w-full py-3 sm:py-3 bg-black text-white rounded-lg font-semibold hover:bg-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(0,0,0,0.3)] min-h-[44px] touch-manipulation text-sm sm:text-base"
+              <Link
+                href="/pricing"
+                className="w-full py-3 sm:py-3 bg-black text-white rounded-lg font-semibold hover:bg-black transition-colors shadow-[0_0_15px_rgba(0,0,0,0.3)] min-h-[44px] touch-manipulation text-sm sm:text-base text-center block"
               >
-                {loading === stripeConfig.standardPriceId ? (
-                  'Loading...'
-                ) : (
-                  <>
-                    {!onTrial && plan === 'free' ? 'Start Free Trial' : 'Upgrade to Standard'}
-                  </>
-                )}
-              </button>
+                {!onTrial && plan === 'free' ? 'Start Free Trial' : 'Go to Pricing'}
+              </Link>
             </div>
 
             {/* Pro Plan */}
@@ -227,28 +169,12 @@ export function PaywallModal({
                 ))}
               </div>
 
-              <button
-                onClick={() => {
-                  try {
-                    const priceId = stripeConfig.proPriceId;
-                    if (!priceId) throw new Error('Pro price ID not configured');
-                    handleCheckout(priceId, 'subscription', !onTrial && plan === 'free', 'pro');
-                  } catch (err) {
-                    console.error('Error getting price ID:', err);
-                    alert('Configuration error. Please contact support.');
-                  }
-                }}
-                disabled={loading !== null}
-                className="w-full py-3 sm:py-3 bg-black text-white rounded-lg font-semibold hover:bg-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_20px_rgba(0,0,0,0.4)] min-h-[44px] touch-manipulation text-sm sm:text-base"
+              <Link
+                href="/pricing"
+                className="w-full py-3 sm:py-3 bg-black text-white rounded-lg font-semibold hover:bg-black transition-colors shadow-[0_0_20px_rgba(0,0,0,0.4)] min-h-[44px] touch-manipulation text-sm sm:text-base text-center block"
               >
-                {loading === stripeConfig.proPriceId ? (
-                  'Loading...'
-                ) : (
-                  <>
-                    {!onTrial && plan === 'free' ? 'Start Free Trial' : 'Upgrade to Pro'}
-                  </>
-                )}
-              </button>
+                {!onTrial && plan === 'free' ? 'Start Free Trial' : 'Go to Pricing'}
+              </Link>
             </div>
           </div>
 
@@ -268,22 +194,12 @@ export function PaywallModal({
                     {appConfig.creditPackSmallAmount} credits
                   </div>
                 </div>
-                <button
-                  onClick={() => {
-                    try {
-                      const priceId = stripeConfig.creditPackSmallPriceId;
-                      if (!priceId) throw new Error('Small pack price ID not configured');
-                      handleCheckout(priceId, 'payment', false, 'credit-pack');
-                    } catch (err) {
-                      console.error('Error getting price ID:', err);
-                      alert('Configuration error. Please contact support.');
-                    }
-                  }}
-                  disabled={loading !== null}
-                  className="w-full py-2 sm:py-2 bg-black/20 text-black rounded-lg font-semibold hover:bg-black/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm border border-black/30 min-h-[44px] touch-manipulation"
+                <Link
+                  href="/pricing"
+                  className="w-full py-2 sm:py-2 bg-black/20 text-black rounded-lg font-semibold hover:bg-black/30 transition-colors text-xs sm:text-sm border border-black/30 min-h-[44px] touch-manipulation text-center block"
                 >
-                  {loading === stripeConfig.creditPackSmallPriceId ? 'Loading...' : 'Buy Now'}
-                </button>
+                  View Pricing
+                </Link>
               </div>
 
               {/* Large Credit Pack */}
@@ -297,22 +213,12 @@ export function PaywallModal({
                     {appConfig.creditPackLargeAmount} credits
                   </div>
                 </div>
-                <button
-                  onClick={() => {
-                    try {
-                      const priceId = stripeConfig.creditPackLargePriceId;
-                      if (!priceId) throw new Error('Large pack price ID not configured');
-                      handleCheckout(priceId, 'payment', false, 'credit-pack');
-                    } catch (err) {
-                      console.error('Error getting price ID:', err);
-                      alert('Configuration error. Please contact support.');
-                    }
-                  }}
-                  disabled={loading !== null}
-                  className="w-full py-2 sm:py-2 bg-black/20 text-black rounded-lg font-semibold hover:bg-black/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm border border-black/30 min-h-[44px] touch-manipulation"
+                <Link
+                  href="/pricing"
+                  className="w-full py-2 sm:py-2 bg-black/20 text-black rounded-lg font-semibold hover:bg-black/30 transition-colors text-xs sm:text-sm border border-black/30 min-h-[44px] touch-manipulation text-center block"
                 >
-                  {loading === stripeConfig.creditPackLargePriceId ? 'Loading...' : 'Buy Now'}
-                </button>
+                  View Pricing
+                </Link>
               </div>
             </div>
           </div>
