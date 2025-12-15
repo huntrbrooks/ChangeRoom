@@ -64,6 +64,7 @@ const STAGES: Stage[] = [
 
 const MIN_STAGE_MS = 5000
 const EXIT_FADE_MS = 2400
+const FAILSAFE_EXIT_MS = 30000
 
 export function TryOnProgressLoader({ isActive, status, failureMessage, onFinished, onStageChange }: TryOnProgressLoaderProps) {
   const [progress, setProgress] = useState(0)
@@ -74,11 +75,38 @@ export function TryOnProgressLoader({ isActive, status, failureMessage, onFinish
   const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const stage4GateRef = useRef(false)
+  const failsafeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Track latest status for timers without retriggering effects
   useEffect(() => {
     statusRef.current = status
   }, [status])
+
+  // Centralized exit handling to guarantee fade-out and completion
+  const startExit = React.useCallback(() => {
+    if (isExiting) return
+    if (stageTimerRef.current) {
+      clearTimeout(stageTimerRef.current)
+      stageTimerRef.current = null
+    }
+    if (failsafeTimerRef.current) {
+      clearTimeout(failsafeTimerRef.current)
+      failsafeTimerRef.current = null
+    }
+
+    setStageIndex(STAGES.length - 1)
+    progressRef.current = 100
+    setProgress(100)
+    setIsExiting(true)
+
+    if (fadeTimerRef.current) {
+      clearTimeout(fadeTimerRef.current)
+    }
+    fadeTimerRef.current = setTimeout(() => {
+      onFinished?.()
+      setIsExiting(false)
+    }, EXIT_FADE_MS)
+  }, [isExiting, onFinished])
 
   // Reset when (re)activated
   useEffect(() => {
@@ -88,6 +116,10 @@ export function TryOnProgressLoader({ isActive, status, failureMessage, onFinish
       setStageIndex(0)
       setIsExiting(false)
       stage4GateRef.current = false
+      if (failsafeTimerRef.current) {
+        clearTimeout(failsafeTimerRef.current)
+        failsafeTimerRef.current = null
+      }
 
       if (stageTimerRef.current) {
         clearTimeout(stageTimerRef.current)
@@ -96,6 +128,10 @@ export function TryOnProgressLoader({ isActive, status, failureMessage, onFinish
       if (fadeTimerRef.current) {
         clearTimeout(fadeTimerRef.current)
         fadeTimerRef.current = null
+      }
+      if (failsafeTimerRef.current) {
+        clearTimeout(failsafeTimerRef.current)
+        failsafeTimerRef.current = null
       }
     }
   }, [isActive])
@@ -184,30 +220,21 @@ export function TryOnProgressLoader({ isActive, status, failureMessage, onFinish
     }
   }, [isActive, isExiting, status, stageIndex])
 
-  // If generation resolves early (success or error), jump to stage 5 to avoid getting stuck
+  // If generation resolves early (success or error), jump to stage 5 and start exit to avoid getting stuck
   useEffect(() => {
     if (!isActive || isExiting) return
     if (status !== 'pending' && stageIndex < STAGES.length - 1) {
       setStageIndex(STAGES.length - 1)
+      startExit()
     }
-  }, [status, isActive, isExiting, stageIndex])
+  }, [status, isActive, isExiting, stageIndex, startExit])
 
   // Enter stage 5, snap to 100%, then fade out over EXIT_FADE_MS before invoking onFinished
   useEffect(() => {
     if (!isActive) return
     if (stageIndex !== STAGES.length - 1) return
 
-    progressRef.current = 100
-    setProgress(100)
-    setIsExiting(true)
-
-    if (fadeTimerRef.current) {
-      clearTimeout(fadeTimerRef.current)
-    }
-    fadeTimerRef.current = setTimeout(() => {
-      onFinished?.()
-      setIsExiting(false)
-    }, EXIT_FADE_MS)
+    startExit()
 
     return () => {
       if (fadeTimerRef.current) {
@@ -215,7 +242,25 @@ export function TryOnProgressLoader({ isActive, status, failureMessage, onFinish
         fadeTimerRef.current = null
       }
     }
-  }, [stageIndex, isActive, onFinished])
+  }, [stageIndex, isActive, onFinished, startExit])
+
+  // Failsafe: if loader stays active too long, force completion
+  useEffect(() => {
+    if (!isActive || isExiting) return
+    if (failsafeTimerRef.current) {
+      clearTimeout(failsafeTimerRef.current)
+    }
+    failsafeTimerRef.current = setTimeout(() => {
+      startExit()
+    }, FAILSAFE_EXIT_MS)
+
+    return () => {
+      if (failsafeTimerRef.current) {
+        clearTimeout(failsafeTimerRef.current)
+        failsafeTimerRef.current = null
+      }
+    }
+  }, [isActive, isExiting, startExit])
 
   // Cleanup timers if loader deactivates
   useEffect(() => {
@@ -307,5 +352,6 @@ export function TryOnProgressLoader({ isActive, status, failureMessage, onFinish
     </div>
   )
 }
+
 
 
