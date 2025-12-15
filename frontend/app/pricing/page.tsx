@@ -2,20 +2,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-namespace */
 
 import Link from 'next/link';
-import Script from 'next/script';
+import nextDynamic from 'next/dynamic';
 import { ArrowLeft } from 'lucide-react';
 
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      'stripe-pricing-table': any;
-    }
-  }
-}
-
-export {};
-
-const StripePricingTable = 'stripe-pricing-table' as any;
+const DynamicPricingTable = nextDynamic(
+  () => import('../components/PricingTable').then((m) => m.PricingTable),
+  { ssr: false }
+);
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
@@ -58,11 +51,7 @@ function PricingPageContent() {
         </div>
 
         <div className="bg-white border border-[#8B5CF6]/30 rounded-2xl p-4 md:p-6 shadow-sm">
-          <Script async src="https://js.stripe.com/v3/pricing-table.js" />
-          <StripePricingTable
-            pricing-table-id="prctbl_1SeNAPDWNatk2HyVsLTh9hcr"
-            publishable-key="pk_live_51SZUOrDWNatk2HyVZuCiy1P0yphrx9FH5jZRUyQGV9nL5lKpx9OIVh0s40AfXER63qZmWYyeyLdTmX9EgTXuciLa00YMzOtTB5"
-          />
+          <DynamicPricingTable showCreditPacks />
         </div>
       </div>
     </div>
