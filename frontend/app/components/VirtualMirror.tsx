@@ -12,6 +12,8 @@ interface VirtualMirrorProps {
 export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoading, errorMessage, onStageChange }) => {
   const [showLoader, setShowLoader] = useState(false);
   const [hasRun, setHasRun] = useState(false);
+  const loaderFallbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const LOADER_FADE_MS = 2400;
 
   const hasResult = Boolean(imageUrl);
   const hasError = Boolean(errorMessage);
@@ -37,6 +39,25 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoadin
       setShowLoader(false);
     }
   }, [isLoading, hasResult, hasError]);
+
+  // Failsafe: ensure loader disappears shortly after resolution even if onFinished is delayed
+  useEffect(() => {
+    if (loaderFallbackTimerRef.current) {
+      clearTimeout(loaderFallbackTimerRef.current);
+      loaderFallbackTimerRef.current = null;
+    }
+    if (status !== 'pending') {
+      loaderFallbackTimerRef.current = setTimeout(() => {
+        setShowLoader(false);
+      }, LOADER_FADE_MS + 200);
+    }
+    return () => {
+      if (loaderFallbackTimerRef.current) {
+        clearTimeout(loaderFallbackTimerRef.current);
+        loaderFallbackTimerRef.current = null;
+      }
+    };
+  }, [status]);
 
   const handleLoaderFinished = () => {
     setShowLoader(false);
