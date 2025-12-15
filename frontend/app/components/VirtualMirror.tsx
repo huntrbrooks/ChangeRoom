@@ -7,9 +7,20 @@ interface VirtualMirrorProps {
   isLoading: boolean;
   errorMessage?: string | null;
   onStageChange?: (stageId: number) => void;
+  isPreview?: boolean;
+  onDownloadClean?: () => void;
+  onTryAnother?: () => void;
 }
 
-export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoading, errorMessage, onStageChange }) => {
+export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
+  imageUrl,
+  isLoading,
+  errorMessage,
+  onStageChange,
+  isPreview = false,
+  onDownloadClean,
+  onTryAnother,
+}) => {
   const [showLoader, setShowLoader] = useState(false);
   const [hasRun, setHasRun] = useState(false);
   const loaderFallbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -63,6 +74,13 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoadin
     setShowLoader(false);
   };
 
+  const goToPricing = () => {
+    window.location.href = '/pricing?promo=xmas';
+  };
+
+  const handleDownloadClean = onDownloadClean || goToPricing;
+  const handleTryAnother = onTryAnother || goToPricing;
+
   return (
     <div className="w-full aspect-[3/4] bg-white rounded-none overflow-hidden relative border-2 border-black/20">
       {showLoader && (
@@ -109,70 +127,29 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoadin
               }
             }}
           />
+          {isPreview && (
+            <div className="absolute inset-0 bg-gradient-to-br from-black/40 to-black/10 pointer-events-none flex items-center justify-center">
+              <div className="text-white text-lg sm:text-xl font-bold uppercase tracking-[0.3em] bg-black/40 px-4 py-2 rounded">
+                Watermarked Preview
+              </div>
+            </div>
+          )}
           <div className="absolute bottom-2 sm:bottom-3 right-2 sm:right-3 flex flex-col sm:flex-row gap-2">
             <button
-              onClick={async () => {
-                try {
-                  const response = await fetch(imageUrl);
-                  const blob = await response.blob();
-                  const url = window.URL.createObjectURL(blob);
-                  const link = document.createElement('a');
-                  link.href = url;
-                  link.download = 'try-on-result.jpg';
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                  window.URL.revokeObjectURL(url);
-                } catch (error) {
-                  console.error('Failed to download image:', error);
-                }
-              }}
-              onTouchStart={(e) => {
-                if (e.touches.length > 1) {
-                  e.preventDefault();
-                }
-              }}
+              onClick={handleDownloadClean}
               className="bg-black hover:bg-gray-900 active:bg-gray-800 text-white px-3 sm:px-3 py-2.5 sm:py-2 rounded-none flex items-center justify-center gap-2 text-xs sm:text-sm font-semibold uppercase tracking-wider transition-colors min-h-[44px] min-w-[44px] touch-manipulation select-none"
-              aria-label="Download try-on result"
+              aria-label="Download clean result"
             >
               <Download size={16} className="sm:w-4 sm:h-4" />
-              <span className="hidden sm:inline">Download</span>
+              <span className="hidden sm:inline">Download clean</span>
             </button>
             <button
-              onClick={async () => {
-                if (navigator.share && imageUrl) {
-                  try {
-                    const response = await fetch(imageUrl);
-                    const blob = await response.blob();
-                    const file = new File([blob], 'try-on-result.jpg', { type: 'image/jpeg' });
-                    await navigator.share({
-                      title: 'My Virtual Try-On',
-                      text: 'Check out my virtual try-on result!',
-                      files: [file]
-                    });
-                  } catch (error: unknown) {
-                    const err = error as { name?: string };
-                    if (err.name !== 'AbortError') {
-                      // Fallback to copying link
-                      await navigator.clipboard.writeText(imageUrl);
-                      alert('Link copied to clipboard!');
-                    }
-                  }
-                } else if (navigator.clipboard && imageUrl) {
-                  await navigator.clipboard.writeText(imageUrl);
-                  alert('Link copied to clipboard!');
-                }
-              }}
-              onTouchStart={(e) => {
-                if (e.touches.length > 1) {
-                  e.preventDefault();
-                }
-              }}
-              className="bg-black hover:bg-gray-900 active:bg-gray-800 text-white px-3 sm:px-3 py-2.5 sm:py-2 rounded-none flex items-center justify-center gap-2 text-xs sm:text-sm font-semibold uppercase tracking-wider transition-colors min-h-[44px] min-w-[44px] touch-manipulation select-none"
-              aria-label="Share try-on result"
+              onClick={handleTryAnother}
+              className="bg-white text-black border border-black px-3 sm:px-3 py-2.5 sm:py-2 rounded-none flex items-center justify-center gap-2 text-xs sm:text-sm font-semibold uppercase tracking-wider transition-colors min-h-[44px] min-w-[44px] touch-manipulation select-none hover:bg-black hover:text-white"
+              aria-label="Try another outfit"
             >
               <Share2 size={16} className="sm:w-4 sm:h-4" />
-              <span className="hidden sm:inline">Share</span>
+              <span className="hidden sm:inline">Try another outfit</span>
             </button>
           </div>
         </>

@@ -6,11 +6,16 @@ import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import {
   getPersonImageById,
   getClothingItemsByIds,
-  decrementCreditsIfAvailable,
   getOrCreateUserBilling,
   insertTryOnSession,
   updateTryOnSessionResult,
+  createCreditHold,
+  finalizeDebitFromHold,
+  releaseCreditHold,
+  getHoldByRequestId,
+  useFreeTrialOnce,
 } from "@/lib/db-access";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { randomUUID } from "crypto";
 import { generateTryOnWithGemini3ProImage } from "@/lib/tryOnGemini3";
 import { isBypassUser } from "@/lib/bypass-config";
@@ -63,7 +68,7 @@ async function uploadToR2(
  * POST /api/try-on
  * Generates a try-on image using Gemini 3 Pro Image
  * Requires: personImageId, clothingItemIds (1-5 items)
- * Checks and decrements credits before processing
+ * Checks and holds credits before processing (idempotent by requestId)
  */
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
@@ -73,13 +78,26 @@ export async function POST(req: NextRequest) {
   }
 
   let sessionId: string | null = null;
+  let currentRequestId: string | null = null;
+  let holdCreated = false;
+  let usedFreeTrial = false;
+  let holdShouldRelease = false;
 
   try {
     const body = await req.json();
-    const { personImageId, clothingItemIds } = body as {
+    const { personImageId, clothingItemIds, requestId, quality } = body as {
       personImageId: string;
       clothingItemIds: string[];
+      requestId?: string;
+      quality?: "standard" | "hd";
     };
+
+    // Require an idempotency key; fall back to generated if not provided
+    currentRequestId =
+      requestId ||
+      (body.idempotencyKey as string | undefined) ||
+      (body.request_id as string | undefined) ||
+      randomUUID();
 
     if (!personImageId || !clothingItemIds?.length) {
       return NextResponse.json(
@@ -95,23 +113,75 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Rate limiting (per user and per IP)
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip") ||
+      "unknown";
+    const rlUser = checkRateLimit(`tryon:user:${userId}`, 5, 60_000);
+    const rlIp = checkRateLimit(`tryon:ip:${ip}`, 10, 60_000);
+    if (!rlUser.allowed || !rlIp.allowed) {
+      return NextResponse.json(
+        { error: "rate_limited", retryAfterMs: 60_000 },
+        { status: 429 }
+      );
+    }
+
     // Payment bypass for specific email
     const user = await currentUser();
     const userEmail = user?.emailAddresses?.[0]?.emailAddress;
+    const isVerifiedEmail =
+      user?.emailAddresses?.some(
+        (e) => e.verification?.status === "verified"
+      ) || false;
     const shouldBypassPayment = isBypassUser(userEmail);
-    
-    // Check credits before processing (unless bypassed)
+
+    const creditCost = quality === "hd" ? 2 : 1;
+
+    // Ensure billing exists and check freeze
+    let billing = await getOrCreateUserBilling(userId);
+    if (billing.is_frozen) {
+      return NextResponse.json(
+        { error: "account_frozen", message: "Account is temporarily frozen. Please update billing." },
+        { status: 402 }
+      );
+    }
+
+    // Give free trial credit only for verified users and standard quality
+    if (!shouldBypassPayment && creditCost === 1 && !billing.trial_used && isVerifiedEmail) {
+      const trialResult = await useFreeTrialOnce(userId, creditCost);
+      billing = trialResult.billing;
+      usedFreeTrial = trialResult.granted;
+    }
+
+    // Hold credits unless bypassed
     if (!shouldBypassPayment) {
-      const hasCredits = await decrementCreditsIfAvailable(userId);
-      if (!hasCredits) {
-        const billing = await getOrCreateUserBilling(userId);
-        return NextResponse.json(
-          {
-            error: "no_credits",
-            creditsAvailable: billing.credits_available,
-          },
-          { status: 402 }
-        );
+      try {
+        const holdResult = await createCreditHold({
+          userId,
+          requestId: currentRequestId,
+          amount: creditCost,
+          reason: `try-on:${quality || "standard"}`,
+        });
+        holdCreated = true;
+        holdShouldRelease = holdResult.hold.status === "active";
+        billing = holdResult.billing;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        if (message === "insufficient_credits") {
+          const freshBilling = await getOrCreateUserBilling(userId);
+          return NextResponse.json(
+            { error: "no_credits", creditsAvailable: freshBilling.credits_available },
+            { status: 402 }
+          );
+        }
+        if (message === "account_frozen") {
+          return NextResponse.json(
+            { error: "account_frozen", message: "Account is temporarily frozen. Please update billing." },
+            { status: 402 }
+          );
+        }
+        throw e;
       }
     } else {
       console.log(`Payment bypassed for user: ${userEmail}`);
@@ -120,9 +190,10 @@ export async function POST(req: NextRequest) {
     // Fetch person image (scoped to user)
     const person = await getPersonImageById(userId, personImageId);
     if (!person) {
-      // Refund credit since we couldn't process
-      await getOrCreateUserBilling(userId);
-      // Note: We can't easily refund here without a transaction, but this is an edge case
+      if (holdShouldRelease) {
+        await releaseCreditHold(currentRequestId, "person_not_found");
+        holdShouldRelease = false;
+      }
       return NextResponse.json(
         { error: "Person image not found" },
         { status: 404 }
@@ -132,6 +203,10 @@ export async function POST(req: NextRequest) {
     // Fetch clothing items (scoped to user, max 5)
     const clothing = await getClothingItemsByIds(userId, clothingItemIds);
     if (clothing.length === 0) {
+      if (holdShouldRelease) {
+        await releaseCreditHold(currentRequestId, "clothing_not_found");
+        holdShouldRelease = false;
+      }
       return NextResponse.json(
         { error: "No clothing items found" },
         { status: 404 }
@@ -186,14 +261,32 @@ export async function POST(req: NextRequest) {
       status: "completed",
     });
 
+    // Finalize debit (idempotent)
+    if (holdCreated) {
+      await finalizeDebitFromHold(currentRequestId);
+      holdShouldRelease = false;
+    }
+
     return NextResponse.json({
       imageBase64: base64Data,
       mimeType: fullMimeType,
       publicUrl: resultPublicUrl,
+      requestId: currentRequestId,
+      usedFreeTrial,
+      creditsAvailable: billing.credits_available,
     });
   } catch (err: unknown) {
     console.error("try-on error:", err);
     const error = err instanceof Error ? err : new Error(String(err));
+
+    // Release hold on failure
+    if (holdCreated && holdShouldRelease && currentRequestId) {
+      try {
+        await releaseCreditHold(currentRequestId, "generation_failed");
+      } catch (releaseErr) {
+        console.error("Failed to release hold after error:", releaseErr);
+      }
+    }
 
     // Mark session as failed if it was created
     if (sessionId && userId) {

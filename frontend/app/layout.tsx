@@ -93,6 +93,8 @@ export default function RootLayout({
     !publishableKey.includes("'") && // No single quotes anywhere
     /^pk_[a-zA-Z0-9_\-=.]+$/.test(publishableKey); // Allow dots, equals for base64 padding
   
+  const statusMessage = process.env.NEXT_PUBLIC_STATUS_BANNER;
+
   // If key is invalid or missing, skip ClerkProvider entirely (especially during build)
   // This prevents build failures from invalid Clerk keys
   if (!hasValidKey || !publishableKey) {
@@ -100,6 +102,11 @@ export default function RootLayout({
       <html lang="en">
         <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-black flex flex-col min-h-screen`}>
           <PwaRegister />
+          {statusMessage && (
+            <div className="w-full bg-yellow-300 text-black text-center py-2 text-sm font-semibold border-b border-yellow-700">
+              {statusMessage}
+            </div>
+          )}
           <header className="flex justify-end items-center p-4 gap-4 h-16 bg-white border-b border-black/10">
             {/* Clerk components unavailable - invalid or missing key */}
           </header>
@@ -126,6 +133,11 @@ export default function RootLayout({
           className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#FAF9F6] text-black flex flex-col min-h-screen`}
         >
           <PwaRegister />
+          {statusMessage && (
+            <div className="w-full bg-yellow-300 text-black text-center py-2 text-sm font-semibold border-b border-yellow-700">
+              {statusMessage}
+            </div>
+          )}
           <header className="flex justify-end items-center p-4 gap-4 h-16 bg-[#FAF9F6] border-b border-[#8B5CF6]/20">
             <SignedOut>
               <SignInButton />

@@ -71,10 +71,12 @@ export const stripeConfig = createLazyConfig(() => {
     secretKey: requireEnv("STRIPE_SECRET_KEY"),
     webhookSecret: requireEnv("STRIPE_WEBHOOK_SECRET"),
     // Price IDs are safe to expose to client (they're public in Stripe)
-    standardPriceId: getEnv("NEXT_PUBLIC_STRIPE_STANDARD_PRICE_ID") || (isClient ? "" : requireEnv("STRIPE_STANDARD_PRICE_ID")),
-    proPriceId: getEnv("NEXT_PUBLIC_STRIPE_PRO_PRICE_ID") || (isClient ? "" : requireEnv("STRIPE_PRO_PRICE_ID")),
-    creditPackSmallPriceId: getEnv("NEXT_PUBLIC_STRIPE_CREDIT_PACK_SMALL_PRICE_ID") || (isClient ? "" : requireEnv("STRIPE_CREDIT_PACK_SMALL_PRICE_ID")),
-    creditPackLargePriceId: getEnv("NEXT_PUBLIC_STRIPE_CREDIT_PACK_LARGE_PRICE_ID") || (isClient ? "" : requireEnv("STRIPE_CREDIT_PACK_LARGE_PRICE_ID")),
+    starterPriceId: getEnv("NEXT_PUBLIC_STRIPE_STARTER_PRICE_ID") || (isClient ? "" : getEnv("STRIPE_STARTER_PRICE_ID", "")),
+    starterXmasPriceId: getEnv("NEXT_PUBLIC_STRIPE_STARTER_XMAS_PRICE_ID") || (isClient ? "" : getEnv("STRIPE_STARTER_XMAS_PRICE_ID", "")),
+    valuePriceId: getEnv("NEXT_PUBLIC_STRIPE_VALUE_PRICE_ID") || (isClient ? "" : getEnv("STRIPE_VALUE_PRICE_ID", "")),
+    proPriceId: getEnv("NEXT_PUBLIC_STRIPE_PRO_PRICE_ID") || (isClient ? "" : getEnv("STRIPE_PRO_PRICE_ID", "")),
+    creatorPriceId: getEnv("NEXT_PUBLIC_STRIPE_CREATOR_PRICE_ID") || (isClient ? "" : getEnv("STRIPE_CREATOR_PRICE_ID", "")),
+    powerPriceId: getEnv("NEXT_PUBLIC_STRIPE_POWER_PRICE_ID") || (isClient ? "" : getEnv("STRIPE_POWER_PRICE_ID", "")),
   };
 });
 

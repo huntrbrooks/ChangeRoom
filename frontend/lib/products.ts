@@ -59,19 +59,20 @@ export const productFeatures: Record<PlanType, ProductFeatures> = {
   },
   standard: {
     plan: 'standard',
-    name: 'Standard',
-    description: 'Perfect for regular users',
+    name: 'Christmas Starter',
+    description: 'Limited Xmas promo - 20 credits',
     price: {
-      amount: 9.99,
-      currency: 'USD',
-      period: 'month',
+      amount: 14.99,
+      currency: 'AUD',
+      period: 'one-time',
     },
-    credits: 50,
+    credits: 20,
+    badge: 'XMAS DEAL',
     features: [
       {
-        id: 'monthly-credits',
-        name: '50 Credits/Month',
-        description: 'Enough for 50 try-ons every month',
+        id: 'starter-credits',
+        name: '20 Credits',
+        description: 'One-time credit pack, limit 1',
       },
       {
         id: 'unlimited-wardrobe',
@@ -105,18 +106,18 @@ export const productFeatures: Record<PlanType, ProductFeatures> = {
     name: 'Pro',
     description: 'Best value for power users and professionals',
     price: {
-      amount: 19.99,
-      currency: 'USD',
-      period: 'month',
+      amount: 89.99,
+      currency: 'AUD',
+      period: 'one-time',
     },
-    credits: 250,
+    credits: 100,
     popular: true,
     badge: 'POPULAR',
     features: [
       {
-        id: 'monthly-credits',
-        name: '250 Credits/Month',
-        description: 'Enough for 250 try-ons every month',
+        id: 'pro-credits',
+        name: '100 Credits',
+        description: 'HD exports and power users',
       },
       {
         id: 'unlimited-wardrobe',

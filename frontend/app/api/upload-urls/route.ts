@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { generateSignedPutUrl, getPublicUrl } from "@/lib/r2";
 import { randomUUID } from "crypto";
+import { countClothingItemsByUser } from "@/lib/db-access";
 
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
@@ -25,6 +26,30 @@ export async function POST(req: NextRequest) {
       { error: "kind must be 'clothing' or 'person'" },
       { status: 400 }
     );
+  }
+
+  // Cap uploads per day for new accounts
+  const user = await currentUser();
+  const createdAt = user?.createdAt ? new Date(user.createdAt) : null;
+  const isNewUser =
+    createdAt !== null &&
+    Date.now() - createdAt.getTime() < 3 * 24 * 60 * 60 * 1000;
+  if (isNewUser && kind === "clothing") {
+    const todayCount = await countClothingItemsByUser(
+      userId,
+      new Date(Date.now() - 24 * 60 * 60 * 1000)
+    );
+    const proposed = files.length;
+    const dailyLimit = 20;
+    if (todayCount + proposed > dailyLimit) {
+      return NextResponse.json(
+        {
+          error: "upload_limit",
+          message: "Upload limit reached for today. Please try again tomorrow.",
+        },
+        { status: 429 }
+      );
+    }
   }
 
   const uploads = [];

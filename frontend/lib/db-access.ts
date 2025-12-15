@@ -21,8 +21,41 @@ export interface UserBilling {
   credits_available: number;
   credits_refresh_at: Date | null;
   trial_used: boolean;
+  is_frozen: boolean;
   created_at: Date;
   updated_at: Date;
+}
+
+export type CreditLedgerEntryType =
+  | "grant"
+  | "hold"
+  | "debit"
+  | "release"
+  | "refund"
+  | "adjustment";
+
+export interface CreditHold {
+  id: string;
+  user_id: string;
+  request_id: string;
+  amount: number;
+  status: "active" | "debited" | "released" | "cancelled" | "expired";
+  reason: string | null;
+  expires_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface CreditLedgerEntry {
+  id: string;
+  user_id: string;
+  request_id: string | null;
+  hold_id: string | null;
+  entry_type: CreditLedgerEntryType;
+  credits_change: number;
+  balance_after: number | null;
+  metadata: Record<string, unknown>;
+  created_at: Date;
 }
 
 export interface ClothingItem {
@@ -81,6 +114,53 @@ function errorMessageIncludes(error: unknown, text: string): boolean {
   );
 }
 
+// Lightweight transaction helper for @vercel/postgres
+// @ts-expect-error begin exists on the sql client at runtime
+const runTransaction = async <T>(fn: (tx: typeof sql) => Promise<T>): Promise<T> =>
+  // @ts-expect-error begin is available on the sql client
+  sql.begin(async (tx: typeof sql) => fn(tx));
+
+async function ensureUserBillingWithLock(
+  tx: typeof sql,
+  userId: string
+): Promise<UserBilling> {
+  const existing = await tx`
+    SELECT * FROM users_billing WHERE user_id = ${userId} FOR UPDATE
+  `;
+
+  if (existing.rows.length > 0) {
+    const billing = existing.rows[0] as UserBilling;
+    return {
+      ...billing,
+      trial_used: billing.trial_used ?? false,
+      is_frozen: billing.is_frozen ?? false,
+    };
+  }
+
+  const inserted = await tx`
+    INSERT INTO users_billing (user_id, plan, credits_available, trial_used, is_frozen)
+    VALUES (${userId}, 'free', ${appConfig.freeCredits}, false, false)
+    ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
+    RETURNING *
+  `;
+
+  return inserted.rows[0] as UserBilling;
+}
+
+function coerceLedgerEntry(row: any): CreditLedgerEntry {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    request_id: row.request_id,
+    hold_id: row.hold_id,
+    entry_type: row.entry_type,
+    credits_change: row.credits_change,
+    balance_after: row.balance_after,
+    metadata: (row.metadata || {}) as Record<string, unknown>,
+    created_at: row.created_at,
+  };
+}
+
 /**
  * Get or create user billing record
  * Creates with free plan and default credits if doesn't exist
@@ -109,17 +189,17 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
         return updated.rows[0] as UserBilling;
       } catch {
         // If column doesn't exist, return with default value
-        return { ...billing, trial_used: false };
+        return { ...billing, trial_used: false, is_frozen: billing.is_frozen ?? false };
       }
     }
-    return billing;
+    return { ...billing, trial_used: billing.trial_used ?? false, is_frozen: billing.is_frozen ?? false };
   }
 
   // Create new record
   try {
     const result = await sql`
-      INSERT INTO users_billing (user_id, plan, credits_available, trial_used)
-      VALUES (${userId}, 'free', ${appConfig.freeCredits}, false)
+      INSERT INTO users_billing (user_id, plan, credits_available, trial_used, is_frozen)
+      VALUES (${userId}, 'free', ${appConfig.freeCredits}, false, false)
       ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
       RETURNING *
     `;
@@ -131,13 +211,13 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
     // If trial_used column doesn't exist, try without it
     if (errorMessageIncludes(err, 'trial_used')) {
       const result = await sql`
-        INSERT INTO users_billing (user_id, plan, credits_available)
-        VALUES (${userId}, 'free', ${appConfig.freeCredits})
+        INSERT INTO users_billing (user_id, plan, credits_available, is_frozen)
+        VALUES (${userId}, 'free', ${appConfig.freeCredits}, false)
         ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
         RETURNING *
       `;
       if (result.rows.length > 0) {
-        return { ...result.rows[0] as UserBilling, trial_used: false };
+        return { ...result.rows[0] as UserBilling, trial_used: false, is_frozen: false };
       }
     }
     throw err;
@@ -148,7 +228,319 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
     SELECT * FROM users_billing WHERE user_id = ${userId}
   `;
   const fetched = fetchResult.rows[0] as UserBilling;
-  return { ...fetched, trial_used: fetched.trial_used ?? false };
+  return {
+    ...fetched,
+    trial_used: fetched.trial_used ?? false,
+    is_frozen: fetched.is_frozen ?? false,
+  };
+}
+
+/**
+ * Create or reuse a credit hold (idempotent by requestId).
+ * Reduces available credits immediately; release/debit is append-only.
+ */
+export async function createCreditHold(params: {
+  userId: string;
+  requestId: string;
+  amount: number;
+  reason?: string;
+  expiresAt?: Date;
+}): Promise<{ hold: CreditHold; created: boolean; billing: UserBilling }> {
+  const { userId, requestId, amount, reason, expiresAt } = params;
+
+  if (!requestId.trim()) {
+    throw new Error("request_id_required");
+  }
+  if (amount <= 0) {
+    throw new Error("amount_must_be_positive");
+  }
+
+  return runTransaction(async (tx) => {
+    // Reuse existing hold for idempotency
+    const existingHold = await tx`
+      SELECT * FROM credit_holds WHERE request_id = ${requestId} LIMIT 1
+    `;
+    if (existingHold.rows.length > 0) {
+      const hold = existingHold.rows[0] as CreditHold;
+      const billing = await ensureUserBillingWithLock(tx, hold.user_id);
+      return { hold, created: false, billing };
+    }
+
+    const billing = await ensureUserBillingWithLock(tx, userId);
+    if (billing.is_frozen) {
+      throw new Error("account_frozen");
+    }
+    if (billing.credits_available < amount) {
+      throw new Error("insufficient_credits");
+    }
+
+    const updatedBilling = await tx`
+      UPDATE users_billing
+      SET 
+        credits_available = credits_available - ${amount},
+        updated_at = now()
+      WHERE user_id = ${userId}
+      RETURNING *
+    `;
+
+    const holdResult = await tx`
+      INSERT INTO credit_holds (
+        user_id,
+        request_id,
+        amount,
+        status,
+        reason,
+        expires_at
+      )
+      VALUES (
+        ${userId},
+        ${requestId},
+        ${amount},
+        'active',
+        ${reason || null},
+        ${expiresAt ? expiresAt.toISOString() : null}
+      )
+      RETURNING *
+    `;
+
+    await tx`
+      INSERT INTO credit_ledger_entries (
+        user_id,
+        request_id,
+        hold_id,
+        entry_type,
+        credits_change,
+        balance_after,
+        metadata
+      )
+      VALUES (
+        ${userId},
+        ${requestId},
+        ${holdResult.rows[0].id},
+        'hold',
+        ${-amount},
+        ${updatedBilling.rows[0].credits_available},
+        ${JSON.stringify({ reason })}
+      )
+      ON CONFLICT (request_id, entry_type) DO NOTHING
+    `;
+
+    return {
+      hold: holdResult.rows[0] as CreditHold,
+      created: true,
+      billing: updatedBilling.rows[0] as UserBilling,
+    };
+  });
+}
+
+/**
+ * Finalize a debit from an existing hold (idempotent).
+ * Does not change balance because hold already deducted.
+ */
+export async function finalizeDebitFromHold(
+  requestId: string
+): Promise<CreditHold | null> {
+  if (!requestId.trim()) {
+    throw new Error("request_id_required");
+  }
+
+  return runTransaction(async (tx) => {
+    const holdResult = await tx`
+      SELECT * FROM credit_holds WHERE request_id = ${requestId} FOR UPDATE
+    `;
+    if (holdResult.rows.length === 0) {
+      return null;
+    }
+    const hold = holdResult.rows[0] as CreditHold;
+
+    if (hold.status === "debited") {
+      return hold;
+    }
+    if (hold.status !== "active") {
+      return hold;
+    }
+
+    const billing = await ensureUserBillingWithLock(tx, hold.user_id);
+
+    const updatedHold = await tx`
+      UPDATE credit_holds
+      SET status = 'debited', updated_at = now()
+      WHERE id = ${hold.id}
+      RETURNING *
+    `;
+
+    await tx`
+      INSERT INTO credit_ledger_entries (
+        user_id,
+        request_id,
+        hold_id,
+        entry_type,
+        credits_change,
+        balance_after,
+        metadata
+      )
+      VALUES (
+        ${hold.user_id},
+        ${requestId},
+        ${hold.id},
+        'debit',
+        0,
+        ${billing.credits_available},
+        ${JSON.stringify({ amount: hold.amount })}
+      )
+      ON CONFLICT (request_id, entry_type) DO NOTHING
+    `;
+
+    return updatedHold.rows[0] as CreditHold;
+  });
+}
+
+/**
+ * Release an existing hold (idempotent). Adds credits back if hold was active.
+ */
+export async function releaseCreditHold(
+  requestId: string,
+  reason?: string
+): Promise<CreditHold | null> {
+  if (!requestId.trim()) {
+    throw new Error("request_id_required");
+  }
+
+  return runTransaction(async (tx) => {
+    const holdResult = await tx`
+      SELECT * FROM credit_holds WHERE request_id = ${requestId} FOR UPDATE
+    `;
+    if (holdResult.rows.length === 0) {
+      return null;
+    }
+    const hold = holdResult.rows[0] as CreditHold;
+
+    // Already finalized
+    if (hold.status === "debited" || hold.status === "released") {
+      return hold;
+    }
+
+    const billing = await ensureUserBillingWithLock(tx, hold.user_id);
+
+    const updatedBilling =
+      hold.status === "active"
+        ? await tx`
+            UPDATE users_billing
+            SET 
+              credits_available = credits_available + ${hold.amount},
+              updated_at = now()
+            WHERE user_id = ${hold.user_id}
+            RETURNING *
+          `
+        : { rows: [billing] };
+
+    const updatedHold = await tx`
+      UPDATE credit_holds
+      SET status = 'released', updated_at = now(), reason = COALESCE(${reason || null}, reason)
+      WHERE id = ${hold.id}
+      RETURNING *
+    `;
+
+    await tx`
+      INSERT INTO credit_ledger_entries (
+        user_id,
+        request_id,
+        hold_id,
+        entry_type,
+        credits_change,
+        balance_after,
+        metadata
+      )
+      VALUES (
+        ${hold.user_id},
+        ${requestId},
+        ${hold.id},
+        'release',
+        ${hold.status === "active" ? hold.amount : 0},
+        ${updatedBilling.rows[0].credits_available},
+        ${JSON.stringify({ reason })}
+      )
+      ON CONFLICT (request_id, entry_type) DO NOTHING
+    `;
+
+    return updatedHold.rows[0] as CreditHold;
+  });
+}
+
+/**
+ * Grant credits (append-only ledger)
+ */
+export async function grantCredits(
+  userId: string,
+  amount: number,
+  metadata: Record<string, unknown> = {},
+  requestId?: string
+): Promise<UserBilling> {
+  if (amount <= 0) {
+    throw new Error("grant_amount_must_be_positive");
+  }
+
+  return runTransaction(async (tx) => {
+    const billing = await ensureUserBillingWithLock(tx, userId);
+    const updated = await tx`
+      UPDATE users_billing
+      SET 
+        credits_available = credits_available + ${amount},
+        updated_at = now()
+      WHERE user_id = ${userId}
+      RETURNING *
+    `;
+
+    await tx`
+      INSERT INTO credit_ledger_entries (
+        user_id,
+        request_id,
+        entry_type,
+        credits_change,
+        balance_after,
+        metadata
+      )
+      VALUES (
+        ${userId},
+        ${requestId || null},
+        'grant',
+        ${amount},
+        ${updated.rows[0].credits_available},
+        ${JSON.stringify(metadata)}
+      )
+      ON CONFLICT (request_id, entry_type) DO NOTHING
+    `;
+
+    return updated.rows[0] as UserBilling;
+  });
+}
+
+/**
+ * Fetch active hold by requestId
+ */
+export async function getHoldByRequestId(
+  requestId: string
+): Promise<CreditHold | null> {
+  const result = await sql`
+    SELECT * FROM credit_holds WHERE request_id = ${requestId} LIMIT 1
+  `;
+  return (result.rows[0] as CreditHold) || null;
+}
+
+/**
+ * Get recent ledger entries for a user (descending)
+ */
+export async function getLedgerEntries(
+  userId: string,
+  limit: number = 50
+): Promise<CreditLedgerEntry[]> {
+  const result = await sql`
+    SELECT * FROM credit_ledger_entries
+    WHERE user_id = ${userId}
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+  return result.rows.map(coerceLedgerEntry);
 }
 
 /**
@@ -201,7 +593,8 @@ export async function updateUserBillingCredits(
     RETURNING *
   `;
 
-  return result.rows[0] as UserBilling;
+  const updated = result.rows[0] as UserBilling;
+  return { ...updated, is_frozen: updated.is_frozen ?? false };
 }
 
 /**
@@ -266,6 +659,62 @@ export async function decrementCreditsIfAvailable(userId: string): Promise<boole
 }
 
 /**
+ * Atomically mark free trial as used and optionally grant credits once.
+ */
+export async function useFreeTrialOnce(
+  userId: string,
+  grantAmount: number
+): Promise<{ granted: boolean; billing: UserBilling }> {
+  if (grantAmount <= 0) {
+    return { granted: false, billing: await getOrCreateUserBilling(userId) };
+  }
+
+  return runTransaction(async (tx) => {
+    const billing = await ensureUserBillingWithLock(tx, userId);
+    if (billing.trial_used) {
+      return { granted: false, billing };
+    }
+
+    const updatedBilling = await tx`
+      UPDATE users_billing
+      SET 
+        trial_used = true,
+        credits_available = credits_available + ${grantAmount},
+        updated_at = now()
+      WHERE user_id = ${userId} AND (trial_used = false OR trial_used IS NULL)
+      RETURNING *
+    `;
+
+    if (updatedBilling.rows.length === 0) {
+      const refreshed = await ensureUserBillingWithLock(tx, userId);
+      return { granted: false, billing: refreshed };
+    }
+
+    await tx`
+      INSERT INTO credit_ledger_entries (
+        user_id,
+        entry_type,
+        credits_change,
+        balance_after,
+        metadata
+      )
+      VALUES (
+        ${userId},
+        'grant',
+        ${grantAmount},
+        ${updatedBilling.rows[0].credits_available},
+        ${JSON.stringify({ reason: "free_trial" })}
+      )
+    `;
+
+    return {
+      granted: true,
+      billing: updatedBilling.rows[0] as UserBilling,
+    };
+  });
+}
+
+/**
  * Reset free trial for a user (for testing/admin purposes)
  * Note: In production, users should only get one free try-on
  */
@@ -324,7 +773,29 @@ export async function updateUserBillingPlan(
     return getOrCreateUserBilling(userId);
   }
 
-  return result.rows[0] as UserBilling;
+  return { ...(result.rows[0] as UserBilling), is_frozen: (result.rows[0] as UserBilling).is_frozen ?? false };
+}
+
+/**
+ * Freeze or unfreeze a user's ability to generate (e.g., on payment failure)
+ */
+export async function setUserBillingFrozen(
+  userId: string,
+  frozen: boolean
+): Promise<UserBilling> {
+  const result = await sql`
+    UPDATE users_billing
+    SET is_frozen = ${frozen}, updated_at = now()
+    WHERE user_id = ${userId}
+    RETURNING *
+  `;
+  if (result.rows.length === 0) {
+    return getOrCreateUserBilling(userId);
+  }
+  return {
+    ...(result.rows[0] as UserBilling),
+    is_frozen: (result.rows[0] as UserBilling).is_frozen ?? false,
+  };
 }
 
 /**
@@ -726,6 +1197,26 @@ export async function getClothingItemsByIds(
       return result.rows as ClothingItem[];
     }
   });
+}
+
+export async function countClothingItemsByUser(
+  userId: string,
+  since?: Date
+): Promise<number> {
+  const result = since
+    ? await sql`
+        SELECT COUNT(*) as count
+        FROM clothing_items
+        WHERE user_id = ${userId} AND created_at >= ${since.toISOString()}
+      `
+    : await sql`
+        SELECT COUNT(*) as count
+        FROM clothing_items
+        WHERE user_id = ${userId}
+      `;
+
+  const countStr = (result.rows[0] as { count: string }).count || "0";
+  return parseInt(countStr, 10);
 }
 
 /**

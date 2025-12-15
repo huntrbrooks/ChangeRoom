@@ -27,95 +27,87 @@ const stripe = new Stripe(stripeSecretKey, {
   apiVersion: '2025-02-24.acacia',
 });
 
+async function createPrice({ name, description, amountCents, currency = 'aud', recurring, metadata }) {
+  const product = await stripe.products.create({
+    name,
+    description,
+  });
+
+  const price = await stripe.prices.create({
+    product: product.id,
+    unit_amount: amountCents,
+    currency,
+    recurring,
+    metadata,
+  });
+
+  return { product, price };
+}
+
 async function createStripeProducts() {
-  console.log('🚀 Setting up Stripe products and prices...\n');
+  console.log('🚀 Setting up Stripe products and prices (AUD)...\n');
 
   try {
-    // 1. Create Standard Plan
-    console.log('📦 Creating Standard Plan...');
-    const standardProduct = await stripe.products.create({
-      name: 'Standard Plan',
-      description: '50 credits/month - Perfect for regular users',
+    const results = {};
+
+    // One-time credit packs
+    results.STARTER = await createPrice({
+      name: 'Starter',
+      description: 'Starter pack – 10 credits',
+      amountCents: 1499,
+      metadata: { credits: 10 },
     });
 
-    const standardPrice = await stripe.prices.create({
-      product: standardProduct.id,
-      unit_amount: 999, // $9.99 in cents
-      currency: 'usd',
-      recurring: {
-        interval: 'month',
-      },
+    results.STARTER_XMAS = await createPrice({
+      name: 'Starter Xmas Promo',
+      description: 'Limited Xmas promo – 20 credits',
+      amountCents: 1499,
+      metadata: { credits: 20, promo: 'xmas-2025', limit: '1 per customer' },
     });
 
-    console.log('✅ Standard Plan created!');
-    console.log(`   Product ID: ${standardProduct.id}`);
-    console.log(`   Price ID: ${standardPrice.id}\n`);
-
-    // 2. Create Pro Plan
-    console.log('📦 Creating Pro Plan...');
-    const proProduct = await stripe.products.create({
-      name: 'Pro Plan',
-      description: '250 credits/month - Best value for power users',
+    results.VALUE = await createPrice({
+      name: 'Value Pack',
+      description: 'Value pack – 30 credits',
+      amountCents: 3499,
+      metadata: { credits: 30 },
     });
 
-    const proPrice = await stripe.prices.create({
-      product: proProduct.id,
-      unit_amount: 1999, // $19.99 in cents
-      currency: 'usd',
-      recurring: {
-        interval: 'month',
-      },
+    results.PRO = await createPrice({
+      name: 'Pro Pack',
+      description: 'Pro pack – 100 credits',
+      amountCents: 8999,
+      metadata: { credits: 100 },
     });
 
-    console.log('✅ Pro Plan created!');
-    console.log(`   Product ID: ${proProduct.id}`);
-    console.log(`   Price ID: ${proPrice.id}\n`);
-
-    // 3. Create Small Credit Pack
-    console.log('📦 Creating Small Credit Pack...');
-    const smallPackProduct = await stripe.products.create({
-      name: 'Small Credit Pack',
-      description: '20 credits - Pay as you go',
+    // Optional subscriptions
+    results.CREATOR = await createPrice({
+      name: 'Creator Subscription',
+      description: 'Monthly creator plan',
+      amountCents: 4999,
+      recurring: { interval: 'month' },
+      metadata: { plan: 'creator' },
     });
 
-    const smallPackPrice = await stripe.prices.create({
-      product: smallPackProduct.id,
-      unit_amount: 499, // $4.99 in cents
-      currency: 'usd',
+    results.POWER = await createPrice({
+      name: 'Power Subscription',
+      description: 'Monthly power plan',
+      amountCents: 12999,
+      recurring: { interval: 'month' },
+      metadata: { plan: 'power' },
     });
 
-    console.log('✅ Small Credit Pack created!');
-    console.log(`   Product ID: ${smallPackProduct.id}`);
-    console.log(`   Price ID: ${smallPackPrice.id}\n`);
-
-    // 4. Create Large Credit Pack
-    console.log('📦 Creating Large Credit Pack...');
-    const largePackProduct = await stripe.products.create({
-      name: 'Large Credit Pack',
-      description: '100 credits - Best value for credit packs',
-    });
-
-    const largePackPrice = await stripe.prices.create({
-      product: largePackProduct.id,
-      unit_amount: 1999, // $19.99 in cents
-      currency: 'usd',
-    });
-
-    console.log('✅ Large Credit Pack created!');
-    console.log(`   Product ID: ${largePackProduct.id}`);
-    console.log(`   Price ID: ${largePackPrice.id}\n`);
-
-    // Output .env format
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('📋 Add these to your .env.local file:');
+    console.log('📋 Add these to your .env.local file (and Vercel vars):');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-    console.log(`STRIPE_STANDARD_PRICE_ID=${standardPrice.id}`);
-    console.log(`STRIPE_PRO_PRICE_ID=${proPrice.id}`);
-    console.log(`STRIPE_CREDIT_PACK_SMALL_PRICE_ID=${smallPackPrice.id}`);
-    console.log(`STRIPE_CREDIT_PACK_LARGE_PRICE_ID=${largePackPrice.id}\n`);
+    console.log(`STRIPE_STARTER_PRICE_ID=${results.STARTER.price.id}`);
+    console.log(`STRIPE_STARTER_XMAS_PRICE_ID=${results.STARTER_XMAS.price.id}`);
+    console.log(`STRIPE_VALUE_PRICE_ID=${results.VALUE.price.id}`);
+    console.log(`STRIPE_PRO_PRICE_ID=${results.PRO.price.id}`);
+    console.log(`STRIPE_CREATOR_PRICE_ID=${results.CREATOR.price.id}`);
+    console.log(`STRIPE_POWER_PRICE_ID=${results.POWER.price.id}\n`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     console.log('✨ All products and prices created successfully!');
-    console.log('💡 Make sure to copy the Price IDs above to your .env.local file\n');
+    console.log('💡 Make sure to copy the Price IDs above to your env files.\n');
 
   } catch (error) {
     console.error('❌ Error creating Stripe products:', error.message);

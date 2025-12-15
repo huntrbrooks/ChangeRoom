@@ -50,8 +50,9 @@ export function PricingTable({
     setLoading(product.plan);
     try {
       let priceId: string;
+      let mode: "subscription" | "payment" = "payment";
       if (product.plan === 'standard') {
-        priceId = stripeConfig.standardPriceId;
+        priceId = stripeConfig.starterXmasPriceId || stripeConfig.starterPriceId;
       } else if (product.plan === 'pro') {
         priceId = stripeConfig.proPriceId;
       } else {
@@ -73,7 +74,7 @@ export function PricingTable({
 
       const response = await axios.post('/api/billing/create-checkout-session', {
         priceId,
-        mode: 'subscription',
+        mode,
         startTrial: currentPlan === 'free',
       });
 
@@ -100,13 +101,24 @@ export function PricingTable({
 
   const formatPrice = (product: ProductFeatures) => {
     if (product.price.amount === 0) return 'Free';
-    return `$${product.price.amount.toFixed(2)}/${product.price.period === 'month' ? 'mo' : ''}`;
+    const formatter = new Intl.NumberFormat('en-AU', {
+      style: 'currency',
+      currency: product.price.currency || 'AUD',
+      maximumFractionDigits: 2,
+    });
+    const suffix = product.price.period === 'month' ? '/mo' : '';
+    return `${formatter.format(product.price.amount)}${suffix}`;
   };
 
   const calculatePricePerCredit = (product: ProductFeatures) => {
     if (product.credits === 0) return null;
     const perCredit = product.price.amount / product.credits;
-    return `$${perCredit.toFixed(2)} per try-on`;
+    const formatter = new Intl.NumberFormat('en-AU', {
+      style: 'currency',
+      currency: product.price.currency || 'AUD',
+      maximumFractionDigits: 2,
+    });
+    return `${formatter.format(perCredit)} per try-on`;
   };
 
   return (

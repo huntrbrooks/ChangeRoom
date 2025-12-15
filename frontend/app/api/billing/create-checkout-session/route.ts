@@ -86,6 +86,45 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Determine allowed prices
+    const allowedPriceIds = [
+      stripeConfig.starterPriceId,
+      stripeConfig.starterXmasPriceId,
+      stripeConfig.valuePriceId,
+      stripeConfig.proPriceId,
+      stripeConfig.creatorPriceId,
+      stripeConfig.powerPriceId,
+    ].filter(Boolean);
+
+    if (!allowedPriceIds.includes(priceId)) {
+      return NextResponse.json(
+        { error: "Price is not available", details: "Unsupported priceId" },
+        { status: 400 }
+      );
+    }
+
+    // Map price to credit amounts (one-time)
+    const creditAmountMap: Record<string, number> = {
+      [stripeConfig.starterPriceId]: 10,
+      [stripeConfig.starterXmasPriceId]: 20,
+      [stripeConfig.valuePriceId]: 30,
+      [stripeConfig.proPriceId]: 100,
+    };
+
+    // Identify which prices are subscriptions (Creator/Power)
+    const subscriptionPriceIds = new Set(
+      [stripeConfig.creatorPriceId, stripeConfig.powerPriceId].filter(Boolean)
+    );
+
+    // Default mode if not aligned with price type
+    const inferredMode = subscriptionPriceIds.has(priceId) ? "subscription" : "payment";
+    if (mode !== inferredMode) {
+      return NextResponse.json(
+        { error: "Invalid mode for price", details: `Use '${inferredMode}' for this price.` },
+        { status: 400 }
+      );
+    }
+
     // Get or create user billing
     const billing = await getOrCreateUserBilling(userId);
     
@@ -109,14 +148,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Determine credit amount for one-time payments
-    let creditAmount = 0;
-    if (mode === "payment") {
-      if (priceId === stripeConfig.creditPackSmallPriceId) {
-        creditAmount = appConfig.creditPackSmallAmount;
-      } else if (priceId === stripeConfig.creditPackLargePriceId) {
-        creditAmount = appConfig.creditPackLargeAmount;
-      }
-    }
+    const creditAmount = mode === "payment" ? creditAmountMap[priceId] || 0 : 0;
 
     // Build subscription data for free trial (Stripe trial period)
     // Note: Our app logic uses trial_used flag, but we can still offer Stripe trial period

@@ -70,6 +70,7 @@ function HomeContent() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [isPreviewResult, setIsPreviewResult] = useState(false);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
   const [activeTab, setActiveTab] = useState<'try-on' | 'my-outfits'>('try-on');
@@ -159,7 +160,7 @@ function HomeContent() {
   const userEmail = user?.emailAddresses?.[0]?.emailAddress;
   const isBypass = isBypassUser(userEmail);
   const redirectToPricing = useCallback(() => {
-    router.push('/pricing');
+    router.push('/pricing?promo=xmas');
   }, [router]);
 
   const isOnTrial = billing && !billing.trialUsed && !isBypass;
@@ -621,6 +622,7 @@ function HomeContent() {
     setProducts([]);
     // Clear previous image to show loading state immediately
     setGeneratedImage(null);
+    setIsPreviewResult(false);
 
     // Create abort controller for cancellation
     const controller = new AbortController();
@@ -665,6 +667,9 @@ function HomeContent() {
       // Step 1: Call Try-On API (sequential execution - must succeed before product search)
       let tryOnRes;
       try {
+        const requestId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : `req-${Date.now()}`;
         const tryOnFormData = new FormData();
         // Append all user images
         userImages.forEach((img) => {
@@ -689,6 +694,9 @@ function HomeContent() {
         });
         
         console.log(`Trying on ${preparedTryOnFiles.length} item(s) using direct file uploads to preserve ordering`);
+
+        tryOnFormData.append('requestId', requestId);
+        tryOnFormData.append('quality', 'standard');
         
         // Build metadata with per-item wearing styles
         const metadata: Record<string, unknown> = {
@@ -854,6 +862,8 @@ function HomeContent() {
         logIngest({location:'page.tsx:646',message:'Frontend try-on request succeeded',data:{status:tryOnRes?.status,hasImageUrl:!!tryOnRes?.data?.image_url},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'});
         // #endregion
 
+        setIsPreviewResult(Boolean(tryOnRes?.data?.usedFreeTrial));
+
         if (tryOnRes.data.image_url) {
           const imageUrl = tryOnRes.data.image_url;
           
@@ -888,6 +898,11 @@ function HomeContent() {
         logIngest({location:'page.tsx:683',message:'Frontend try-on request failed',data:{errorName:error?.name,errorCode:error?.code,status:error?.response?.status,errorDetail:error?.response?.data?.detail,errorData:error?.response?.data,errorMessage:error?.message,fullError:JSON.stringify(error?.response?.data||{})},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'});
         // #endregion
         if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
+          try {
+            await axios.post('/api/try-on/cancel', { requestId });
+          } catch {
+            // ignore
+          }
           setError('Operation cancelled');
           setIsGenerating(false);
           console.error = originalError;
@@ -1363,6 +1378,9 @@ function HomeContent() {
                 isLoading={isGenerating}
                 errorMessage={error}
                 onStageChange={handleLoaderStageChange}
+                isPreview={isPreviewResult}
+                onDownloadClean={redirectToPricing}
+                onTryAnother={redirectToPricing}
               />
               {generatedImage && !isGenerating && user && (
                 <div className="mt-4 rounded-lg border border-black/20 bg-black/5 p-4">

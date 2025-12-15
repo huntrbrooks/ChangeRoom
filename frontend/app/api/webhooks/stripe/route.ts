@@ -5,6 +5,7 @@ import {
   getUserBillingByStripeCustomer,
   updateUserBillingPlan,
   updateUserBillingCredits,
+  setUserBillingFrozen,
 } from "@/lib/db-access";
 
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
@@ -65,15 +66,22 @@ export async function POST(req: NextRequest) {
 
         const customerId = session.customer as string;
 
-        if (session.mode === "subscription") {
-          // Handle subscription creation
-          const subscriptionId = session.subscription as string;
+        const priceIdFromSession = session.metadata?.priceId || session.line_items?.data?.[0]?.price?.id || "";
+        const creditAmountMap: Record<string, number> = {
+          [stripeConfig.starterPriceId]: 10,
+          [stripeConfig.starterXmasPriceId]: 20,
+          [stripeConfig.valuePriceId]: 30,
+          [stripeConfig.proPriceId]: 100,
+        };
 
-          // Determine plan from price ID
+        if (session.mode === "subscription") {
+          // Handle subscription creation (Creator/Power)
+          const subscriptionId = session.subscription as string;
           let plan: "free" | "standard" | "pro" = "free";
-          if (session.metadata?.priceId === stripeConfig.standardPriceId) {
+
+          if (priceIdFromSession === stripeConfig.creatorPriceId) {
             plan = "standard";
-          } else if (session.metadata?.priceId === stripeConfig.proPriceId) {
+          } else if (priceIdFromSession === stripeConfig.powerPriceId) {
             plan = "pro";
           }
 
@@ -87,7 +95,10 @@ export async function POST(req: NextRequest) {
           console.log(`Updated user ${clerkUserId} to plan ${plan}`);
         } else if (session.mode === "payment") {
           // Handle one-time credit pack purchase
-          const creditAmount = parseInt(session.metadata?.creditAmount || "0", 10);
+          const creditAmount =
+            parseInt(session.metadata?.creditAmount || "0", 10) ||
+            creditAmountMap[priceIdFromSession] ||
+            0;
 
           if (creditAmount > 0) {
             // Get or create billing to ensure customer ID is set
@@ -145,6 +156,29 @@ export async function POST(req: NextRequest) {
           // Downgrade to free plan
           await updateUserBillingPlan(billing.user_id, "free", customerId, undefined);
           console.log(`Downgraded user ${billing.user_id} to free plan`);
+        }
+        break;
+      }
+
+      case "invoice.paid": {
+        // Unfreeze on successful payment
+        const invoice = event.data.object as Stripe.Invoice;
+        const customerId = invoice.customer as string;
+        const billing = await getUserBillingByStripeCustomer(customerId);
+        if (billing) {
+          await setUserBillingFrozen(billing.user_id, false);
+          console.log(`Unfroze user ${billing.user_id} after invoice paid`);
+        }
+        break;
+      }
+
+      case "invoice.payment_failed": {
+        const invoice = event.data.object as Stripe.Invoice;
+        const customerId = invoice.customer as string;
+        const billing = await getUserBillingByStripeCustomer(customerId);
+        if (billing) {
+          await setUserBillingFrozen(billing.user_id, true);
+          console.log(`Froze user ${billing.user_id} due to payment failure`);
         }
         break;
       }
