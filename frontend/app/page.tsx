@@ -82,6 +82,34 @@ function HomeContent() {
     "rounded-2xl border border-black/10 bg-white/95 shadow-[0_12px_40px_rgba(0,0,0,0.06)] backdrop-blur-sm";
   const cardPadding = "p-3 sm:p-4 md:p-6";
 
+  const withRetry = useCallback(
+    async function withRetryFn<T>(fn: () => Promise<T>, retries = 2, delayMs = 1500): Promise<T> {
+      let lastError: unknown;
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          return await fn();
+        } catch (err) {
+          lastError = err;
+          if (attempt === retries) {
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    },
+    []
+  );
+
+  const handleLoaderStageChange = useCallback((stageId: number) => {
+    console.info('try-on-stage', { stageId, ts: Date.now() });
+  }, []);
+
+  useEffect(() => {
+    router.prefetch('/pricing');
+    router.prefetch('/billing');
+  }, [router]);
+
   // Fetch billing info on mount and when user changes
   useEffect(() => {
     if (isLoaded && user) {
@@ -161,6 +189,7 @@ function HomeContent() {
       item_type?: string;
       color?: string;
       style?: string;
+      brand?: string;
       tags?: string[];
     };
     error?: string;
@@ -176,6 +205,7 @@ function HomeContent() {
     detailed_description?: string;
     category?: string;
     item_type?: string;
+    brand?: string;
     wearing_style?: string;
     file_url?: string;
     saved_filename?: string;
@@ -221,6 +251,12 @@ function HomeContent() {
           subcategory: analysisMeta.item_type || null,
           color: analysisMeta.color || null,
           style: analysisMeta.style || null,
+          brand:
+            analysisMeta.brand ||
+            (fileMeta.metadata &&
+              typeof (fileMeta.metadata as { brand?: unknown }).brand === "string"
+              ? (fileMeta.metadata as { brand?: string }).brand
+              : null),
           description:
             analysisMeta.description ||
             analysisMeta.short_description ||
@@ -344,6 +380,12 @@ function HomeContent() {
         subcategory: analysisMeta.item_type || null,
         color: analysisMeta.color || null,
         style: analysisMeta.style || null,
+        brand:
+          analysisMeta.brand ||
+          (fileMeta.metadata &&
+            typeof (fileMeta.metadata as { brand?: unknown }).brand === "string"
+            ? (fileMeta.metadata as { brand?: string }).brand
+            : null),
         description:
           analysisMeta.description ||
           analysisMeta.short_description ||
@@ -379,6 +421,9 @@ function HomeContent() {
       }) as FileWithMetadata;
       file.clothing_item_id = item.id;
       file.file_url = fileUrl;
+      if (item.brand) {
+        file.brand = item.brand;
+      }
 
       const analysis: AnalyzedItem = {
         index: 0,
@@ -387,6 +432,7 @@ function HomeContent() {
           body_region: item.category || "unknown",
           category: item.category || "unknown",
           item_type: item.subcategory || undefined,
+          brand: item.brand || undefined,
           short_description:
             item.description || item.subcategory || filename || "Saved item",
           description: item.description || undefined,
@@ -515,6 +561,10 @@ function HomeContent() {
     if (!requireAuth()) {
       return;
     }
+    if (isGenerating) {
+      return;
+    }
+
     if (lacksCredits) {
       redirectToPricing();
       return;
@@ -781,11 +831,16 @@ function HomeContent() {
         // #region agent log
         fetch('http://127.0.0.1:7242/ingest/8b25fdd5-4589-4281-bfc2-e9bb432457fe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:640',message:'Frontend try-on request starting',data:{apiUrl:API_URL,userImagesCount:userImages.length,clothingItemsCount:preparedTryOnFiles.length,metadataKeys:Object.keys(metadata)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
         // #endregion
-        tryOnRes = await axios.post(`${API_URL}/api/try-on`, tryOnFormData, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-          timeout: 600000, // 10 minutes for Render wake-up + VTON generation
-          signal: controller.signal,
-        });
+        tryOnRes = await withRetry(
+          () =>
+            axios.post(`${API_URL}/api/try-on`, tryOnFormData, {
+              headers: { 'Content-Type': 'multipart/form-data' },
+              timeout: 600000, // 10 minutes for Render wake-up + VTON generation
+              signal: controller.signal,
+            }),
+          1,
+          2000
+        );
         // #region agent log
         fetch('http://127.0.0.1:7242/ingest/8b25fdd5-4589-4281-bfc2-e9bb432457fe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:646',message:'Frontend try-on request succeeded',data:{status:tryOnRes?.status,hasImageUrl:!!tryOnRes?.data?.image_url},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
         // #endregion
@@ -862,22 +917,32 @@ function HomeContent() {
         }
         identifyFormData.append('clothing_image', primaryTryOnFile);
         
-        const analysisRes = await axios.post(`${API_URL}/api/identify-products`, identifyFormData, {
-           headers: { 'Content-Type': 'multipart/form-data' },
-           timeout: 600000, // 10 minutes for Render wake-up + Gemini processing
-           signal: controller.signal,
-        });
+        const analysisRes = await withRetry(
+          () =>
+            axios.post(`${API_URL}/api/identify-products`, identifyFormData, {
+              headers: { 'Content-Type': 'multipart/form-data' },
+              timeout: 600000, // 10 minutes for Render wake-up + Gemini processing
+              signal: controller.signal,
+            }),
+          1,
+          2000
+        );
         
         if (analysisRes.data.search_query) {
           console.log("Product identification successful, searching for products...");
           const shopFormData = new FormData();
           shopFormData.append('query', analysisRes.data.search_query);
           
-          const shopRes = await axios.post(`${API_URL}/api/shop`, shopFormData, {
-             headers: { 'Content-Type': 'multipart/form-data' },
-             timeout: 60000, // 1 minute for product search
-             signal: controller.signal,
-          });
+          const shopRes = await withRetry(
+            () =>
+              axios.post(`${API_URL}/api/shop`, shopFormData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+                timeout: 60000, // 1 minute for product search
+                signal: controller.signal,
+              }),
+            1,
+            1500
+          );
           
           if (shopRes.data.results) {
             setProducts(shopRes.data.results);
@@ -1284,7 +1349,11 @@ function HomeContent() {
                 <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,0,0,0.5)]">3</span>
                 Virtual Mirror
               </h2>
-              <VirtualMirror imageUrl={generatedImage} isLoading={isGenerating} />
+              <VirtualMirror
+                imageUrl={generatedImage}
+                isLoading={isGenerating}
+                onStageChange={handleLoaderStageChange}
+              />
               {generatedImage && !isGenerating && user && (
                 <div className="mt-4 rounded-lg border border-black/20 bg-black/5 p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1307,16 +1376,18 @@ function HomeContent() {
               )}
             </section>
 
-            {products.length > 0 && (
+            {(products.length > 0 || isGenerating) && (
               <section className={`${cardClass} ${cardPadding} space-y-4`}>
                 <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
                   <Search size={18} className="sm:w-5 sm:h-5 text-black" />
                   Shop the Look
                 </h2>
                 <div className="space-y-3 sm:space-y-4">
-                  {products.map((product, idx) => (
-                    <ProductCard key={idx} product={product} />
-                  ))}
+                  {products.length > 0
+                    ? products.map((product, idx) => (
+                        <ProductCard key={idx} product={product} />
+                      ))
+                    : [0, 1, 2].map((idx) => <ProductCard key={`skeleton-${idx}`} loading />)}
                 </div>
               </section>
             )}
@@ -1337,11 +1408,16 @@ function HomeContent() {
                     >
                       <div className="flex gap-3">
                         {itemImageUrl && (
-                          <img
-                            src={itemImageUrl}
-                            alt={result.item.description || result.item.subcategory || 'Wardrobe item'}
-                            className="h-20 w-20 rounded-md border border-black/10 object-cover"
-                          />
+                          <div className="relative h-20 w-20 rounded-md border border-black/10 overflow-hidden">
+                            <Image
+                              src={itemImageUrl}
+                              alt={result.item.description || result.item.subcategory || 'Wardrobe item'}
+                              fill
+                              sizes="80px"
+                              className="object-cover"
+                              loading="lazy"
+                            />
+                          </div>
                         )}
                         <div className="flex-1">
                           <p className="text-[11px] font-semibold uppercase tracking-wide text-black/60">

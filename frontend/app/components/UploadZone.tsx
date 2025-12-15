@@ -594,6 +594,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
                     accept="image/*"
                     multiple
                     onChange={handleChange}
+                    aria-label={label || 'Add more files'}
                     disabled={isOptimizing || !isAuthenticated}
                   />
                 </label>
@@ -651,6 +652,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
                 accept="image/*"
                 multiple={multiple}
                 onChange={handleChange}
+                aria-label={label || 'Upload files'}
               />
             </label>
           )}

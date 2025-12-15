@@ -19,6 +19,7 @@ interface ItemMetadataInput {
   subcategory?: string | null;
   color?: string | null;
   style?: string | null;
+  brand?: string | null;
   description?: string | null;
   tags?: string[] | null;
 }
@@ -31,6 +32,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const startedAt = Date.now();
     const body = await req.json();
     const { clothingItemIds, itemMetadata } = body as {
       clothingItemIds: string[];
@@ -99,6 +101,7 @@ export async function POST(req: NextRequest) {
         subcategory: item.subcategory,
         color: item.color,
         style: item.style,
+        brand: item.brand,
         description: item.description,
         tags: item.tags,
       });
@@ -145,9 +148,14 @@ export async function POST(req: NextRequest) {
       }));
     }
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       offers: results,
     });
+    console.info("shop-search durationMs", {
+      durationMs: Date.now() - startedAt,
+      itemCount: itemsToSearch.length,
+    });
+    return response;
   } catch (err: unknown) {
     console.error("shop-search error:", err);
     const error = err instanceof Error ? err : new Error(String(err));

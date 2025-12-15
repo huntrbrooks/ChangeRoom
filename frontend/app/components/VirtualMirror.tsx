@@ -5,9 +5,10 @@ import { TryOnProgressLoader } from './TryOnProgressLoader';
 interface VirtualMirrorProps {
   imageUrl: string | null;
   isLoading: boolean;
+  onStageChange?: (stageId: number) => void;
 }
 
-export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoading }) => {
+export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoading, onStageChange }) => {
   const [showLoader, setShowLoader] = useState(false);
 
   useEffect(() => {
@@ -32,6 +33,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoadin
         <TryOnProgressLoader
           isActive={isLoading}
           isComplete={!isLoading && Boolean(imageUrl)}
+          onStageChange={onStageChange}
           onFinished={handleLoaderFinished}
         />
       )}

@@ -1,7 +1,6 @@
-'use client';
-
 import Link from 'next/link';
 import nextDynamic from 'next/dynamic';
+import type { Metadata } from 'next';
 import { ArrowLeft } from 'lucide-react';
 
 const DynamicPricingTable = nextDynamic(
@@ -11,6 +10,16 @@ const DynamicPricingTable = nextDynamic(
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = {
+  title: 'Pricing | IGetDressed.Online',
+  description: 'Choose a subscription or credit pack for AI try-on and shopping.',
+  openGraph: {
+    title: 'Pricing | IGetDressed.Online',
+    description: 'Pick your plan for virtual try-on and shopping tools.',
+    url: 'https://igetdressed.online/pricing',
+  },
+};
 
 function PricingPageContent() {
   return (

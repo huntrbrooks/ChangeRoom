@@ -1,9 +1,20 @@
 import React from 'react';
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import { Shirt, ArrowLeft, Sparkles, Zap, Shield } from 'lucide-react';
 
 // Force dynamic rendering to avoid Clerk initialization issues during build
 export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = {
+  title: 'About | IGetDressed.Online',
+  description: 'Learn how IGetDressed.Online uses AI to power virtual try-on and shopping.',
+  openGraph: {
+    title: 'About | IGetDressed.Online',
+    description: 'Discover the mission behind IGetDressed.Online and our AI try-on tech.',
+    url: 'https://igetdressed.online/about',
+  },
+};
 
 export default function About() {
   return (

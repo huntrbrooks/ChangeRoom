@@ -10,6 +10,8 @@ type TryOnProgressLoaderProps = {
   isComplete: boolean
   /** Called after the fade-out finishes */
   onFinished?: () => void
+  /** Stage change callback (1-5) */
+  onStageChange?: (stageId: number) => void
 }
 
 type Stage = {
@@ -61,7 +63,7 @@ const STAGES: Stage[] = [
 const MIN_STAGE_MS = 5000
 const EXIT_FADE_MS = 2400
 
-export function TryOnProgressLoader({ isActive, isComplete, onFinished }: TryOnProgressLoaderProps) {
+export function TryOnProgressLoader({ isActive, isComplete, onFinished, onStageChange }: TryOnProgressLoaderProps) {
   const [progress, setProgress] = useState(0)
   const [stageIndex, setStageIndex] = useState(0)
   const [isExiting, setIsExiting] = useState(false)
@@ -221,6 +223,10 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished }: TryOnP
   const stage = useMemo(() => STAGES[Math.min(stageIndex, STAGES.length - 1)], [stageIndex])
   const percentInt = Math.round(progress)
 
+  useEffect(() => {
+    onStageChange?.(stage.id)
+  }, [onStageChange, stage.id])
+
   return (
     <div
       className={`
@@ -230,6 +236,8 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished }: TryOnP
       `}
       style={{ transitionDuration: `${EXIT_FADE_MS}ms` }}
       aria-live="polite"
+      aria-busy={isActive && !isExiting}
+      aria-label={`Processing stage ${stage.id} of 5: ${stage.label}`}
       role="status"
     >
       <div className="flex flex-col items-center gap-4 px-6 text-center max-w-xs">

@@ -94,14 +94,13 @@ export const ShopSaveSelector: React.FC<ShopSaveSelectorProps> = ({
               const selectionLimitReached =
                 !isSelected && selectedIds.length >= maxSelection;
               const isSaved = savedIds.includes(item.id);
-              const itemTitle =
+              const baseTitle =
                 item.subcategory ||
                 item.description ||
                 item.original_filename ||
                 'Saved item';
-              const subtitle = [item.color, item.style]
-                .filter(Boolean)
-                .join(', ');
+              const itemTitle = item.brand ? `${item.brand} · ${baseTitle}` : baseTitle;
+              const subtitle = [item.color, item.style].filter(Boolean).join(', ');
 
               const imageUrl = ensureAbsoluteUrl(item.public_url);
 

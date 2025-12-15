@@ -11,10 +11,27 @@ interface Product {
 }
 
 interface ProductCardProps {
-  product: Product;
+  product?: Product;
+  loading?: boolean;
 }
 
-export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
+export const ProductCard: React.FC<ProductCardProps> = ({ product, loading = false }) => {
+  if (loading || !product) {
+    return (
+      <div className="border border-black/10 rounded-none overflow-hidden bg-white animate-pulse">
+        <div className="aspect-square bg-gray-200" />
+        <div className="p-3 sm:p-4 space-y-3">
+          <div className="h-4 w-3/4 bg-gray-200" />
+          <div className="flex items-center justify-between">
+            <div className="h-4 w-16 bg-gray-200" />
+            <div className="h-3 w-12 bg-gray-200" />
+          </div>
+          <div className="h-10 w-full bg-gray-200" />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="border border-black/10 rounded-none overflow-hidden hover:border-black/30 transition-all bg-white">
       <div className="aspect-square relative overflow-hidden bg-gray-100">

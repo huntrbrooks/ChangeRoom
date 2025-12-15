@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect } from 'react';
+import Image from 'next/image';
 import { Download, Share2, Trash2, Image as ImageIcon, Loader2 } from 'lucide-react';
 import axios from 'axios';
 
@@ -193,15 +194,13 @@ export const MyOutfits: React.FC<MyOutfitsProps> = ({ onSelectOutfit }) => {
           >
             {/* Outfit Image */}
             <div className="relative aspect-[3/4] bg-gray-100 overflow-hidden">
-              <img
-                src={outfit.imageUrl}
+              <Image
+                src={outfit.imageUrl || '/placeholder-outfit.png'}
                 alt="Saved outfit"
-                className="w-full h-full object-cover"
-                loading="lazy"
-                decoding="async"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = '/placeholder-outfit.png';
-                }}
+                fill
+                sizes="(min-width: 1024px) 320px, 260px"
+                className="object-cover"
+                priority={false}
               />
               <div className="absolute top-2 right-2 flex gap-1.5 sm:gap-2">
                 <button

@@ -1,9 +1,20 @@
 import React from 'react';
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import { Shirt, Upload, Sparkles, ShoppingBag, ArrowLeft } from 'lucide-react';
 
 // Force dynamic rendering to avoid Clerk initialization issues during build
 export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = {
+  title: 'How It Works | IGetDressed.Online',
+  description: 'See how to upload photos, try on outfits, and shop recommendations.',
+  openGraph: {
+    title: 'How It Works | IGetDressed.Online',
+    description: 'Step-by-step guide to using AI virtual try-on and shopping features.',
+    url: 'https://igetdressed.online/how-it-works',
+  },
+};
 
 export default function HowItWorks() {
   return (
