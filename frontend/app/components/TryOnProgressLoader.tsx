@@ -291,10 +291,16 @@ export function TryOnProgressLoader({ isActive, status, failureMessage, onFinish
     <div
       className={`
         absolute inset-0 z-10 flex flex-col items-center justify-center 
-        bg-white/92 backdrop-blur-sm transition-opacity
+        bg-white/92 backdrop-blur-sm
         ${isExiting ? 'opacity-0' : 'opacity-100'}
       `}
-      style={{ transitionDuration: `${EXIT_FADE_MS}ms` }}
+      style={{
+        transitionProperty: 'opacity, transform',
+        transitionDuration: `${EXIT_FADE_MS}ms`,
+        transitionTimingFunction: 'ease-in-out',
+        transform: isExiting ? 'translateY(10px) scale(0.985)' : 'translateY(0) scale(1)',
+        pointerEvents: isExiting ? 'none' : 'auto',
+      }}
       aria-live="polite"
       aria-busy={isActive && !isExiting}
       aria-label={`Processing stage ${stage.id} of 5: ${stage.label}`}
