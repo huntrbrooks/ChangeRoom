@@ -28,7 +28,6 @@ export const metadata: Metadata = {
   description:
     "Try on clothes virtually and discover similar products to shop. Upload your photo and wardrobe items to see how they look on you.",
   manifest: "/manifest.webmanifest",
-  themeColor: "#000000",
   icons: {
     icon: [
       { url: "/pwa/favicon-16x16.png", sizes: "16x16", type: "image/png" },

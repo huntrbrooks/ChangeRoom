@@ -8,11 +8,23 @@ import {
 } from "@/lib/db-access";
 import { ensureAbsoluteUrl } from "@/lib/url";
 
-const normalizeItems = (items: Array<any>) =>
-  items.map((item) => ({
-    ...item,
-    public_url: ensureAbsoluteUrl(item.public_url) || item.public_url,
-  }));
+type SavedClothingItem = {
+  public_url: string | null;
+  [key: string]: unknown;
+};
+
+const normalizeItems = (items: Array<unknown>) =>
+  items.map((item) => {
+    const record = (item && typeof item === "object" ? item : {}) as SavedClothingItem;
+    const normalizedPublicUrl =
+      ensureAbsoluteUrl(record.public_url ?? null) ??
+      (record.public_url ?? null);
+
+    return {
+      ...record,
+      public_url: normalizedPublicUrl,
+    };
+  });
 
 export async function GET(req: NextRequest) {
   const { userId } = await auth();

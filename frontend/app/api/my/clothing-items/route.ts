@@ -94,19 +94,21 @@ export async function POST(req: NextRequest) {
     }
 
     const normalized: ClothingItemInput[] = items
-      .map((item: any) => {
+      .map((item: unknown) => {
         if (!item || typeof item !== "object") {
           return null;
         }
 
+        const record = item as Record<string, unknown>;
+
         const storageKey =
-          typeof item.storageKey === "string" ? item.storageKey.trim() : "";
+          typeof record.storageKey === "string" ? record.storageKey.trim() : "";
         const publicUrl =
-          typeof item.publicUrl === "string" ? item.publicUrl.trim() : "";
+          typeof record.publicUrl === "string" ? record.publicUrl.trim() : "";
         const category =
-          typeof item.category === "string" ? item.category : "unknown";
+          typeof record.category === "string" ? record.category : "unknown";
         const description =
-          typeof item.description === "string" ? item.description : "";
+          typeof record.description === "string" ? record.description : "";
 
         if (!storageKey || !publicUrl) {
           return null;
@@ -120,21 +122,21 @@ export async function POST(req: NextRequest) {
           publicUrl: normalizedPublicUrl,
           category,
           subcategory:
-            typeof item.subcategory === "string" ? item.subcategory : null,
-          color: typeof item.color === "string" ? item.color : null,
-          style: typeof item.style === "string" ? item.style : null,
+            typeof record.subcategory === "string" ? record.subcategory : null,
+          color: typeof record.color === "string" ? record.color : null,
+          style: typeof record.style === "string" ? record.style : null,
           description,
-          tags: Array.isArray(item.tags)
-            ? item.tags.filter(
+          tags: Array.isArray(record.tags)
+            ? record.tags.filter(
                 (tag: unknown): tag is string => typeof tag === "string"
               )
             : [],
           originalFilename:
-            typeof item.originalFilename === "string"
-              ? item.originalFilename
+            typeof record.originalFilename === "string"
+              ? record.originalFilename
               : null,
           mimeType:
-            typeof item.mimeType === "string" ? item.mimeType : null,
+            typeof record.mimeType === "string" ? record.mimeType : null,
         };
       })
       .filter(

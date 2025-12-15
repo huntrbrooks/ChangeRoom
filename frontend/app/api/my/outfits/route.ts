@@ -99,16 +99,19 @@ export async function POST(req: NextRequest) {
     }
 
     // Validate clothing items structure
-    const validClothingItems: ClothingItemMetadata[] = clothingItems.map((item: any) => ({
-      filename: item.filename || '',
-      category: item.category || 'unknown',
-      itemType: item.itemType || '',
-      color: item.color || '',
-      style: item.style || '',
-      description: item.description || '',
-      tags: Array.isArray(item.tags) ? item.tags : [],
-      fileUrl: item.fileUrl || null,
-    }));
+    const validClothingItems: ClothingItemMetadata[] = clothingItems.map((item: unknown) => {
+      const record = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+      return {
+        filename: typeof record.filename === 'string' ? record.filename : '',
+        category: typeof record.category === 'string' ? record.category : 'unknown',
+        itemType: typeof record.itemType === 'string' ? record.itemType : '',
+        color: typeof record.color === 'string' ? record.color : '',
+        style: typeof record.style === 'string' ? record.style : '',
+        description: typeof record.description === 'string' ? record.description : '',
+        tags: Array.isArray(record.tags) ? record.tags : [],
+        fileUrl: typeof record.fileUrl === 'string' ? record.fileUrl : null,
+      };
+    });
 
     const outfit = await insertUserOutfit(userId, {
       imageUrl,

@@ -76,7 +76,21 @@ export async function POST(req: NextRequest) {
     const ctx = { country: "AU" as const, currency: "AUD" as const };
 
     // Search for offers for each item
-    const results: Record<string, any[]> = {};
+    type OfferResult = {
+      id: string;
+      source: string;
+      merchant: string;
+      title: string;
+      price: number;
+      currency: string;
+      productUrl: string;
+      affiliateUrl: string | null;
+      thumbnailUrl: string | null;
+      shippingPrice: number | null;
+      totalPrice: number | null;
+    };
+
+    const results: Record<string, OfferResult[]> = {};
 
     for (const item of itemsToSearch) {
       // Build search query from item metadata
@@ -124,10 +138,10 @@ export async function POST(req: NextRequest) {
         price: offer.price,
         currency: offer.currency,
         productUrl: offer.productUrl,
-        affiliateUrl: offer.affiliateUrl,
-        thumbnailUrl: offer.thumbnailUrl,
-        shippingPrice: offer.shippingPrice,
-        totalPrice: offer.totalPrice,
+        affiliateUrl: offer.affiliateUrl ?? null,
+        thumbnailUrl: offer.thumbnailUrl ?? null,
+        shippingPrice: offer.shippingPrice ?? null,
+        totalPrice: offer.totalPrice ?? null,
       }));
     }
 

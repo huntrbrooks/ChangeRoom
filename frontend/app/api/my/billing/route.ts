@@ -22,7 +22,7 @@ export async function GET(_req: NextRequest) {
       trialUsed: billing.trial_used ?? false, // Default to false if null/undefined
     });
   } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+    const _errorMessage = err instanceof Error ? err.message : 'Unknown error';
     console.error("get billing error:", err);
     
     // Log more details for debugging
