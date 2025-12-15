@@ -37,8 +37,8 @@ function PricingPageContent() {
           <div className="flex-1 flex justify-center">
             <div className="flex flex-col items-center">
               <Image
-                src="/Logo.png"
-                alt="IGetDressed.Online"
+                src="/main logo Black.png"
+                alt="IGetDressed.Online logo"
                 width={240}
                 height={48}
                 priority
