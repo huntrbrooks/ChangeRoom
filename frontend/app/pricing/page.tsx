@@ -1,5 +1,4 @@
 'use client';
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-namespace */
 
 import Link from 'next/link';
 import nextDynamic from 'next/dynamic';

@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import Image from 'next/image'
 
 type TryOnProgressLoaderProps = {
   /** Whether generation is currently running */
@@ -239,12 +240,13 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished }: TryOnP
               style={{ animationDuration: '2200ms' }}
             />
             <div className="absolute inset-1 rounded-full border-4 border-transparent border-t-black/80 animate-spin" style={{ animationDuration: '1400ms' }} />
-            <img
+            <Image
               src={stage.icon}
               alt={stage.label}
+              width={56}
+              height={56}
               className="w-12 h-12 sm:w-14 sm:h-14 object-contain relative z-10"
-              loading="eager"
-              decoding="async"
+              priority
             />
           </div>
         </div>

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo } from 'react';
+import Image from 'next/image';
 import { CheckCircle2, ImageIcon } from 'lucide-react';
 import type { ShopSaveClothingItem } from './ShopSaveModal';
 import { ensureAbsoluteUrl } from '@/lib/url';
@@ -120,10 +121,12 @@ export const ShopSaveSelector: React.FC<ShopSaveSelectorProps> = ({
                 >
                   <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-xl border border-black/10 bg-white">
                     {imageUrl ? (
-                      <img
+                      <Image
                         src={imageUrl}
                         alt={item.description || item.subcategory || 'Wardrobe item'}
-                        className="h-full w-full object-cover"
+                        fill
+                        sizes="80px"
+                        className="object-cover"
                         loading="lazy"
                       />
                     ) : (

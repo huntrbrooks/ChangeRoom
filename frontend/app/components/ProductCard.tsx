@@ -1,4 +1,5 @@
 import React from 'react';
+import Image from 'next/image';
 import { ShoppingCart } from 'lucide-react';
 
 interface Product {
@@ -18,10 +19,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
     <div className="border border-black/10 rounded-none overflow-hidden hover:border-black/30 transition-all bg-white">
       <div className="aspect-square relative overflow-hidden bg-gray-100">
         {product.thumbnail && (
-          <img 
-            src={product.thumbnail} 
+          <Image
+            src={product.thumbnail}
             alt={product.title}
-            className="object-cover w-full h-full"
+            fill
+            sizes="(min-width: 1024px) 240px, 180px"
+            className="object-cover"
+            priority={false}
           />
         )}
       </div>
