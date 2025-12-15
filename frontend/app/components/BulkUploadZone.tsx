@@ -12,6 +12,7 @@ interface FileWithMetadata extends File {
   detailed_description?: string;
   category?: string;
   item_type?: string;
+  brand?: string;
   file_url?: string;
   saved_filename?: string;
   storage_path?: string;
@@ -32,6 +33,7 @@ export interface AnalyzedItem {
     item_type?: string;
     color?: string;
     style?: string;
+    brand?: string;
     tags?: string[];
   };
   error?: string;
@@ -216,6 +218,12 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
           (metadata && 'original_filename' in metadata ? String(metadata.original_filename) : undefined) ||
           filesToAnalyze[idx]?.name || 
           `item_${startIndex + idx}`;
+        const brand =
+          item.analysis?.brand ||
+          item.brand ||
+          (typeof (metadata as { brand?: unknown }).brand === 'string'
+            ? (metadata as { brand?: string }).brand
+            : undefined);
         
         return {
         index: startIndex + idx,
@@ -226,6 +234,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
           item_type: item.analysis?.item_type || item.subcategory || '',
           color: item.analysis?.color || item.color,
           style: item.analysis?.style || item.style,
+          brand,
           description: item.analysis?.description || item.analysis?.short_description || item.description || '',
           detailed_description: item.analysis?.description || item.analysis?.short_description || item.description || '',
           short_description: item.analysis?.short_description || item.description || '',
@@ -297,6 +306,10 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         const item = allAnalyses[idx];
         const processedItem = processedItems[idx];
         const actualIdx = startIndex + idx;
+        const brandFromItem =
+          (processedItem?.metadata as { brand?: unknown })?.brand ??
+          processedItem?.brand ??
+          processedItem?.analysis?.brand;
         
         if (item?.file_url && processedItem) {
           // File was saved on server - fetch it and create File object with metadata
@@ -316,6 +329,9 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             fileWithMeta.detailed_description = processedItem.description || '';
             fileWithMeta.category = processedItem.category || 'unknown';
             fileWithMeta.item_type = processedItem.subcategory || '';
+            if (brandFromItem && typeof brandFromItem === 'string') {
+              fileWithMeta.brand = brandFromItem;
+            }
             fileWithMeta.file_url = fileUrl; // Store URL for try-on API
             fileWithMeta.saved_filename = savedFilename;
             fileWithMeta.storage_path = processedItem.storage_path;
@@ -335,6 +351,9 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             fileWithMeta.detailed_description = processedItem?.description || '';
             fileWithMeta.category = processedItem?.category || 'unknown';
             fileWithMeta.item_type = processedItem?.subcategory || '';
+            if (brandFromItem && typeof brandFromItem === 'string') {
+              fileWithMeta.brand = brandFromItem;
+            }
             // Add wearing style if set
             const wearingStyle = localWearingStyles.get(actualIdx);
             if (wearingStyle) {
@@ -351,6 +370,9 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             fileWithMeta.detailed_description = processedItem.description || '';
             fileWithMeta.category = processedItem.category || 'unknown';
             fileWithMeta.item_type = processedItem.subcategory || '';
+            if (brandFromItem && typeof brandFromItem === 'string') {
+              fileWithMeta.brand = brandFromItem;
+            }
           }
           // Add wearing style if set
           const wearingStyle = localWearingStyles.get(actualIdx);

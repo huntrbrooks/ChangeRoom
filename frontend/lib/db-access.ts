@@ -34,6 +34,7 @@ export interface ClothingItem {
   subcategory: string | null;
   color: string | null;
   style: string | null;
+  brand: string | null;
   description: string;
   tags: string[];
   original_filename: string | null;
@@ -338,6 +339,7 @@ export async function insertClothingItems(
     subcategory?: string | null;
     color?: string | null;
     style?: string | null;
+    brand?: string | null;
     description: string;
     tags?: string[];
     originalFilename?: string | null;
@@ -361,6 +363,7 @@ export async function insertClothingItems(
           subcategory,
           color,
           style,
+          brand,
           description,
           tags,
           original_filename,
@@ -377,6 +380,7 @@ export async function insertClothingItems(
           ${item.subcategory || null},
           ${item.color || null},
           ${item.style || null},
+          ${item.brand || null},
           ${item.description},
           ${JSON.stringify(item.tags || [])}::jsonb,
           ${item.originalFilename || null},
@@ -991,6 +995,7 @@ async function createClothingItemsTable() {
       subcategory TEXT,
       color TEXT,
       style TEXT,
+      brand TEXT,
       description TEXT NOT NULL,
       tags JSONB NOT NULL DEFAULT '[]'::jsonb,
       original_filename TEXT,
@@ -1005,6 +1010,7 @@ async function createClothingItemsTable() {
   await sql`CREATE INDEX IF NOT EXISTS clothing_items_category_idx ON clothing_items (category)`;
   await sql`CREATE INDEX IF NOT EXISTS clothing_items_tags_gin ON clothing_items USING GIN (tags)`;
   await sql`CREATE INDEX IF NOT EXISTS clothing_items_created_at_idx ON clothing_items (created_at DESC)`;
+  await sql`ALTER TABLE clothing_items ADD COLUMN IF NOT EXISTS brand TEXT`;
 }
 
 async function ensureClothingItemsTable(forceRefresh = false): Promise<void> {

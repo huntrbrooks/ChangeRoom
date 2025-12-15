@@ -104,10 +104,16 @@ export function buildSearchQueryFromItem(item: {
   subcategory?: string | null;
   color?: string | null;
   style?: string | null;
+  brand?: string | null;
   description?: string | null;
   tags?: string[] | null;
 }): string {
   const parts: string[] = [];
+
+  // Brand first if we have a confident guess
+  if (item.brand && item.brand.toLowerCase() !== "unknown" && item.brand.toLowerCase() !== "unbranded") {
+    parts.push(item.brand);
+  }
 
   // Add category/subcategory
   if (item.subcategory) {

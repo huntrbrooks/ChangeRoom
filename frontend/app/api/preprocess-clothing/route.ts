@@ -56,6 +56,7 @@ For each image:
   - subcategory: more specific style if possible.
   - color: simple human color name, like "black", "off white", "navy blue".
   - style: optional high level style like "streetwear", "formal", "casual", "sport".
+  - brand: brand name if a logo/label is visible; otherwise "unknown" or "unbranded".
   - description: one concise sentence.
   - tags: 3 to 10 useful tags for search.
   - recommended_filename: short, kebab case, describing the item, with a .jpg extension, for example "black-oversized-graphic-tee-streetwear.jpg".
@@ -99,6 +100,7 @@ Return JSON only, matching the schema, one item per input image, with index matc
                     subcategory: { type: "string" },
                     color: { type: "string" },
                     style: { type: "string" },
+                    brand: { type: "string" },
                     description: { type: "string" },
                     tags: {
                       type: "array",
@@ -137,6 +139,7 @@ Return JSON only, matching the schema, one item per input image, with index matc
         subcategory?: string;
         color: string;
         style?: string;
+        brand?: string;
         description: string;
         tags?: string[];
         recommended_filename: string;
@@ -166,6 +169,7 @@ Return JSON only, matching the schema, one item per input image, with index matc
           subcategory: meta.subcategory || null,
           color: meta.color || null,
           style: meta.style || null,
+          brand: meta.brand || null,
           description: meta.description,
           tags: meta.tags || [],
           originalFilename: src.originalFilename || null,

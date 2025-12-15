@@ -19,6 +19,7 @@ export interface ShopSaveClothingItem {
   subcategory?: string | null;
   color?: string | null;
   style?: string | null;
+  brand?: string | null;
   description?: string | null;
   tags?: string[] | null;
   original_filename?: string | null;
@@ -245,6 +246,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
           subcategory: item.subcategory,
           color: item.color,
           style: item.style,
+          brand: item.brand,
           tags: item.tags || [],
         },
       });
@@ -334,6 +336,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
           subcategory: item.subcategory,
           color: item.color,
           style: item.style,
+          brand: item.brand,
           description: item.description,
           tags: item.tags,
         }));
@@ -352,6 +355,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
           subcategory: '',
           color: '',
           style: '',
+          brand: '',
           description: '',
           tags: [],
           original_filename: '',

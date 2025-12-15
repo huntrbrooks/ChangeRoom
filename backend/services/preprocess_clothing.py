@@ -180,6 +180,7 @@ Respond with JSON using exactly these keys:
   "item_type": "short plain english name e.g. 'brown leather boots'",
   "color": "main color or colors, e.g. 'dark brown'",
   "style": "short style summary, e.g. 'casual workwear'",
+  "brand": "brand name if visible, otherwise 'unknown' or 'unbranded'",
   "tags": ["tag1", "tag2", ...],
   "short_description": "one sentence description",
   "suggested_filename": "snake_case_filename_without_extension"
@@ -228,6 +229,8 @@ The body_region must strictly match the definitions above."""
         
         # Apply rule-based correction layer to fix obvious misclassifications
         data = normalize_clothing_classification(data)
+        # Normalize brand so downstream metadata always has a usable string
+        data["brand"] = (data.get("brand") or "unknown").strip() or "unknown"
         
         # Log what we got after normalization
         body_region = data.get("body_region", "").upper()
@@ -418,6 +421,7 @@ async def preprocess_clothing_batch(
                 "item_type": item_type,
                 "color": analysis.get("color", "unknown"),
                 "style": analysis.get("style", "casual"),
+                "brand": analysis.get("brand", "unknown"),
                 "short_description": short_description,
                 "description": short_description,  # Alias for compatibility
                 "tags": analysis.get("tags", []),
@@ -441,6 +445,7 @@ async def preprocess_clothing_batch(
                 "description": short_description,
                 "color": analysis.get("color", "unknown"),
                 "style": analysis.get("style", "casual"),
+                "brand": analysis.get("brand", "unknown"),
                 "tags": analysis.get("tags", []),
                 "recommended_filename": analysis.get("suggested_filename", ""),
                 # Full analysis object (for detailed metadata)
@@ -450,6 +455,7 @@ async def preprocess_clothing_batch(
                     "item_type": item_type,
                     "color": analysis.get("color", "unknown"),
                     "style": analysis.get("style", "casual"),
+                    "brand": analysis.get("brand", "unknown"),
                     "description": short_description,
                     "short_description": short_description,
                     "tags": analysis.get("tags", []),
@@ -486,6 +492,7 @@ async def preprocess_clothing_batch(
                     "body_region": inferred_body_region,
                     "category": inferred_body_region,
                     "item_type": "unknown",
+                    "brand": "unknown",
                     "description": f"Failed to analyze: {str(e)}",
                 }
             }

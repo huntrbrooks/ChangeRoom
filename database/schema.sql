@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS clothing_items (
   subcategory TEXT,                      -- graphic tee, cargo pants,...
   color TEXT,
   style TEXT,                            -- streetwear, formal, casual,...
+  brand TEXT,                            -- inferred brand name if visible
   description TEXT,                      -- 1 sentence human description
   tags JSONB DEFAULT '[]'::jsonb,        -- ["black","oversized","streetwear"]
   original_filename TEXT,

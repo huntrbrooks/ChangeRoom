@@ -17,6 +17,7 @@ interface AnalyzedItem {
     detailed_description: string;
     suggested_filename: string;
     metadata: Record<string, unknown>;
+    brand?: string;
   };
   error?: string;
 }
@@ -81,6 +82,10 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
           fileWithMeta.metadata = analysis.metadata;
           fileWithMeta.detailed_description = analysis.detailed_description;
           fileWithMeta.category = analysis.category;
+          if (analysis.metadata && typeof (analysis.metadata as { brand?: unknown }).brand === 'string') {
+            fileWithMeta.metadata.brand = (analysis.metadata as { brand?: string }).brand;
+            fileWithMeta.brand = (analysis.metadata as { brand?: string }).brand;
+          }
           
           processedFiles.push(newFile);
         } else {

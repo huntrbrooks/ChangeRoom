@@ -14,6 +14,7 @@ type ClothingItemInput = {
   subcategory: string | null;
   color: string | null;
   style: string | null;
+  brand: string | null;
   description: string;
   tags: string[];
   originalFilename: string | null;
@@ -107,6 +108,8 @@ export async function POST(req: NextRequest) {
           typeof record.publicUrl === "string" ? record.publicUrl.trim() : "";
         const category =
           typeof record.category === "string" ? record.category : "unknown";
+        const brand =
+          typeof record.brand === "string" ? record.brand.trim() : null;
         const description =
           typeof record.description === "string" ? record.description : "";
 
@@ -125,6 +128,7 @@ export async function POST(req: NextRequest) {
             typeof record.subcategory === "string" ? record.subcategory : null,
           color: typeof record.color === "string" ? record.color : null,
           style: typeof record.style === "string" ? record.style : null,
+          brand,
           description,
           tags: Array.isArray(record.tags)
             ? record.tags.filter(
