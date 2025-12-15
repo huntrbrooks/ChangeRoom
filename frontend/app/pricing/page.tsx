@@ -35,25 +35,30 @@ function PricingPageContent() {
             <span>Back to Home</span>
           </Link>
           <div className="flex-1 flex justify-center">
-            <h1 className="sr-only">Pricing & Plans</h1>
+            <div className="flex flex-col items-center">
+              <Image
+                src="/Logo.png"
+                alt="IGetDressed.Online"
+                width={240}
+                height={48}
+                priority
+                className="h-8 md:h-10 w-auto object-contain"
+              />
+              <span className="sr-only">Pricing & Plans</span>
+            </div>
           </div>
           <div className="w-20" aria-hidden />
         </div>
       </header>
 
       <div className="container mx-auto px-4 py-8 md:py-12 max-w-4xl">
-        <div className="text-center mb-8 space-y-4">
-          <div className="flex justify-center">
-            <Image
-              src="/main logo Black.png"
-              alt="IGetDressed.Online"
-              width={5065}
-              height={1042}
-              priority
-              className="h-12 md:h-14 w-auto object-contain"
-            />
-          </div>
-          <h2 className="text-3xl md:text-4xl font-bold text-black">Pricing &amp; Plans</h2>
+        <div className="text-center mb-8 space-y-3">
+          <h1 className="text-3xl md:text-4xl font-semibold text-[#8B5CF6] tracking-tight">
+            Pricing &amp; Plans
+          </h1>
+          <p className="text-base md:text-lg text-black/70">
+            Pick a subscription or credit pack and checkout securely via Stripe.
+          </p>
           <div className="pt-2 flex justify-center">
             <Link
               href="https://billing.stripe.com/p/login/6oU14n1e8drn28E9D9bMQ00"

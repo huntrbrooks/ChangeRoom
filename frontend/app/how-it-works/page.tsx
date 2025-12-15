@@ -1,5 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import type { Metadata } from 'next';
 import { Shirt, Upload, Sparkles, ShoppingBag, ArrowLeft } from 'lucide-react';
 
@@ -8,10 +9,10 @@ export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'How It Works | IGetDressed.Online',
-  description: 'See how to upload photos, try on outfits, and shop recommendations.',
+  description: 'See how to upload your photo, try on up to five items, and shop similar looks.',
   openGraph: {
     title: 'How It Works | IGetDressed.Online',
-    description: 'Step-by-step guide to using AI virtual try-on and shopping features.',
+    description: 'Step-by-step guide to AI try-on, wardrobe uploads, and shop-the-look results.',
     url: 'https://igetdressed.online/how-it-works',
   },
 };
@@ -23,9 +24,13 @@ export default function HowItWorks() {
       <header className="border-b border-gray-100 sticky top-0 bg-[#FAF9F6]/95 backdrop-blur-md z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-            <div className="w-8 h-8 bg-black text-white flex items-center justify-center rounded-full">
-              <Shirt size={20} />
-            </div>
+            <Image
+              src="/main logo Black.png"
+              alt="IGetDressed.Online logo"
+              width={40}
+              height={40}
+              priority
+            />
             <h1 className="text-xl font-bold tracking-tight">IGetDressed.Online</h1>
           </Link>
           <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-gray-600">
@@ -46,7 +51,7 @@ export default function HowItWorks() {
 
         <h1 className="text-4xl font-bold mb-4">How It Works</h1>
         <p className="text-lg text-gray-600 mb-12">
-          Experience the future of online shopping with AI-powered virtual try-on technology.
+          Upload yourself once, add up to five wardrobe pieces, generate a realistic try-on, and shop similar looks without leaving the flow.
         </p>
 
         <div className="space-y-12">
@@ -60,16 +65,16 @@ export default function HowItWorks() {
             <div className="flex-1">
               <div className="flex items-center gap-3 mb-3">
                 <Upload className="text-blue-500" size={24} />
-                <h2 className="text-2xl font-bold">Upload Your Photo</h2>
+                <h2 className="text-2xl font-bold">Sign In & Upload Yourself</h2>
               </div>
               <p className="text-gray-600 mb-4">
-                Start by uploading a clear full-body photo of yourself. For best results:
+                Create or sign in to your account, then upload a clear full-body photo. The first photo you upload becomes your main reference.
               </p>
               <ul className="list-disc list-inside space-y-2 text-gray-600 ml-4">
-                <li>Use a full-body photo</li>
-                <li>Ensure good lighting</li>
-                <li>Plain background works best</li>
-                <li>Stand straight with arms at your sides</li>
+                <li>Use a full-body photo with your face visible</li>
+                <li>Bright, even lighting works best</li>
+                <li>Plain backgrounds avoid artifacts</li>
+                <li>Upload multiple references if you want options</li>
               </ul>
             </div>
           </div>
@@ -84,19 +89,16 @@ export default function HowItWorks() {
             <div className="flex-1">
               <div className="flex items-center gap-3 mb-3">
                 <Shirt className="text-green-500" size={24} />
-                <h2 className="text-2xl font-bold">Choose Your Wardrobe</h2>
+                <h2 className="text-2xl font-bold">Upload Wardrobe Items</h2>
               </div>
               <p className="text-gray-600 mb-4">
-                Upload 1-5 clothing items from your wardrobe. Our AI will automatically:
+                Add up to five items per look. Drag to reorder, replace any item, and use bulk upload for faster processing.
               </p>
               <ul className="list-disc list-inside space-y-2 text-gray-600 ml-4">
-                <li>Analyze and categorize each item</li>
-                <li>Detect style, color, and fit</li>
-                <li>Prepare items for virtual try-on</li>
+                <li>AI auto-tags category, color, style, brand, and fit hints</li>
+                <li>First clothing item is treated as the primary piece</li>
+                <li>Wearing style options appear when available (e.g., tuck vs. untuck)</li>
               </ul>
-              <p className="text-sm text-blue-600 mt-4 font-medium">
-                💡 Try on up to 5 items at once for a complete outfit!
-              </p>
             </div>
           </div>
 
@@ -113,16 +115,13 @@ export default function HowItWorks() {
                 <h2 className="text-2xl font-bold">Generate Your Look</h2>
               </div>
               <p className="text-gray-600 mb-4">
-                Click &quot;Try On &amp; Shop Look&quot; and our AI will:
+                Hit the try-on button to start the pipeline. We wake the service, apply wearing rules, and render a photorealistic result—usually in a couple of minutes.
               </p>
               <ul className="list-disc list-inside space-y-2 text-gray-600 ml-4">
-                <li>Create a realistic virtual try-on image</li>
-                <li>Match the clothing to your body shape and pose</li>
-                <li>Generate a natural-looking result</li>
+                <li>AI matches each item to your body shape and pose</li>
+                <li>Progress loader keeps you updated during generation</li>
+                <li>Errors are surfaced early so you can retry fast</li>
               </ul>
-              <p className="text-sm text-gray-500 mt-4">
-                This process typically takes 1-3 minutes. You can cancel at any time.
-              </p>
             </div>
           </div>
 
@@ -136,15 +135,15 @@ export default function HowItWorks() {
             <div className="flex-1">
               <div className="flex items-center gap-3 mb-3">
                 <ShoppingBag className="text-purple-500" size={24} />
-                <h2 className="text-2xl font-bold">Shop Similar Items</h2>
+                <h2 className="text-2xl font-bold">Shop & Save the Look</h2>
               </div>
               <p className="text-gray-600 mb-4">
-                After seeing your try-on result, browse similar products:
+                After your try-on renders, browse similar products and keep what you like.
               </p>
               <ul className="list-disc list-inside space-y-2 text-gray-600 ml-4">
-                <li>Find similar styles from various retailers</li>
-                <li>Compare prices and options</li>
-                <li>Purchase directly from trusted sellers</li>
+                <li>Shop comparable items from multiple retailers</li>
+                <li>Download or share the try-on image instantly</li>
+                <li>Save the outfit to My Outfits and re-run it later without re-uploading</li>
               </ul>
             </div>
           </div>
@@ -154,10 +153,10 @@ export default function HowItWorks() {
         <div className="mt-16 p-6 bg-blue-50 rounded-xl border border-blue-200">
           <h3 className="text-xl font-bold mb-4">Pro Tips</h3>
           <ul className="space-y-2 text-gray-700">
-            <li>• <strong>Download your results:</strong> Save your favorite try-on images to compare different looks</li>
-            <li>• <strong>Share with friends:</strong> Get feedback before making a purchase</li>
-            <li>• <strong>Try multiple items:</strong> Upload different clothing pieces to find your perfect style</li>
-            <li>• <strong>Be patient:</strong> High-quality results take a moment to generate</li>
+            <li>• <strong>Main references:</strong> Keep your best self photo first; drag to reorder anytime.</li>
+            <li>• <strong>Wardrobe slots:</strong> Use up to 5 items per look—great for full outfits.</li>
+            <li>• <strong>Reuse outfits:</strong> Saved looks stay linked to your wardrobe so you can rerun them quickly.</li>
+            <li>• <strong>Fast retries:</strong> If something looks off, replace a single item and try again.</li>
           </ul>
         </div>
 
