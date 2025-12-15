@@ -5,23 +5,38 @@ import { TryOnProgressLoader } from './TryOnProgressLoader';
 interface VirtualMirrorProps {
   imageUrl: string | null;
   isLoading: boolean;
+  errorMessage?: string | null;
   onStageChange?: (stageId: number) => void;
 }
 
-export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoading, onStageChange }) => {
+export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoading, errorMessage, onStageChange }) => {
   const [showLoader, setShowLoader] = useState(false);
+  const [hasRun, setHasRun] = useState(false);
+
+  const hasResult = Boolean(imageUrl);
+  const hasError = Boolean(errorMessage);
+  const status: 'pending' | 'success' | 'error' =
+    isLoading ? 'pending' : hasResult ? 'success' : hasError ? 'error' : 'pending';
 
   useEffect(() => {
     if (isLoading) {
+      setHasRun(true);
       setShowLoader(true);
     }
   }, [isLoading]);
 
+  // Keep loader visible through resolution (success or error) to allow full fade-out
   useEffect(() => {
-    if (!isLoading && !imageUrl) {
+    if (!isLoading && hasRun && status !== 'pending') {
+      setShowLoader(true);
+    }
+  }, [hasRun, isLoading, status]);
+
+  useEffect(() => {
+    if (!isLoading && !hasResult && !hasError) {
       setShowLoader(false);
     }
-  }, [isLoading, imageUrl]);
+  }, [isLoading, hasResult, hasError]);
 
   const handleLoaderFinished = () => {
     setShowLoader(false);
@@ -31,8 +46,9 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({ imageUrl, isLoadin
     <div className="w-full aspect-[3/4] bg-white rounded-none overflow-hidden relative border-2 border-black/20">
       {showLoader && (
         <TryOnProgressLoader
-          isActive={isLoading}
-          isComplete={!isLoading && Boolean(imageUrl)}
+          isActive={showLoader}
+          status={status}
+          failureMessage={hasError ? errorMessage || undefined : undefined}
           onStageChange={onStageChange}
           onFinished={handleLoaderFinished}
         />

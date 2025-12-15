@@ -437,6 +437,11 @@ async def try_on(
         # #endregion
         logger.error(f"Error in try-on endpoint: {error_type}: {error_detail}", exc_info=True)
         # Provide more helpful error messages
+        if "IMAGE_SAFETY" in error_detail or "safety filter" in error_detail.lower():
+            raise HTTPException(
+                status_code=422,
+                detail="The image request was blocked by safety filters. Please choose less revealing clothing or use a more neutral description."
+            )
         if "GEMINI_API_KEY" in error_detail or "GOOGLE_API_KEY" in error_detail or "environment variable is required" in error_detail:
             error_detail = "Gemini API key not configured. Set GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable in Render dashboard."
         elif "ValueError" in error_type and "required" in error_detail.lower():

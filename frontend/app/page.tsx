@@ -638,6 +638,15 @@ function HomeContent() {
     let preparedTryOnFiles: File[] = [];
 
     try {
+      const ingestUrl = process.env.NEXT_PUBLIC_INGEST_URL;
+      const logIngest = (payload: Record<string, unknown>) => {
+        if (!ingestUrl) return;
+        fetch(ingestUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).catch(() => {});
+      };
       // Get API URL from environment or default to localhost
       const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       console.log("Using API URL:", API_URL);
@@ -829,7 +838,7 @@ function HomeContent() {
 
         console.log("Starting try-on generation...");
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/8b25fdd5-4589-4281-bfc2-e9bb432457fe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:640',message:'Frontend try-on request starting',data:{apiUrl:API_URL,userImagesCount:userImages.length,clothingItemsCount:preparedTryOnFiles.length,metadataKeys:Object.keys(metadata)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+        logIngest({location:'page.tsx:640',message:'Frontend try-on request starting',data:{apiUrl:API_URL,userImagesCount:userImages.length,clothingItemsCount:preparedTryOnFiles.length,metadataKeys:Object.keys(metadata)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'});
         // #endregion
         tryOnRes = await withRetry(
           () =>
@@ -842,7 +851,7 @@ function HomeContent() {
           2000
         );
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/8b25fdd5-4589-4281-bfc2-e9bb432457fe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:646',message:'Frontend try-on request succeeded',data:{status:tryOnRes?.status,hasImageUrl:!!tryOnRes?.data?.image_url},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+        logIngest({location:'page.tsx:646',message:'Frontend try-on request succeeded',data:{status:tryOnRes?.status,hasImageUrl:!!tryOnRes?.data?.image_url},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'});
         // #endregion
 
         if (tryOnRes.data.image_url) {
@@ -876,7 +885,7 @@ function HomeContent() {
       } catch (tryOnError: unknown) {
         const error = tryOnError as { name?: string; code?: string; response?: { status?: number; data?: { error?: string; detail?: string } }; message?: string };
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/8b25fdd5-4589-4281-bfc2-e9bb432457fe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:683',message:'Frontend try-on request failed',data:{errorName:error?.name,errorCode:error?.code,status:error?.response?.status,errorDetail:error?.response?.data?.detail,errorData:error?.response?.data,errorMessage:error?.message,fullError:JSON.stringify(error?.response?.data||{})},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+        logIngest({location:'page.tsx:683',message:'Frontend try-on request failed',data:{errorName:error?.name,errorCode:error?.code,status:error?.response?.status,errorDetail:error?.response?.data?.detail,errorData:error?.response?.data,errorMessage:error?.message,fullError:JSON.stringify(error?.response?.data||{})},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'});
         // #endregion
         if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
           setError('Operation cancelled');
@@ -1352,6 +1361,7 @@ function HomeContent() {
               <VirtualMirror
                 imageUrl={generatedImage}
                 isLoading={isGenerating}
+                errorMessage={error}
                 onStageChange={handleLoaderStageChange}
               />
               {generatedImage && !isGenerating && user && (

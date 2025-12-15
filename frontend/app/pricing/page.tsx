@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import Link from 'next/link';
 import nextDynamic from 'next/dynamic';
 import type { Metadata } from 'next';
@@ -33,20 +34,27 @@ function PricingPageContent() {
             <ArrowLeft size={20} />
             <span>Back to Home</span>
           </Link>
-          <h1 className="text-xl font-bold text-[#8B5CF6]">Pricing & Plans</h1>
-          <div className="w-20"></div>
+          <div className="flex-1 flex justify-center">
+            <h1 className="sr-only">Pricing & Plans</h1>
+          </div>
+          <div className="w-20" aria-hidden />
         </div>
       </header>
 
       <div className="container mx-auto px-4 py-8 md:py-12 max-w-4xl">
-        <div className="text-center mb-8">
-          <h2 className="text-3xl md:text-4xl font-bold text-[#8B5CF6] mb-3">
-            Choose Your Plan
-          </h2>
-          <p className="text-lg text-[#8B5CF6]/70 max-w-2xl mx-auto">
-            Pick a subscription or credit pack and checkout securely via Stripe.
-          </p>
-          <div className="mt-4 flex justify-center">
+        <div className="text-center mb-8 space-y-4">
+          <div className="flex justify-center">
+            <Image
+              src="/main logo Black.png"
+              alt="IGetDressed.Online"
+              width={5065}
+              height={1042}
+              priority
+              className="h-12 md:h-14 w-auto object-contain"
+            />
+          </div>
+          <h2 className="text-3xl md:text-4xl font-bold text-black">Pricing &amp; Plans</h2>
+          <div className="pt-2 flex justify-center">
             <Link
               href="https://billing.stripe.com/p/login/6oU14n1e8drn28E9D9bMQ00"
               target="_blank"

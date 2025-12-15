@@ -6,8 +6,10 @@ import Image from 'next/image'
 type TryOnProgressLoaderProps = {
   /** Whether generation is currently running */
   isActive: boolean
-  /** Set true when backend generation finished (image URL ready) */
-  isComplete: boolean
+  /** Status of the generation lifecycle */
+  status: 'pending' | 'success' | 'error'
+  /** Optional failure message to surface on error */
+  failureMessage?: string
   /** Called after the fade-out finishes */
   onFinished?: () => void
   /** Stage change callback (1-5) */
@@ -63,20 +65,20 @@ const STAGES: Stage[] = [
 const MIN_STAGE_MS = 5000
 const EXIT_FADE_MS = 2400
 
-export function TryOnProgressLoader({ isActive, isComplete, onFinished, onStageChange }: TryOnProgressLoaderProps) {
+export function TryOnProgressLoader({ isActive, status, failureMessage, onFinished, onStageChange }: TryOnProgressLoaderProps) {
   const [progress, setProgress] = useState(0)
   const [stageIndex, setStageIndex] = useState(0)
   const [isExiting, setIsExiting] = useState(false)
   const progressRef = useRef(0)
-  const isCompleteRef = useRef(isComplete)
+  const statusRef = useRef(status)
   const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const stage4GateRef = useRef(false)
 
-  // Track latest completion flag for timers without retriggering effects
+  // Track latest status for timers without retriggering effects
   useEffect(() => {
-    isCompleteRef.current = isComplete
-  }, [isComplete])
+    statusRef.current = status
+  }, [status])
 
   // Reset when (re)activated
   useEffect(() => {
@@ -155,12 +157,12 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished, onStageC
       }
     }
 
-    // Stage 4: enforce 5s minimum, then wait for image to be ready before stage 5
+    // Stage 4: enforce 5s minimum, then wait for resolution (success or error) before stage 5
     if (stageIndex === 3) {
       stage4GateRef.current = false
       stageTimerRef.current = setTimeout(() => {
         stage4GateRef.current = true
-        if (isCompleteRef.current) {
+        if (statusRef.current !== 'pending') {
           setStageIndex(STAGES.length - 1)
         }
       }, MIN_STAGE_MS)
@@ -174,13 +176,21 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished, onStageC
     }
   }, [isActive, isExiting, stageIndex])
 
-  // If image finishes after stage 4 min time, advance to stage 5
+  // If generation resolves after stage 4 min time, advance to stage 5
   useEffect(() => {
     if (!isActive || isExiting) return
-    if (stageIndex === 3 && stage4GateRef.current && isComplete) {
+    if (stageIndex === 3 && stage4GateRef.current && status !== 'pending') {
       setStageIndex(STAGES.length - 1)
     }
-  }, [isActive, isExiting, isComplete, stageIndex])
+  }, [isActive, isExiting, status, stageIndex])
+
+  // If generation resolves early (success or error), jump to stage 5 to avoid getting stuck
+  useEffect(() => {
+    if (!isActive || isExiting) return
+    if (status !== 'pending' && stageIndex < STAGES.length - 1) {
+      setStageIndex(STAGES.length - 1)
+    }
+  }, [status, isActive, isExiting, stageIndex])
 
   // Enter stage 5, snap to 100%, then fade out over EXIT_FADE_MS before invoking onFinished
   useEffect(() => {
@@ -222,6 +232,11 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished, onStageC
 
   const stage = useMemo(() => STAGES[Math.min(stageIndex, STAGES.length - 1)], [stageIndex])
   const percentInt = Math.round(progress)
+  const isError = status === 'error'
+  const displayLabel = isError ? 'Generation failed' : stage.label
+  const displayDescription = isError
+    ? failureMessage || 'We could not generate this look. Please try again.'
+    : stage.description
 
   useEffect(() => {
     onStageChange?.(stage.id)
@@ -260,8 +275,8 @@ export function TryOnProgressLoader({ isActive, isComplete, onFinished, onStageC
         </div>
 
         <div className="space-y-1">
-          <p className="text-sm sm:text-base font-bold uppercase tracking-wide text-black">{stage.label}</p>
-          <p className="text-xs sm:text-sm text-black/70">{stage.description}</p>
+          <p className="text-sm sm:text-base font-bold uppercase tracking-wide text-black">{displayLabel}</p>
+          <p className={`text-xs sm:text-sm ${isError ? 'text-red-600' : 'text-black/70'}`}>{displayDescription}</p>
         </div>
 
         <div className="w-full">

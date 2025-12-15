@@ -175,6 +175,16 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                 'lingerie top': 'delicate top',
                 'intimate': 'delicate',
                 'intimates': 'delicates',
+                'bodysuit': 'one-piece outfit',
+                'one-piece': 'one-piece outfit',
+                'one piece': 'one-piece outfit',
+                'unitard': 'one-piece outfit',
+                'leotard': 'one-piece outfit',
+                'catsuit': 'one-piece outfit',
+                'swimsuit': 'swim outfit',
+                'bathing suit': 'swim outfit',
+                'monokini': 'swim outfit',
+                'trikini': 'swim outfit',
                 'bra': 'supportive top',
                 'lacy': 'delicate fabric',
                 'sheer': 'semi-transparent',
@@ -506,7 +516,7 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
         except Exception as e:
             logger.warning(f"Could not verify model availability: {e}")
         
-        max_attempts = 3
+        max_attempts = 4
         last_failure_details = {}
 
         def summarize_candidate(candidate_obj):
@@ -530,6 +540,11 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                         "\n\nRETRY 3 (STRICT SAFETY): If deemed inappropriate for any reason, add or modify the garment as needed "
                         "to make it acceptable: apply opaque lining, increase coverage, soften transparency, and adjust camera/framing to a neutral studio view. "
                         "Prioritize modesty and compliance over fidelity while keeping the outfit coherent."
+                    )
+                elif attempt == 4:
+                    retry_suffix = (
+                        "\n\nRETRY 4 (MAX SAFETY): Assume the outfit is highly sensitive. Convert any revealing areas into a modest layered look, "
+                        "default to a neutral studio portrait, avoid close-ups, and ensure all fabric is opaque. If unsure, err on the side of coverage."
                     )
                 text_prompt = base_text_prompt + retry_suffix
                 parts = build_parts(text_prompt)
@@ -671,7 +686,10 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                     
                     if attempt == max_attempts:
                         readable_text = text_parts[0][:300] if text_parts else ""
-                        raise ValueError(f"No image generated after {max_attempts} attempts. Finish reason: {finish_reason or 'UNKNOWN'}. Model message: {readable_text}")
+                        safety_hint = ""
+                        if (finish_reason or "").upper() == "IMAGE_SAFETY":
+                            safety_hint = " The request was blocked by image safety filters. Please use a less revealing garment description or select a different item."
+                        raise ValueError(f"No image generated after {max_attempts} attempts. Finish reason: {finish_reason or 'UNKNOWN'}. Model message: {readable_text}.{safety_hint}")
                     # Otherwise retry with softer prompt
                     continue
 
