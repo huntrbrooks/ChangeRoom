@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
     let decodedUrl: string;
     try {
       decodedUrl = decodeURIComponent(targetUrl);
-    } catch (err) {
+    } catch {
       return NextResponse.json(
         { error: "Invalid url parameter" },
         { status: 400 }
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
     // Validate URL
     try {
       new URL(decodedUrl);
-    } catch (err) {
+    } catch {
       return NextResponse.json(
         { error: "Invalid URL format" },
         { status: 400 }

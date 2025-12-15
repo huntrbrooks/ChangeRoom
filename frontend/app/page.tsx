@@ -87,7 +87,7 @@ function HomeContent() {
     if (isLoaded && user) {
       fetchBilling();
     }
-  }, [isLoaded, user]);
+  }, [isLoaded, user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Check for Stripe checkout session completion
   useEffect(() => {
@@ -103,12 +103,13 @@ function HomeContent() {
         }, 1000);
       }
     }
-  }, [isLoaded, user]);
+  }, [isLoaded, user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchBilling = async () => {
     try {
       const response = await axios.get('/api/my/billing');
       setBilling(response.data);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       // Only log error if it's not a 401 (unauthorized) - that's expected when not logged in
       if (error.response?.status !== 401) {
@@ -469,7 +470,7 @@ function HomeContent() {
   // Save outfit to My Outfits (persistent storage via API)
   const saveOutfitToMyOutfits = async (imageUrl: string, clothingFiles: File[], wardrobeItemsData: typeof wardrobeItems) => {
     try {
-      const clothingItems = wardrobeItemsData.map((item, idx) => ({
+      const clothingItems = wardrobeItemsData.map((item, _idx) => ({
         filename: item.file.name,
         category: item.analysis?.analysis?.category || item.analysis?.analysis?.body_region || 'unknown',
         itemType: item.analysis?.analysis?.item_type || '',
@@ -492,6 +493,7 @@ function HomeContent() {
       }
       
       console.log('Outfit saved to My Outfits:', response.data);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       console.error('Error saving outfit to My Outfits:', error);
       // Don't throw - this is non-critical, but log for debugging

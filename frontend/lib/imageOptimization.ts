@@ -156,7 +156,7 @@ export const optimizeImageFile = async (
   };
 
   const originalLongestSide = Math.max(image.width, image.height);
-  let scale =
+  const scale =
     originalLongestSide > maxDimension
       ? maxDimension / originalLongestSide
       : 1;

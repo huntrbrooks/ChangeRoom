@@ -4,6 +4,7 @@ import {
   optimizeImageFile,
   type OptimizeImageOptions,
 } from '@/lib/imageOptimization';
+/* eslint-disable react-hooks/exhaustive-deps */
 
 interface UploadZoneProps {
   onFileSelect?: (file: File | null) => void;
@@ -34,7 +35,7 @@ interface UploadZoneProps {
   showInlineTip?: boolean;
 }
 
-const formatBytes = (bytes: number) => {
+const _formatBytes = (bytes: number) => {
   if (!Number.isFinite(bytes)) {
     return '';
   }

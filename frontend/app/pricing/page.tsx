@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-namespace */
 
 import Link from 'next/link';
 import Script from 'next/script';

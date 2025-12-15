@@ -13,7 +13,7 @@ import type { ShopProvider, Offer, ProviderContext } from "./types";
 export const amazonProvider: ShopProvider = {
   id: "amazon",
   
-  async fetchOffers(query: string, ctx: ProviderContext): Promise<Offer[]> {
+  async fetchOffers(_query: string, _ctx: ProviderContext): Promise<Offer[]> {
     const associateTag = process.env.AMAZON_ASSOCIATE_TAG_AU;
     if (!associateTag) {
       console.warn("AMAZON_ASSOCIATE_TAG_AU not set. Amazon provider will return empty results.");

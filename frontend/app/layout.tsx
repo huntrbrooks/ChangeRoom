@@ -67,7 +67,7 @@ export default function RootLayout({
 }>) {
   // During build, Clerk keys might not be available or invalid
   const rawKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-  const isBuildTime = process.env.NODE_ENV === 'production' && !process.env.VERCEL_ENV;
+  const _isBuildTime = process.env.NODE_ENV === 'production' && !process.env.VERCEL_ENV;
   
   // Clean and validate key - remove quotes, whitespace, and validate format
   // Handle cases where key might be wrapped in quotes or have trailing characters

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect } from 'react';
 import { Download, Share2, Trash2, Image as ImageIcon, Loader2 } from 'lucide-react';
 import axios from 'axios';

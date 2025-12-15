@@ -1,7 +1,7 @@
 const CACHE_NAME = 'change-room-pwa-v1';
 const OFFLINE_URL = '/';
 
-self.addEventListener('install', (event) => {
+self.addEventListener('install', (_event) => {
   self.skipWaiting();
 });
 

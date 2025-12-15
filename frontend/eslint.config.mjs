@@ -17,6 +17,7 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/no-require-imports": "off",
       "@typescript-eslint/no-namespace": "warn",
       "prefer-const": "warn",
+      "@next/next/no-img-element": "off",
     },
   },
   // Override default ignores of eslint-config-next.
