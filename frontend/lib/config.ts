@@ -60,25 +60,31 @@ export const clerkConfig = createLazyConfig(() => ({
   publishableKey: requireEnv("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"),
 }));
 
-// Stripe Configuration - lazy access (only accessed when actually used)
-// Note: Price IDs use NEXT_PUBLIC_ prefix for client-side access
+// Stripe Configuration
+// Separate server-only and client-safe configs to avoid exposing secrets
 export const stripeConfig = createLazyConfig(() => {
-  // For client-side, use NEXT_PUBLIC_ versions (safe to expose)
-  // For server-side, fallback to non-public versions if needed
-  const isClient = typeof window !== 'undefined';
-  
+  // Server-only: includes secret key and webhook secret
   return {
     secretKey: requireEnv("STRIPE_SECRET_KEY"),
     webhookSecret: requireEnv("STRIPE_WEBHOOK_SECRET"),
-    // Price IDs are safe to expose to client (they're public in Stripe)
-    starterPriceId: getEnv("NEXT_PUBLIC_STRIPE_STARTER_PRICE_ID") || (isClient ? "" : getEnv("STRIPE_STARTER_PRICE_ID", "")),
-    starterXmasPriceId: getEnv("NEXT_PUBLIC_STRIPE_STARTER_XMAS_PRICE_ID") || (isClient ? "" : getEnv("STRIPE_STARTER_XMAS_PRICE_ID", "")),
-    valuePriceId: getEnv("NEXT_PUBLIC_STRIPE_VALUE_PRICE_ID") || (isClient ? "" : getEnv("STRIPE_VALUE_PRICE_ID", "")),
-    proPriceId: getEnv("NEXT_PUBLIC_STRIPE_PRO_PRICE_ID") || (isClient ? "" : getEnv("STRIPE_PRO_PRICE_ID", "")),
-    creatorPriceId: getEnv("NEXT_PUBLIC_STRIPE_CREATOR_PRICE_ID") || (isClient ? "" : getEnv("STRIPE_CREATOR_PRICE_ID", "")),
-    powerPriceId: getEnv("NEXT_PUBLIC_STRIPE_POWER_PRICE_ID") || (isClient ? "" : getEnv("STRIPE_POWER_PRICE_ID", "")),
+    starterPriceId: getEnv("STRIPE_STARTER_PRICE_ID", ""),
+    starterXmasPriceId: getEnv("STRIPE_STARTER_XMAS_PRICE_ID", ""),
+    valuePriceId: getEnv("STRIPE_VALUE_PRICE_ID", ""),
+    proPriceId: getEnv("STRIPE_PRO_PRICE_ID", ""),
+    creatorPriceId: getEnv("STRIPE_CREATOR_PRICE_ID", ""),
+    powerPriceId: getEnv("STRIPE_POWER_PRICE_ID", ""),
   };
 });
+
+// Client-safe config: exposes only public price IDs (no secrets)
+export const stripePublicConfig = createLazyConfig(() => ({
+  starterPriceId: getEnv("NEXT_PUBLIC_STRIPE_STARTER_PRICE_ID") || getEnv("STRIPE_STARTER_PRICE_ID", ""),
+  starterXmasPriceId: getEnv("NEXT_PUBLIC_STRIPE_STARTER_XMAS_PRICE_ID") || getEnv("STRIPE_STARTER_XMAS_PRICE_ID", ""),
+  valuePriceId: getEnv("NEXT_PUBLIC_STRIPE_VALUE_PRICE_ID") || getEnv("STRIPE_VALUE_PRICE_ID", ""),
+  proPriceId: getEnv("NEXT_PUBLIC_STRIPE_PRO_PRICE_ID") || getEnv("STRIPE_PRO_PRICE_ID", ""),
+  creatorPriceId: getEnv("NEXT_PUBLIC_STRIPE_CREATOR_PRICE_ID") || getEnv("STRIPE_CREATOR_PRICE_ID", ""),
+  powerPriceId: getEnv("NEXT_PUBLIC_STRIPE_POWER_PRICE_ID") || getEnv("STRIPE_POWER_PRICE_ID", ""),
+}));
 
 // Database Configuration - lazy access
 export const dbConfig = createLazyConfig(() => ({

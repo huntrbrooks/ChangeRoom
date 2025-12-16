@@ -4,10 +4,11 @@
 import React from 'react';
 import { Check, Zap, Crown, Sparkles } from 'lucide-react';
 import { getAllProducts, ProductFeatures, PlanType } from '@/lib/products';
-import { stripeConfig } from '@/lib/config';
+import { stripePublicConfig } from '@/lib/config';
 import { useUser } from '@clerk/nextjs';
 import { trackProductView, trackFeatureClick, trackCheckoutInitiated } from '@/lib/clerk-tracking';
 import axios from 'axios';
+import { ANALYTICS_EVENTS, captureEvent } from '@/lib/analytics';
 
 interface PricingTableProps {
   currentPlan?: PlanType;
@@ -52,9 +53,9 @@ export function PricingTable({
       let priceId: string;
       const mode: "subscription" | "payment" = "payment";
       if (product.plan === 'standard') {
-        priceId = stripeConfig.starterXmasPriceId || stripeConfig.starterPriceId;
+        priceId = stripePublicConfig.starterXmasPriceId || stripePublicConfig.starterPriceId;
       } else if (product.plan === 'pro') {
-        priceId = stripeConfig.proPriceId;
+        priceId = stripePublicConfig.proPriceId;
       } else {
         return;
       }
@@ -71,6 +72,13 @@ export function PricingTable({
       if (user) {
         await trackCheckoutInitiated(user, product.plan, priceId);
       }
+      captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
+        plan: product.plan,
+        price_id: priceId,
+        mode,
+        source: 'pricing_table',
+        user_id: user?.id,
+      });
 
       const response = await axios.post('/api/billing/create-checkout-session', {
         priceId,
@@ -352,7 +360,7 @@ export function PricingTable({
               <button
                 onClick={async () => {
                   setLoading('small-pack');
-                  const priceId = stripeConfig.starterXmasPriceId || stripeConfig.starterPriceId;
+                  const priceId = stripePublicConfig.starterXmasPriceId || stripePublicConfig.starterPriceId;
                   
                   // Validate price ID
                   if (!priceId || !priceId.trim() || !priceId.startsWith('price_')) {
@@ -365,6 +373,13 @@ export function PricingTable({
                   if (user) {
                     await trackCheckoutInitiated(user, 'credit-pack', priceId);
                   }
+                  captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
+                    plan: 'credit-pack',
+                    price_id: priceId,
+                    mode: 'payment',
+                    source: 'pricing_table_small_pack',
+                    user_id: user?.id,
+                  });
                   try {
                     const response = await axios.post('/api/billing/create-checkout-session', {
                       priceId,
@@ -402,7 +417,7 @@ export function PricingTable({
               <button
                 onClick={async () => {
                   setLoading('large-pack');
-                  const priceId = stripeConfig.proPriceId;
+                  const priceId = stripePublicConfig.proPriceId;
                   
                   // Validate price ID
                   if (!priceId || !priceId.trim() || !priceId.startsWith('price_')) {
@@ -415,6 +430,13 @@ export function PricingTable({
                   if (user) {
                     await trackCheckoutInitiated(user, 'credit-pack', priceId);
                   }
+                  captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
+                    plan: 'credit-pack',
+                    price_id: priceId,
+                    mode: 'payment',
+                    source: 'pricing_table_large_pack',
+                    user_id: user?.id,
+                  });
                   try {
                     const response = await axios.post('/api/billing/create-checkout-session', {
                       priceId,
