@@ -17,7 +17,7 @@
     "@clerk/nextjs": "^6.35.5",
     "@google/genai": "^1.30.0",
     "@google/generative-ai": "^0.21.0",
-    "@vercel/postgres": "^0.5.1",
+    "@vercel/postgres": "^0.10.0",
     "axios": "^1.13.2",
     "dotenv": "^17.2.3",
     "lucide-react": "^0.555.0",
@@ -42,5 +42,9 @@
     "jest-environment-jsdom": "^29.7.0",
     "tailwindcss": "^4",
     "typescript": "5.9.3"
+  },
+  "overrides": {
+    "jws": "4.0.1",
+    "ws": "8.17.1"
   }
 }
