@@ -246,6 +246,18 @@ export function TryOnProgressLoader({
     }
   }, [isActive, isExiting, status, stageIndex, canComplete, startExit])
 
+  // Safety: if completion gate opens and status is resolved, force exit even if stage timers misbehave
+  useEffect(() => {
+    if (!isActive || isExiting) return
+    const ready =
+      status !== 'pending' &&
+      (status === 'error' || canCompleteRef.current === true)
+    if (ready) {
+      setStageIndex(STAGES.length - 1)
+      startExit()
+    }
+  }, [isActive, isExiting, status, canComplete, startExit])
+
   // If generation resolves with error early, jump to stage 5 and start exit to avoid getting stuck
   useEffect(() => {
     if (!isActive || isExiting) return
