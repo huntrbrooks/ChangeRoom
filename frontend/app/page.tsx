@@ -69,6 +69,11 @@ function HomeContent() {
   
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [isProductSearchLoading, setIsProductSearchLoading] = useState(false);
+  const [productSearchAttempted, setProductSearchAttempted] = useState(false);
+  const [productSearchError, setProductSearchError] = useState<string | null>(
+    null
+  );
   const [isGenerating, setIsGenerating] = useState(false);
   const [isTryOnLoading, setIsTryOnLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -505,7 +510,15 @@ function HomeContent() {
       }
       const response = await fetch(fileUrl);
       if (!response.ok) {
-        throw new Error("Could not download saved item.");
+        let host = "unknown";
+        try {
+          host = new URL(fileUrl).host || host;
+        } catch {
+          // ignore invalid URL parsing; keep fallback
+        }
+        throw new Error(
+          `Could not download saved item (status ${response.status}) from ${host}.`
+        );
       }
       const blob = await response.blob();
       const filename =
@@ -723,6 +736,9 @@ function HomeContent() {
     setIsGenerating(true);
     setError(null);
     setProducts([]);
+    setIsProductSearchLoading(false);
+    setProductSearchAttempted(false);
+    setProductSearchError(null);
     // Clear previous image to show loading state immediately
     setGeneratedImage(null);
     setIsPreviewResult(false);
@@ -1092,6 +1108,10 @@ function HomeContent() {
 
       // Step 2: Call Identify & Shop API (only if try-on succeeded)
       try {
+        setIsProductSearchLoading(true);
+        setProductSearchAttempted(true);
+        setProductSearchError(null);
+
         console.log("Starting product identification...");
         const identifyFormData = new FormData();
         const primaryTryOnFile = preparedTryOnFiles[0] || activeWardrobeItems[0]?.file;
@@ -1111,10 +1131,44 @@ function HomeContent() {
           2000
         );
         
-        if (analysisRes.data.search_query) {
+        const searchQueryRaw =
+          typeof analysisRes.data?.search_query === 'string'
+            ? analysisRes.data.search_query
+            : '';
+
+        // Fallback query if Gemini didn't return `search_query`
+        const fallbackQuery = (() => {
+          const wardrobePrimary = activeWardrobeItems[0];
+          const analysis = wardrobePrimary?.analysis?.analysis;
+          const fileMeta = wardrobePrimary?.file as FileWithMetadata | undefined;
+
+          const brand = (analysis?.brand || fileMeta?.brand || '').toString().trim();
+          const color = (analysis?.color || '').toString().trim();
+          const itemType = (analysis?.item_type || '').toString().trim();
+          const category = (analysis?.category || analysis?.body_region || '').toString().trim();
+          const desc = (
+            analysis?.short_description ||
+            analysis?.description ||
+            ''
+          )
+            .toString()
+            .trim();
+
+          const parts = [brand, color, itemType || category, desc]
+            .map((p) => p.trim())
+            .filter(Boolean)
+            .filter((p) => p.toLowerCase() !== 'unknown');
+
+          const q = parts.join(' ').replace(/\s+/g, ' ').trim();
+          return q.length >= 6 ? q : '';
+        })();
+
+        const queryToUse = searchQueryRaw.trim() || fallbackQuery;
+
+        if (queryToUse) {
           console.log("Product identification successful, searching for products...");
           const shopFormData = new FormData();
-          shopFormData.append('query', analysisRes.data.search_query);
+          shopFormData.append('query', queryToUse);
           
           const shopRes = await withRetry(
             () =>
@@ -1127,12 +1181,25 @@ function HomeContent() {
             1500
           );
           
-          if (shopRes.data.results) {
-            setProducts(shopRes.data.results);
+          const results = Array.isArray(shopRes.data?.results)
+            ? (shopRes.data.results as Product[])
+            : [];
+          setProducts(results);
+          if (results.length > 0) {
             console.log("Product search completed successfully");
+          } else {
+            setProductSearchError("No products found for this item.");
+            console.warn("Product search returned 0 results", { queryToUse });
           }
         } else {
           console.warn("No search query returned from product identification");
+          const geminiError =
+            typeof analysisRes.data?.error === 'string' ? analysisRes.data.error : null;
+          setProductSearchError(
+            geminiError
+              ? `Product identification failed: ${geminiError}`
+              : "Could not identify this item well enough to search for it."
+          );
         }
       } catch (searchError: unknown) {
         const error = searchError as { name?: string; code?: string; message?: string };
@@ -1145,7 +1212,14 @@ function HomeContent() {
         // Show subtle notification for product search failure
         if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
           console.warn("Product search timed out, but try-on was successful");
+          setProductSearchError("Shop the look timed out. Please try again in a moment.");
+        } else if (typeof error.message === 'string' && error.message.trim()) {
+          setProductSearchError(error.message);
+        } else {
+          setProductSearchError("Shop the look failed to load. Your try-on is still saved.");
         }
+      } finally {
+        setIsProductSearchLoading(false);
       }
 
     } catch (err: unknown) {
@@ -1569,18 +1643,37 @@ function HomeContent() {
               )}
             </section>
 
-            {(products.length > 0 || isGenerating) && (
+            {(Boolean(generatedImage) ||
+              isProductSearchLoading ||
+              productSearchAttempted) && (
               <section className={`${cardClass} ${cardPadding} space-y-4`}>
                 <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
                   <Search size={18} className="sm:w-5 sm:h-5 text-black" />
                   Shop the Look
                 </h2>
                 <div className="space-y-3 sm:space-y-4">
-                  {products.length > 0
-                    ? products.map((product, idx) => (
-                        <ProductCard key={idx} product={product} />
-                      ))
-                    : [0, 1, 2].map((idx) => <ProductCard key={`skeleton-${idx}`} loading />)}
+                  {isProductSearchLoading ? (
+                    [0, 1, 2].map((idx) => (
+                      <ProductCard key={`skeleton-${idx}`} loading />
+                    ))
+                  ) : products.length > 0 ? (
+                    products.map((product, idx) => (
+                      <ProductCard key={idx} product={product} />
+                    ))
+                  ) : (
+                    <div className="rounded-xl border border-black/10 bg-black/5 p-4 text-sm text-black/70">
+                      {productSearchError ? (
+                        <p>{productSearchError}</p>
+                      ) : (
+                        <p>No matching products found yet.</p>
+                      )}
+                      <p className="mt-2 text-xs text-black/60">
+                        Tip: Try a different item or use{" "}
+                        <span className="font-semibold">Shop &amp; Save</span> to
+                        price match specific wardrobe pieces.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </section>
             )}

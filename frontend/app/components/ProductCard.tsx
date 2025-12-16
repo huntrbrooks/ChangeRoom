@@ -1,5 +1,4 @@
 import React from 'react';
-import Image from 'next/image';
 import { ShoppingCart } from 'lucide-react';
 
 interface Product {
@@ -36,13 +35,14 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, loading = fal
     <div className="border border-black/10 rounded-none overflow-hidden hover:border-black/30 transition-all bg-white">
       <div className="aspect-square relative overflow-hidden bg-gray-100">
         {product.thumbnail && (
-          <Image
+          // Use <img> instead of next/image because shopping thumbnails can come from many hosts.
+          // This avoids brittle remote-host allowlists and prevents silent “no image” failures.
+          <img
             src={product.thumbnail}
             alt={product.title}
-            fill
-            sizes="(min-width: 1024px) 240px, 180px"
-            className="object-cover"
-            priority={false}
+            className="absolute inset-0 h-full w-full object-cover"
+            loading="lazy"
+            referrerPolicy="no-referrer"
           />
         )}
       </div>
