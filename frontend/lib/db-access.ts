@@ -145,7 +145,7 @@ async function createUsersBillingTable(): Promise<void> {
       stripe_customer_id TEXT,
       stripe_subscription_id TEXT,
       plan TEXT NOT NULL DEFAULT 'free',
-      credits_available INTEGER NOT NULL DEFAULT 10,
+      credits_available INTEGER NOT NULL DEFAULT 0,
       credits_refresh_at TIMESTAMPTZ,
       trial_used BOOLEAN NOT NULL DEFAULT false,
       is_frozen BOOLEAN NOT NULL DEFAULT false,
@@ -330,7 +330,29 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
           return { ...billing, trial_used: false, is_frozen: billing.is_frozen ?? false };
         }
       }
-      return { ...billing, trial_used: billing.trial_used ?? false, is_frozen: billing.is_frozen ?? false };
+      // If free plan trial has been used and there is no purchase, credits should be 0.
+      // This corrects older records created with default free credits.
+      const normalized = { ...billing, trial_used: billing.trial_used ?? false, is_frozen: billing.is_frozen ?? false };
+      if (
+        normalized.plan === "free" &&
+        normalized.trial_used === true &&
+        (normalized.credits_available ?? 0) > 0 &&
+        !normalized.stripe_subscription_id
+      ) {
+        const hasPurchase = await hasPaidCreditGrant(userId);
+        if (!hasPurchase) {
+          const updated = await sql`
+            UPDATE users_billing
+            SET credits_available = 0, updated_at = now()
+            WHERE user_id = ${userId}
+            RETURNING *
+          `;
+          if (updated.rows.length > 0) {
+            return { ...(updated.rows[0] as UserBilling), trial_used: true, is_frozen: (updated.rows[0] as UserBilling).is_frozen ?? false };
+          }
+        }
+      }
+      return normalized;
     }
 
     // Create new record
@@ -919,7 +941,13 @@ export async function markFreeTrialUsed(userId: string): Promise<UserBilling> {
   return withUsersBillingTable(async () => {
     const result = await sql`
       UPDATE users_billing
-      SET trial_used = true, updated_at = now()
+      SET
+        trial_used = true,
+        credits_available = CASE
+          WHEN plan = 'free' THEN 0
+          ELSE credits_available
+        END,
+        updated_at = now()
       WHERE user_id = ${userId} AND (trial_used = false OR trial_used IS NULL)
       RETURNING *
     `;

@@ -117,7 +117,8 @@ export const geminiConfig = createLazyConfig(() => ({
 // App Configuration (optional with defaults)
 export const appConfig = {
   appUrl: getEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3000"),
-  freeCredits: parseInt(getEnv("TRYON_FREE_CREDITS", "10"), 10),
+  // Free trial is a single free try-on, not a credit grant
+  freeCredits: parseInt(getEnv("TRYON_FREE_CREDITS", "0"), 10),
   standardMonthlyCredits: parseInt(getEnv("TRYON_STANDARD_MONTHLY_CREDITS", "50"), 10),
   proMonthlyCredits: parseInt(getEnv("TRYON_PRO_MONTHLY_CREDITS", "250"), 10),
   creditPackSmallAmount: 20, // Can be made configurable if needed

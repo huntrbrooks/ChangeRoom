@@ -32,8 +32,8 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
   const hasResult = Boolean(imageUrl);
   const hasError = Boolean(errorMessage);
   const status: 'pending' | 'success' | 'error' =
-    isLoading ? 'pending' : hasResult ? 'success' : hasError ? 'error' : 'pending';
-  const canCompleteLoader = status === 'error' ? true : imageReady;
+    hasError ? 'error' : imageReady ? 'success' : isLoading ? 'pending' : hasResult ? 'success' : 'pending';
+  const canCompleteLoader = hasError ? true : imageReady;
 
   useEffect(() => {
     if (isLoading) {
@@ -69,7 +69,8 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
       clearTimeout(loaderFallbackTimerRef.current);
       loaderFallbackTimerRef.current = null;
     }
-    const canFinish = status !== 'pending' && canCompleteLoader;
+    // If the image is ready, we *always* allow the loader to finish, even if parent is still "loading".
+    const canFinish = canCompleteLoader && (status !== 'pending' || imageReady);
     if (canFinish) {
       loaderFallbackTimerRef.current = setTimeout(() => {
         setShowLoader(false);
