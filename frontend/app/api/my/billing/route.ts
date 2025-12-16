@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { getOrCreateUserBilling } from "@/lib/db-access";
+import { getOrCreateUserBilling, hasPaidCreditGrant } from "@/lib/db-access";
 
 /**
  * GET /api/my/billing
@@ -15,11 +15,16 @@ export async function GET(_req: NextRequest) {
 
   try {
     const billing = await getOrCreateUserBilling(userId);
+    const hasPurchase =
+      billing.plan !== "free" ||
+      Boolean(billing.stripe_subscription_id) ||
+      (await hasPaidCreditGrant(userId));
     return NextResponse.json({
       plan: billing.plan,
       creditsAvailable: billing.credits_available,
       creditsRefreshAt: billing.credits_refresh_at,
       trialUsed: billing.trial_used ?? false, // Default to false if null/undefined
+      hasPurchase,
     });
   } catch (err: unknown) {
     const _errorMessage = err instanceof Error ? err.message : 'Unknown error';

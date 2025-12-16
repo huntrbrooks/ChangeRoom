@@ -5,6 +5,7 @@ import {
   getUserBillingByStripeCustomer,
   updateUserBillingPlan,
   updateUserBillingCredits,
+  grantCredits,
   setUserBillingFrozen,
 } from "@/lib/db-access";
 import { ANALYTICS_EVENTS, captureServerEvent } from "@/lib/server-analytics";
@@ -105,14 +106,22 @@ export async function POST(req: NextRequest) {
             0;
 
           if (creditAmount > 0) {
+            const creditMetadata = {
+              source: "stripe",
+              reason: "credit_pack_purchase",
+              price_id: priceIdFromSession,
+              session_id: session.id,
+              mode: session.mode,
+            };
+
             // Get or create billing to ensure customer ID is set
             const billing = await getUserBillingByStripeCustomer(customerId);
             if (billing) {
-              await updateUserBillingCredits(billing.user_id, creditAmount, false);
+              await grantCredits(billing.user_id, creditAmount, creditMetadata, session.id);
               console.log(`Added ${creditAmount} credits to user ${billing.user_id}`);
             } else {
               // Fallback: use clerkUserId from metadata
-              await updateUserBillingCredits(clerkUserId, creditAmount, false);
+              await grantCredits(clerkUserId, creditAmount, creditMetadata, session.id);
               console.log(`Added ${creditAmount} credits to user ${clerkUserId}`);
             }
           }

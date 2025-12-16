@@ -36,6 +36,7 @@ interface BillingInfo {
   creditsAvailable: number;
   creditsRefreshAt: Date | null;
   trialUsed?: boolean;
+  hasPurchase?: boolean;
 }
 
 const formatCurrency = (value?: number | null, currency?: string | null) => {
@@ -122,6 +123,13 @@ function HomeContent() {
   }, [isLoaded, user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (activeTab === 'my-outfits' && shouldLockMyOutfits) {
+      setActiveTab('try-on');
+      router.push('/pricing?ref=my-outfits');
+    }
+  }, [activeTab, router, shouldLockMyOutfits]);
+
+  useEffect(() => {
     if (
       isPreviewResult &&
       generatedImage &&
@@ -166,7 +174,10 @@ function HomeContent() {
   const fetchBilling = async () => {
     try {
       const response = await axios.get('/api/my/billing');
-      setBilling(response.data);
+      setBilling({
+        ...response.data,
+        hasPurchase: Boolean(response.data?.hasPurchase),
+      });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       // Only log error if it's not a 401 (unauthorized) - that's expected when not logged in
@@ -180,6 +191,7 @@ function HomeContent() {
           creditsAvailable: 0,
           creditsRefreshAt: null,
           trialUsed: false,
+          hasPurchase: false,
         });
       }
     }
@@ -194,7 +206,21 @@ function HomeContent() {
 
   const isOnTrial = billing && !billing.trialUsed && !isBypass;
   const isAuthenticated = isLoaded && !!user;
-  const lacksCredits = !isBypass && !isOnTrial && (!billing || billing.creditsAvailable <= 0);
+  const hasCreditsAvailable = billing ? billing.creditsAvailable > 0 : false;
+  const hasPaidPlan = billing ? billing.plan !== 'free' : false;
+  const hasPaidAccess = hasPaidPlan || Boolean(billing?.hasPurchase);
+  const lacksCredits = !isBypass && !isOnTrial && (!billing || !hasCreditsAvailable);
+  const shouldLockMyOutfits = useMemo(
+    () =>
+      isLoaded &&
+      !!user &&
+      !isBypass &&
+      billing !== null &&
+      (billing.trialUsed ?? false) &&
+      !hasCreditsAvailable &&
+      !hasPaidAccess,
+    [billing, hasCreditsAvailable, hasPaidAccess, isBypass, isLoaded, user]
+  );
   const canAttemptTryOn = isAuthenticated && !isGenerating;
 
   const requireAuth = useCallback(() => {
@@ -204,6 +230,14 @@ function HomeContent() {
     }
     return true;
   }, [isLoaded, setError, user]);
+
+  const handleMyOutfitsTab = useCallback(() => {
+    if (shouldLockMyOutfits) {
+      router.push('/pricing?ref=my-outfits');
+      return;
+    }
+    setActiveTab('my-outfits');
+  }, [router, shouldLockMyOutfits]);
 
   interface AnalyzedItem {
     index: number;
@@ -1188,7 +1222,7 @@ function HomeContent() {
               </span>
             </button>
             <button
-              onClick={() => setActiveTab('my-outfits')}
+              onClick={handleMyOutfitsTab}
               onTouchStart={(e) => {
                 if (e.touches.length > 1) {
                   e.preventDefault();

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { deleteUserOutfit } from "@/lib/db-access";
+import { deleteUserOutfit, getOrCreateUserBilling, hasPaidCreditGrant } from "@/lib/db-access";
 
 /**
  * DELETE /api/my/outfits/[id]
@@ -25,6 +25,18 @@ export async function DELETE(
       return NextResponse.json(
         { error: "Missing outfit ID" },
         { status: 400 }
+      );
+    }
+
+    const billing = await getOrCreateUserBilling(userId);
+    const hasCredits = (billing.credits_available ?? 0) > 0;
+    const hasPurchase = billing.plan !== "free" || (await hasPaidCreditGrant(userId));
+    const usedFreeTrial = billing.trial_used ?? false;
+
+    if (usedFreeTrial && !hasCredits && !hasPurchase) {
+      return NextResponse.json(
+        { error: "upgrade_required" },
+        { status: 402 }
       );
     }
 

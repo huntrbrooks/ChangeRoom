@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { insertUserOutfit, getUserOutfits, type ClothingItemMetadata } from "@/lib/db-access";
+import {
+  insertUserOutfit,
+  getUserOutfits,
+  getOrCreateUserBilling,
+  hasPaidCreditGrant,
+  type ClothingItemMetadata,
+} from "@/lib/db-access";
 
 const toIsoString = (value: unknown): string => {
   if (value instanceof Date) {
@@ -55,6 +61,18 @@ export async function GET(_req: NextRequest) {
   }
 
   try {
+    const billing = await getOrCreateUserBilling(userId);
+    const hasCredits = (billing.credits_available ?? 0) > 0;
+    const hasPurchase = billing.plan !== "free" || (await hasPaidCreditGrant(userId));
+    const usedFreeTrial = billing.trial_used ?? false;
+
+    if (usedFreeTrial && !hasCredits && !hasPurchase) {
+      return NextResponse.json(
+        { error: "upgrade_required" },
+        { status: 402 }
+      );
+    }
+
     const outfits = await getUserOutfits(userId);
     
     // Transform to match frontend format
@@ -88,6 +106,18 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const billing = await getOrCreateUserBilling(userId);
+    const hasCredits = (billing.credits_available ?? 0) > 0;
+    const hasPurchase = billing.plan !== "free" || (await hasPaidCreditGrant(userId));
+    const usedFreeTrial = billing.trial_used ?? false;
+
+    if (usedFreeTrial && !hasCredits && !hasPurchase) {
+      return NextResponse.json(
+        { error: "upgrade_required" },
+        { status: 402 }
+      );
+    }
+
     const body = await req.json();
     const { imageUrl, clothingItems } = body;
 

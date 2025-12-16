@@ -266,7 +266,19 @@ export async function createCreditHold(params: {
       return { hold, created: false, billing };
     }
 
-    const billing = await ensureUserBillingWithLock(tx, userId);
+    let billing = await ensureUserBillingWithLock(tx, userId);
+    // Mark free trial as consumed when the first credit is held
+    if (!billing.trial_used && billing.plan === "free") {
+      const trialUpdate = await tx`
+        UPDATE users_billing
+        SET trial_used = true, updated_at = now()
+        WHERE user_id = ${userId} AND (trial_used = false OR trial_used IS NULL)
+        RETURNING *
+      `;
+      if (trialUpdate.rows.length > 0) {
+        billing = trialUpdate.rows[0] as UserBilling;
+      }
+    }
     if (billing.is_frozen) {
       throw new Error("account_frozen");
     }
@@ -540,6 +552,21 @@ export async function getLedgerEntries(
     LIMIT ${limit}
   `;
   return result.rows.map(coerceLedgerEntry);
+}
+
+/**
+ * Check whether the user has any recorded paid credit grants (excludes free trial).
+ */
+export async function hasPaidCreditGrant(userId: string): Promise<boolean> {
+  const result = await sql`
+    SELECT 1
+    FROM credit_ledger_entries
+    WHERE user_id = ${userId}
+      AND entry_type = 'grant'
+      AND COALESCE(metadata->>'reason', '') <> 'free_trial'
+    LIMIT 1
+  `;
+  return result.rows.length > 0;
 }
 
 /**
