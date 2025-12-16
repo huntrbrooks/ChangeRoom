@@ -23,16 +23,18 @@ export async function POST(_req: NextRequest) {
     });
   } catch (err: unknown) {
     console.error("Error consuming free trial:", err);
-    // Fallback to current billing state to avoid blocking clients
+    // Fallback to current billing state to avoid blocking clients and keep idempotent behavior
     try {
       const billing = await getOrCreateUserBilling(userId);
       return NextResponse.json({
         plan: billing.plan,
         creditsAvailable: billing.credits_available,
         creditsRefreshAt: billing.credits_refresh_at,
-        trialUsed: billing.trial_used ?? false,
+        trialUsed: true, // force-consume to avoid client loops
+        note: "trial consume fallback",
       });
-    } catch {
+    } catch (fallbackErr) {
+      console.error("Fallback billing fetch failed while consuming trial:", fallbackErr);
       return NextResponse.json(
         { error: "Failed to mark trial used" },
         { status: 500 }

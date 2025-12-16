@@ -62,11 +62,9 @@ export async function GET(_req: NextRequest) {
 
   try {
     const billing = await getOrCreateUserBilling(userId);
-    const hasCredits = (billing.credits_available ?? 0) > 0;
     const hasPurchase = billing.plan !== "free" || (await hasPaidCreditGrant(userId));
-    const usedFreeTrial = billing.trial_used ?? false;
-
-    if (usedFreeTrial && !hasCredits && !hasPurchase) {
+    // Gate access until a purchase/paid grant exists (credits alone not sufficient)
+    if (!hasPurchase) {
       return NextResponse.json(
         { error: "upgrade_required" },
         { status: 402 }
@@ -107,18 +105,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const billing = await getOrCreateUserBilling(userId);
-    const hasCredits = (billing.credits_available ?? 0) > 0;
     const hasPurchase = billing.plan !== "free" || (await hasPaidCreditGrant(userId));
-    const usedFreeTrial = billing.trial_used ?? false;
+    // Allow saving even if My Outfits viewing is gated; do not block on purchase
 
-    if (usedFreeTrial && !hasCredits && !hasPurchase) {
-      return NextResponse.json(
-        { error: "upgrade_required" },
-        { status: 402 }
-      );
-    }
-
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const { imageUrl, clothingItems } = body;
 
     if (!imageUrl || !Array.isArray(clothingItems)) {

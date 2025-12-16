@@ -213,7 +213,7 @@ function HomeContent() {
   const isAuthenticated = isLoaded && !!user;
   const hasCreditsAvailable = billing ? billing.creditsAvailable > 0 : false;
   const hasPaidPlan = billing ? billing.plan !== 'free' : false;
-  const hasPaidAccess = hasPaidPlan || Boolean(billing?.hasPurchase);
+  const hasPaidAccess = Boolean(billing?.hasPurchase || hasPaidPlan);
   const lacksCredits = !isBypass && !isOnTrial && (!billing || !hasCreditsAvailable);
   const shouldLockMyOutfits = useMemo(
     () =>
@@ -222,9 +222,8 @@ function HomeContent() {
       !isBypass &&
       billing !== null &&
       (billing.trialUsed ?? false) &&
-      !hasCreditsAvailable &&
       !hasPaidAccess,
-    [billing, hasCreditsAvailable, hasPaidAccess, isBypass, isLoaded, user]
+    [billing, hasPaidAccess, isBypass, isLoaded, user]
   );
 
   const noteCreditUse = useCallback(() => {
