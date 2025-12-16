@@ -93,5 +93,17 @@ describe('TryOnProgressLoader timing', () => {
     advance(100) // allow effect to promote to stage 5
     expect(screen.getByText(/Stage 5\/5/i)).toBeInTheDocument()
   })
+
+  it('does not exit via failsafe while still pending', () => {
+    render(<TryOnProgressLoader isActive status="pending" canComplete={false} />)
+
+    advance(5_000)
+    advance(5_000)
+    advance(5_000) // reach stage 4
+    expect(screen.getByText(/Stage 4\/5/i)).toBeInTheDocument()
+
+    advance(30_500) // surpass failsafe window
+    expect(screen.getByText(/Stage 4\/5/i)).toBeInTheDocument()
+  })
 })
 

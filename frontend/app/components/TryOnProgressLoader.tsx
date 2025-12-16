@@ -268,15 +268,26 @@ export function TryOnProgressLoader({
     }
   }, [stageIndex, isActive, onFinished, startExit])
 
-  // Failsafe: if loader stays active too long, force completion
+  // Failsafe: if loader stays active too long, keep checking but only exit once ready
   useEffect(() => {
     if (!isActive || isExiting) return
-    if (failsafeTimerRef.current) {
-      clearTimeout(failsafeTimerRef.current)
+    const scheduleFailsafe = () => {
+      if (failsafeTimerRef.current) {
+        clearTimeout(failsafeTimerRef.current)
+      }
+      failsafeTimerRef.current = setTimeout(() => {
+        const ready =
+          statusRef.current !== 'pending' &&
+          (statusRef.current === 'error' || canCompleteRef.current === true)
+        if (ready) {
+          startExit()
+        } else {
+          scheduleFailsafe()
+        }
+      }, FAILSAFE_EXIT_MS)
     }
-    failsafeTimerRef.current = setTimeout(() => {
-      startExit()
-    }, FAILSAFE_EXIT_MS)
+
+    scheduleFailsafe()
 
     return () => {
       if (failsafeTimerRef.current) {
