@@ -45,7 +45,7 @@ describe('TryOnProgressLoader timing', () => {
     expect(screen.getByText(/Stage 4\/5/i)).toBeInTheDocument()
 
     act(() => {
-      rerender(<TryOnProgressLoader isActive status="success" />)
+      rerender(<TryOnProgressLoader isActive status="success" canComplete />)
     })
 
     advance(5_000)
@@ -61,7 +61,7 @@ describe('TryOnProgressLoader timing', () => {
     advance(5_000) // enter stage 4
 
     act(() => {
-      rerender(<TryOnProgressLoader isActive status="success" onFinished={onFinished} />)
+      rerender(<TryOnProgressLoader isActive status="success" canComplete onFinished={onFinished} />)
     })
 
     advance(5_000) // reach stage 5 after stage 4 min gate

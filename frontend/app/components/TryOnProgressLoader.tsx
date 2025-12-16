@@ -67,7 +67,7 @@ const STAGES: Stage[] = [
 const MIN_STAGE_MS = 5000
 const EXIT_FADE_MS = 2400
 const FAILSAFE_EXIT_MS = 30000
-const DEFAULT_CAN_COMPLETE = true
+const DEFAULT_CAN_COMPLETE = false
 
 export function TryOnProgressLoader({
   isActive,
@@ -187,7 +187,7 @@ export function TryOnProgressLoader({
     return () => cancelAnimationFrame(raf)
   }, [isActive, isExiting, stageIndex])
 
-  // Advance stages with fixed timing: stages 1-3 always 5s, stage 4 waits for min 5s then readiness + resolution
+  // Advance stages with fixed timing: stages 1-3 always 5s, stage 4 waits for min 5s then readiness (or error)
   useEffect(() => {
     if (!isActive || isExiting) return
 
@@ -209,14 +209,12 @@ export function TryOnProgressLoader({
       }
     }
 
-    // Stage 4: enforce 5s minimum, then wait for resolution (success or error) and completion gate before stage 5
+    // Stage 4: enforce 5s minimum, then wait for completion gate (image ready) or error before stage 5
     if (stageIndex === 3) {
       stage4GateRef.current = false
       stageTimerRef.current = setTimeout(() => {
         stage4GateRef.current = true
-        const readyToExit =
-          statusRef.current !== 'pending' &&
-          (statusRef.current === 'error' || canCompleteRef.current === true)
+        const readyToExit = statusRef.current === 'error' || canCompleteRef.current === true
         if (readyToExit) {
           setStageIndex(STAGES.length - 1)
           startExit()
@@ -232,13 +230,12 @@ export function TryOnProgressLoader({
     }
   }, [isActive, isExiting, stageIndex])
 
-  // If generation resolves after stage 4 min time and completion gate is open, advance to stage 5
+  // If completion gate opens after stage 4 min time (or error), advance to stage 5
   useEffect(() => {
     if (!isActive || isExiting) return
     if (
       stageIndex === 3 &&
       stage4GateRef.current &&
-      status !== 'pending' &&
       (status === 'error' || canCompleteRef.current === true)
     ) {
       setStageIndex(STAGES.length - 1)
@@ -246,12 +243,10 @@ export function TryOnProgressLoader({
     }
   }, [isActive, isExiting, status, stageIndex, canComplete, startExit])
 
-  // Safety: if completion gate opens and status is resolved, force exit even if stage timers misbehave
+  // Safety: if completion gate opens (or error), force exit even if timers misbehave
   useEffect(() => {
     if (!isActive || isExiting) return
-    const ready =
-      status !== 'pending' &&
-      (status === 'error' || canCompleteRef.current === true)
+    const ready = status === 'error' || canCompleteRef.current === true
     if (ready) {
       setStageIndex(STAGES.length - 1)
       startExit()
@@ -290,9 +285,7 @@ export function TryOnProgressLoader({
         clearTimeout(failsafeTimerRef.current)
       }
       failsafeTimerRef.current = setTimeout(() => {
-        const ready =
-          statusRef.current !== 'pending' &&
-          (statusRef.current === 'error' || canCompleteRef.current === true)
+        const ready = statusRef.current === 'error' || canCompleteRef.current === true
         if (ready) {
           startExit()
         } else {
