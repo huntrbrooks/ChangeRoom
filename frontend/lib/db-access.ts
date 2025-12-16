@@ -114,6 +114,143 @@ function errorMessageIncludes(error: unknown, text: string): boolean {
   );
 }
 
+// Helpers to lazily provision tables when migrations haven't run
+const USERS_BILLING_TABLE = "users_billing";
+let usersBillingTableReady: Promise<void> | null = null;
+
+const CREDIT_HOLDS_TABLE = "credit_holds";
+const CREDIT_LEDGER_TABLE = "credit_ledger_entries";
+let creditTablesReady: Promise<void> | null = null;
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "Unknown error";
+  }
+}
+
+function isMissingRelationError(error: unknown, relation: string): boolean {
+  return getErrorMessage(error)
+    .toLowerCase()
+    .includes(`relation \"${relation.toLowerCase()}\" does not exist`);
+}
+
+async function createUsersBillingTable(): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS users_billing (
+      user_id TEXT PRIMARY KEY,
+      stripe_customer_id TEXT,
+      stripe_subscription_id TEXT,
+      plan TEXT NOT NULL DEFAULT 'free',
+      credits_available INTEGER NOT NULL DEFAULT 10,
+      credits_refresh_at TIMESTAMPTZ,
+      trial_used BOOLEAN NOT NULL DEFAULT false,
+      is_frozen BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS users_billing_stripe_customer_idx ON users_billing (stripe_customer_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS users_billing_plan_idx ON users_billing (plan)`;
+  // Backward-compatible column adds (safe to run repeatedly)
+  await sql`ALTER TABLE users_billing ADD COLUMN IF NOT EXISTS trial_used BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE users_billing ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN NOT NULL DEFAULT false`;
+}
+
+async function ensureUsersBillingTable(forceRefresh = false): Promise<void> {
+  if (forceRefresh) usersBillingTableReady = null;
+  if (!usersBillingTableReady) {
+    usersBillingTableReady = createUsersBillingTable().catch((error) => {
+      usersBillingTableReady = null;
+      throw error;
+    });
+  }
+  return usersBillingTableReady;
+}
+
+async function withUsersBillingTable<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    await ensureUsersBillingTable();
+    return await operation();
+  } catch (error) {
+    if (isMissingRelationError(error, USERS_BILLING_TABLE)) {
+      await ensureUsersBillingTable(true);
+      return await operation();
+    }
+    throw error;
+  }
+}
+
+async function createCreditTables(): Promise<void> {
+  // credit_holds
+  await sql`
+    CREATE TABLE IF NOT EXISTS credit_holds (
+      id UUID PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      amount INTEGER NOT NULL CHECK (amount > 0),
+      status TEXT NOT NULL DEFAULT 'active',
+      reason TEXT,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS credit_holds_request_unique ON credit_holds (request_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS credit_holds_user_status_idx ON credit_holds (user_id, status)`;
+
+  // credit_ledger_entries
+  await sql`
+    CREATE TABLE IF NOT EXISTS credit_ledger_entries (
+      id UUID PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      request_id TEXT,
+      hold_id UUID REFERENCES credit_holds(id),
+      entry_type TEXT NOT NULL,
+      credits_change INTEGER NOT NULL,
+      balance_after INTEGER,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS credit_ledger_entries_user_created_idx ON credit_ledger_entries (user_id, created_at)`;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS credit_ledger_entries_request_type_unique
+    ON credit_ledger_entries (request_id, entry_type)
+    WHERE request_id IS NOT NULL
+  `;
+}
+
+async function ensureCreditTables(forceRefresh = false): Promise<void> {
+  if (forceRefresh) creditTablesReady = null;
+  if (!creditTablesReady) {
+    creditTablesReady = createCreditTables().catch((error) => {
+      creditTablesReady = null;
+      throw error;
+    });
+  }
+  return creditTablesReady;
+}
+
+async function withCreditTables<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    await ensureCreditTables();
+    return await operation();
+  } catch (error) {
+    if (
+      isMissingRelationError(error, CREDIT_HOLDS_TABLE) ||
+      isMissingRelationError(error, CREDIT_LEDGER_TABLE)
+    ) {
+      await ensureCreditTables(true);
+      return await operation();
+    }
+    throw error;
+  }
+}
+
 // Lightweight transaction helper for @vercel/postgres (begin is available at runtime)
 const runTransaction = async <T>(fn: (tx: typeof sql) => Promise<T>): Promise<T> => {
   const client = sql as unknown as { begin: (cb: (tx: typeof sql) => Promise<T>) => Promise<T> };
@@ -166,73 +303,75 @@ function coerceLedgerEntry(row: Record<string, unknown>): CreditLedgerEntry {
  * Creates with free plan and default credits if doesn't exist
  */
 export async function getOrCreateUserBilling(userId: string): Promise<UserBilling> {
-  // First try to get existing record
-  const existing = await sql`
-    SELECT * FROM users_billing WHERE user_id = ${userId}
-  `;
-
-  if (existing.rows.length > 0) {
-    const billing = existing.rows[0] as UserBilling;
-    // Ensure trial_used field exists (for backward compatibility)
-    if (billing.trial_used === undefined || billing.trial_used === null) {
-      // Update to set default value if column exists
-      try {
-        await sql`
-          UPDATE users_billing 
-          SET trial_used = COALESCE(trial_used, false), updated_at = now()
-          WHERE user_id = ${userId}
-        `;
-        // Fetch again to get updated value
-        const updated = await sql`
-          SELECT * FROM users_billing WHERE user_id = ${userId}
-        `;
-        return updated.rows[0] as UserBilling;
-      } catch {
-        // If column doesn't exist, return with default value
-        return { ...billing, trial_used: false, is_frozen: billing.is_frozen ?? false };
-      }
-    }
-    return { ...billing, trial_used: billing.trial_used ?? false, is_frozen: billing.is_frozen ?? false };
-  }
-
-  // Create new record
-  try {
-    const result = await sql`
-      INSERT INTO users_billing (user_id, plan, credits_available, trial_used, is_frozen)
-      VALUES (${userId}, 'free', ${appConfig.freeCredits}, false, false)
-      ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
-      RETURNING *
+  return withUsersBillingTable(async () => {
+    // First try to get existing record
+    const existing = await sql`
+      SELECT * FROM users_billing WHERE user_id = ${userId}
     `;
 
-    if (result.rows.length > 0) {
-      return result.rows[0] as UserBilling;
+    if (existing.rows.length > 0) {
+      const billing = existing.rows[0] as UserBilling;
+      // Ensure trial_used field exists (for backward compatibility)
+      if (billing.trial_used === undefined || billing.trial_used === null) {
+        // Update to set default value if column exists
+        try {
+          await sql`
+            UPDATE users_billing 
+            SET trial_used = COALESCE(trial_used, false), updated_at = now()
+            WHERE user_id = ${userId}
+          `;
+          // Fetch again to get updated value
+          const updated = await sql`
+            SELECT * FROM users_billing WHERE user_id = ${userId}
+          `;
+          return updated.rows[0] as UserBilling;
+        } catch {
+          // If column doesn't exist, return with default value
+          return { ...billing, trial_used: false, is_frozen: billing.is_frozen ?? false };
+        }
+      }
+      return { ...billing, trial_used: billing.trial_used ?? false, is_frozen: billing.is_frozen ?? false };
     }
-  } catch (err: unknown) {
-    // If trial_used column doesn't exist, try without it
-    if (errorMessageIncludes(err, 'trial_used')) {
+
+    // Create new record
+    try {
       const result = await sql`
-        INSERT INTO users_billing (user_id, plan, credits_available, is_frozen)
-        VALUES (${userId}, 'free', ${appConfig.freeCredits}, false)
+        INSERT INTO users_billing (user_id, plan, credits_available, trial_used, is_frozen)
+        VALUES (${userId}, 'free', ${appConfig.freeCredits}, false, false)
         ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
         RETURNING *
       `;
-      if (result.rows.length > 0) {
-        return { ...result.rows[0] as UserBilling, trial_used: false, is_frozen: false };
-      }
-    }
-    throw err;
-  }
 
-  // If no row returned (shouldn't happen), fetch it
-  const fetchResult = await sql`
-    SELECT * FROM users_billing WHERE user_id = ${userId}
-  `;
-  const fetched = fetchResult.rows[0] as UserBilling;
-  return {
-    ...fetched,
-    trial_used: fetched.trial_used ?? false,
-    is_frozen: fetched.is_frozen ?? false,
-  };
+      if (result.rows.length > 0) {
+        return result.rows[0] as UserBilling;
+      }
+    } catch (err: unknown) {
+      // If trial_used column doesn't exist, try without it
+      if (errorMessageIncludes(err, "trial_used")) {
+        const result = await sql`
+          INSERT INTO users_billing (user_id, plan, credits_available, is_frozen)
+          VALUES (${userId}, 'free', ${appConfig.freeCredits}, false)
+          ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
+          RETURNING *
+        `;
+        if (result.rows.length > 0) {
+          return { ...(result.rows[0] as UserBilling), trial_used: false, is_frozen: false };
+        }
+      }
+      throw err;
+    }
+
+    // If no row returned (shouldn't happen), fetch it
+    const fetchResult = await sql`
+      SELECT * FROM users_billing WHERE user_id = ${userId}
+    `;
+    const fetched = fetchResult.rows[0] as UserBilling;
+    return {
+      ...fetched,
+      trial_used: fetched.trial_used ?? false,
+      is_frozen: fetched.is_frozen ?? false,
+    };
+  });
 }
 
 /**
@@ -255,6 +394,8 @@ export async function createCreditHold(params: {
     throw new Error("amount_must_be_positive");
   }
 
+  await ensureUsersBillingTable();
+  await ensureCreditTables();
   return runTransaction(async (tx) => {
     // Reuse existing hold for idempotency
     const existingHold = await tx`
@@ -295,8 +436,10 @@ export async function createCreditHold(params: {
       RETURNING *
     `;
 
+    const holdId = generateUuid();
     const holdResult = await tx`
       INSERT INTO credit_holds (
+        id,
         user_id,
         request_id,
         amount,
@@ -305,6 +448,7 @@ export async function createCreditHold(params: {
         expires_at
       )
       VALUES (
+        ${holdId},
         ${userId},
         ${requestId},
         ${amount},
@@ -317,6 +461,7 @@ export async function createCreditHold(params: {
 
     await tx`
       INSERT INTO credit_ledger_entries (
+        id,
         user_id,
         request_id,
         hold_id,
@@ -326,6 +471,7 @@ export async function createCreditHold(params: {
         metadata
       )
       VALUES (
+        ${generateUuid()},
         ${userId},
         ${requestId},
         ${holdResult.rows[0].id},
@@ -356,6 +502,8 @@ export async function finalizeDebitFromHold(
     throw new Error("request_id_required");
   }
 
+  await ensureUsersBillingTable();
+  await ensureCreditTables();
   return runTransaction(async (tx) => {
     const holdResult = await tx`
       SELECT * FROM credit_holds WHERE request_id = ${requestId} FOR UPDATE
@@ -383,6 +531,7 @@ export async function finalizeDebitFromHold(
 
     await tx`
       INSERT INTO credit_ledger_entries (
+        id,
         user_id,
         request_id,
         hold_id,
@@ -392,6 +541,7 @@ export async function finalizeDebitFromHold(
         metadata
       )
       VALUES (
+        ${generateUuid()},
         ${hold.user_id},
         ${requestId},
         ${hold.id},
@@ -418,6 +568,8 @@ export async function releaseCreditHold(
     throw new Error("request_id_required");
   }
 
+  await ensureUsersBillingTable();
+  await ensureCreditTables();
   return runTransaction(async (tx) => {
     const holdResult = await tx`
       SELECT * FROM credit_holds WHERE request_id = ${requestId} FOR UPDATE
@@ -455,6 +607,7 @@ export async function releaseCreditHold(
 
     await tx`
       INSERT INTO credit_ledger_entries (
+        id,
         user_id,
         request_id,
         hold_id,
@@ -464,6 +617,7 @@ export async function releaseCreditHold(
         metadata
       )
       VALUES (
+        ${generateUuid()},
         ${hold.user_id},
         ${requestId},
         ${hold.id},
@@ -492,6 +646,8 @@ export async function grantCredits(
     throw new Error("grant_amount_must_be_positive");
   }
 
+  await ensureUsersBillingTable();
+  await ensureCreditTables();
   return runTransaction(async (tx) => {
     const updated = await tx`
       UPDATE users_billing
@@ -504,6 +660,7 @@ export async function grantCredits(
 
     await tx`
       INSERT INTO credit_ledger_entries (
+        id,
         user_id,
         request_id,
         entry_type,
@@ -512,6 +669,7 @@ export async function grantCredits(
         metadata
       )
       VALUES (
+        ${generateUuid()},
         ${userId},
         ${requestId || null},
         'grant',
@@ -532,10 +690,13 @@ export async function grantCredits(
 export async function getHoldByRequestId(
   requestId: string
 ): Promise<CreditHold | null> {
-  const result = await sql`
-    SELECT * FROM credit_holds WHERE request_id = ${requestId} LIMIT 1
-  `;
-  return (result.rows[0] as CreditHold) || null;
+  await ensureCreditTables();
+  return withCreditTables(async () => {
+    const result = await sql`
+      SELECT * FROM credit_holds WHERE request_id = ${requestId} LIMIT 1
+    `;
+    return (result.rows[0] as CreditHold) || null;
+  });
 }
 
 /**
@@ -545,28 +706,34 @@ export async function getLedgerEntries(
   userId: string,
   limit: number = 50
 ): Promise<CreditLedgerEntry[]> {
-  const result = await sql`
-    SELECT * FROM credit_ledger_entries
-    WHERE user_id = ${userId}
-    ORDER BY created_at DESC
-    LIMIT ${limit}
-  `;
-  return result.rows.map(coerceLedgerEntry);
+  await ensureCreditTables();
+  return withCreditTables(async () => {
+    const result = await sql`
+      SELECT * FROM credit_ledger_entries
+      WHERE user_id = ${userId}
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `;
+    return result.rows.map(coerceLedgerEntry);
+  });
 }
 
 /**
  * Check whether the user has any recorded paid credit grants (excludes free trial).
  */
 export async function hasPaidCreditGrant(userId: string): Promise<boolean> {
-  const result = await sql`
-    SELECT 1
-    FROM credit_ledger_entries
-    WHERE user_id = ${userId}
-      AND entry_type = 'grant'
-      AND COALESCE(metadata->>'reason', '') <> 'free_trial'
-    LIMIT 1
-  `;
-  return result.rows.length > 0;
+  await ensureCreditTables();
+  return withCreditTables(async () => {
+    const result = await sql`
+      SELECT 1
+      FROM credit_ledger_entries
+      WHERE user_id = ${userId}
+        AND entry_type = 'grant'
+        AND COALESCE(metadata->>'reason', '') <> 'free_trial'
+      LIMIT 1
+    `;
+    return result.rows.length > 0;
+  });
 }
 
 /**
@@ -609,7 +776,7 @@ export async function updateUserBillingCredits(
   // Convert Date to ISO string for SQL template
   const refreshAtValue = refreshAt instanceof Date ? refreshAt.toISOString() : refreshAt;
 
-  const result = await sql`
+  const result = await withUsersBillingTable(() => sql`
     UPDATE users_billing
     SET 
       credits_available = ${newCredits},
@@ -617,7 +784,7 @@ export async function updateUserBillingCredits(
       updated_at = now()
     WHERE user_id = ${userId}
     RETURNING *
-  `;
+  `);
 
   const updated = result.rows[0] as UserBilling;
   return { ...updated, is_frozen: updated.is_frozen ?? false };
@@ -647,14 +814,14 @@ export async function decrementCreditsIfAvailable(userId: string): Promise<boole
     if (!trialUsed) {
       // Mark trial as used and allow this try-on
       try {
-        const result = await sql`
+        const result = await withUsersBillingTable(() => sql`
           UPDATE users_billing
           SET 
             trial_used = true,
             updated_at = now()
           WHERE user_id = ${userId} AND (trial_used = false OR trial_used IS NULL)
           RETURNING *
-        `;
+        `);
         return result.rows.length > 0;
       } catch (err: unknown) {
         // If trial_used column doesn't exist, just allow the try-on
@@ -668,14 +835,14 @@ export async function decrementCreditsIfAvailable(userId: string): Promise<boole
     }
     
     // Use a transaction to ensure atomicity for regular credits
-    const result = await sql`
+    const result = await withUsersBillingTable(() => sql`
       UPDATE users_billing
       SET 
         credits_available = credits_available - 1,
         updated_at = now()
       WHERE user_id = ${userId} AND credits_available > 0
       RETURNING *
-    `;
+    `);
 
     return result.rows.length > 0;
   } catch (err) {
@@ -695,6 +862,8 @@ export async function grantFreeTrialOnce(
     return { granted: false, billing: await getOrCreateUserBilling(userId) };
   }
 
+  await ensureUsersBillingTable();
+  await ensureCreditTables();
   return runTransaction(async (tx) => {
     const billing = await ensureUserBillingWithLock(tx, userId);
     if (billing.trial_used) {
@@ -718,6 +887,7 @@ export async function grantFreeTrialOnce(
 
     await tx`
       INSERT INTO credit_ledger_entries (
+        id,
         user_id,
         entry_type,
         credits_change,
@@ -725,6 +895,7 @@ export async function grantFreeTrialOnce(
         metadata
       )
       VALUES (
+        ${generateUuid()},
         ${userId},
         'grant',
         ${grantAmount},
@@ -745,18 +916,20 @@ export async function grantFreeTrialOnce(
  * Returns updated billing or existing if already marked.
  */
 export async function markFreeTrialUsed(userId: string): Promise<UserBilling> {
-  const result = await sql`
-    UPDATE users_billing
-    SET trial_used = true, updated_at = now()
-    WHERE user_id = ${userId} AND (trial_used = false OR trial_used IS NULL)
-    RETURNING *
-  `;
+  return withUsersBillingTable(async () => {
+    const result = await sql`
+      UPDATE users_billing
+      SET trial_used = true, updated_at = now()
+      WHERE user_id = ${userId} AND (trial_used = false OR trial_used IS NULL)
+      RETURNING *
+    `;
 
-  if (result.rows.length === 0) {
-    return getOrCreateUserBilling(userId);
-  }
+    if (result.rows.length === 0) {
+      return getOrCreateUserBilling(userId);
+    }
 
-  return result.rows[0] as UserBilling;
+    return result.rows[0] as UserBilling;
+  });
 }
 
 /**
@@ -764,20 +937,22 @@ export async function markFreeTrialUsed(userId: string): Promise<UserBilling> {
  * Note: In production, users should only get one free try-on
  */
 export async function resetFreeTrial(userId: string): Promise<UserBilling> {
-  const result = await sql`
-    UPDATE users_billing
-    SET 
-      trial_used = false,
-      updated_at = now()
-    WHERE user_id = ${userId}
-    RETURNING *
-  `;
+  return withUsersBillingTable(async () => {
+    const result = await sql`
+      UPDATE users_billing
+      SET 
+        trial_used = false,
+        updated_at = now()
+      WHERE user_id = ${userId}
+      RETURNING *
+    `;
 
-  if (result.rows.length === 0) {
-    return getOrCreateUserBilling(userId);
-  }
+    if (result.rows.length === 0) {
+      return getOrCreateUserBilling(userId);
+    }
 
-  return result.rows[0] as UserBilling;
+    return result.rows[0] as UserBilling;
+  });
 }
 
 /**
@@ -800,25 +975,27 @@ export async function updateUserBillingPlan(
 
   const refreshAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-  const result = await sql`
-    UPDATE users_billing
-    SET 
-      plan = ${plan},
-      credits_available = ${monthlyCredits},
-      credits_refresh_at = ${plan === "free" ? null : refreshAt.toISOString()},
-      stripe_customer_id = COALESCE(${stripeCustomerId || null}, stripe_customer_id),
-      stripe_subscription_id = COALESCE(${stripeSubscriptionId || null}, stripe_subscription_id),
-      updated_at = now()
-    WHERE user_id = ${userId}
-    RETURNING *
-  `;
+  return withUsersBillingTable(async () => {
+    const result = await sql`
+      UPDATE users_billing
+      SET 
+        plan = ${plan},
+        credits_available = ${monthlyCredits},
+        credits_refresh_at = ${plan === "free" ? null : refreshAt.toISOString()},
+        stripe_customer_id = COALESCE(${stripeCustomerId || null}, stripe_customer_id),
+        stripe_subscription_id = COALESCE(${stripeSubscriptionId || null}, stripe_subscription_id),
+        updated_at = now()
+      WHERE user_id = ${userId}
+      RETURNING *
+    `;
 
-  if (result.rows.length === 0) {
-    // Create if doesn't exist
-    return getOrCreateUserBilling(userId);
-  }
+    if (result.rows.length === 0) {
+      // Create if doesn't exist
+      return getOrCreateUserBilling(userId);
+    }
 
-  return { ...(result.rows[0] as UserBilling), is_frozen: (result.rows[0] as UserBilling).is_frozen ?? false };
+    return { ...(result.rows[0] as UserBilling), is_frozen: (result.rows[0] as UserBilling).is_frozen ?? false };
+  });
 }
 
 /**
@@ -828,19 +1005,21 @@ export async function setUserBillingFrozen(
   userId: string,
   frozen: boolean
 ): Promise<UserBilling> {
-  const result = await sql`
-    UPDATE users_billing
-    SET is_frozen = ${frozen}, updated_at = now()
-    WHERE user_id = ${userId}
-    RETURNING *
-  `;
-  if (result.rows.length === 0) {
-    return getOrCreateUserBilling(userId);
-  }
-  return {
-    ...(result.rows[0] as UserBilling),
-    is_frozen: (result.rows[0] as UserBilling).is_frozen ?? false,
-  };
+  return withUsersBillingTable(async () => {
+    const result = await sql`
+      UPDATE users_billing
+      SET is_frozen = ${frozen}, updated_at = now()
+      WHERE user_id = ${userId}
+      RETURNING *
+    `;
+    if (result.rows.length === 0) {
+      return getOrCreateUserBilling(userId);
+    }
+    return {
+      ...(result.rows[0] as UserBilling),
+      is_frozen: (result.rows[0] as UserBilling).is_frozen ?? false,
+    };
+  });
 }
 
 /**
@@ -1501,24 +1680,6 @@ function generateUuid(): string {
     return v.toString(16);
   });
 }
-
-const getErrorMessage = (error: unknown): string => {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (typeof error === "string") {
-    return error;
-  }
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return "Unknown error";
-  }
-};
-
-const isMissingRelationError = (error: unknown, relation: string) => {
-  return getErrorMessage(error).toLowerCase().includes(`relation "${relation.toLowerCase()}" does not exist`);
-};
 
 async function createClothingItemsTable() {
   await sql`
