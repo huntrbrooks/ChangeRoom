@@ -8,6 +8,8 @@ type TryOnProgressLoaderProps = {
   isActive: boolean
   /** Status of the generation lifecycle */
   status: 'pending' | 'success' | 'error'
+  /** External readiness gate; when false, loader will pause at stage 4 */
+  canComplete?: boolean
   /** Optional failure message to surface on error */
   failureMessage?: string
   /** Called after the fade-out finishes */
@@ -65,13 +67,22 @@ const STAGES: Stage[] = [
 const MIN_STAGE_MS = 5000
 const EXIT_FADE_MS = 2400
 const FAILSAFE_EXIT_MS = 30000
+const DEFAULT_CAN_COMPLETE = true
 
-export function TryOnProgressLoader({ isActive, status, failureMessage, onFinished, onStageChange }: TryOnProgressLoaderProps) {
+export function TryOnProgressLoader({
+  isActive,
+  status,
+  canComplete = DEFAULT_CAN_COMPLETE,
+  failureMessage,
+  onFinished,
+  onStageChange,
+}: TryOnProgressLoaderProps) {
   const [progress, setProgress] = useState(0)
   const [stageIndex, setStageIndex] = useState(0)
   const [isExiting, setIsExiting] = useState(false)
   const progressRef = useRef(0)
   const statusRef = useRef(status)
+  const canCompleteRef = useRef(canComplete ?? DEFAULT_CAN_COMPLETE)
   const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const stage4GateRef = useRef(false)
@@ -81,6 +92,11 @@ export function TryOnProgressLoader({ isActive, status, failureMessage, onFinish
   useEffect(() => {
     statusRef.current = status
   }, [status])
+
+  // Keep latest completion gate for timers
+  useEffect(() => {
+    canCompleteRef.current = canComplete ?? DEFAULT_CAN_COMPLETE
+  }, [canComplete])
 
   // Centralized exit handling to guarantee fade-out and completion
   const startExit = React.useCallback(() => {
@@ -171,7 +187,7 @@ export function TryOnProgressLoader({ isActive, status, failureMessage, onFinish
     return () => cancelAnimationFrame(raf)
   }, [isActive, isExiting, stageIndex])
 
-  // Advance stages with fixed timing: stages 1-3 always 5s, stage 4 waits for min 5s then image ready
+  // Advance stages with fixed timing: stages 1-3 always 5s, stage 4 waits for min 5s then readiness + resolution
   useEffect(() => {
     if (!isActive || isExiting) return
 
@@ -193,12 +209,15 @@ export function TryOnProgressLoader({ isActive, status, failureMessage, onFinish
       }
     }
 
-    // Stage 4: enforce 5s minimum, then wait for resolution (success or error) before stage 5
+    // Stage 4: enforce 5s minimum, then wait for resolution (success or error) and completion gate before stage 5
     if (stageIndex === 3) {
       stage4GateRef.current = false
       stageTimerRef.current = setTimeout(() => {
         stage4GateRef.current = true
-        if (statusRef.current !== 'pending') {
+        const readyToExit =
+          statusRef.current !== 'pending' &&
+          (statusRef.current === 'error' || canCompleteRef.current === true)
+        if (readyToExit) {
           setStageIndex(STAGES.length - 1)
         }
       }, MIN_STAGE_MS)
@@ -212,18 +231,23 @@ export function TryOnProgressLoader({ isActive, status, failureMessage, onFinish
     }
   }, [isActive, isExiting, stageIndex])
 
-  // If generation resolves after stage 4 min time, advance to stage 5
+  // If generation resolves after stage 4 min time and completion gate is open, advance to stage 5
   useEffect(() => {
     if (!isActive || isExiting) return
-    if (stageIndex === 3 && stage4GateRef.current && status !== 'pending') {
+    if (
+      stageIndex === 3 &&
+      stage4GateRef.current &&
+      status !== 'pending' &&
+      (status === 'error' || canCompleteRef.current === true)
+    ) {
       setStageIndex(STAGES.length - 1)
     }
-  }, [isActive, isExiting, status, stageIndex])
+  }, [isActive, isExiting, status, stageIndex, canComplete])
 
-  // If generation resolves early (success or error), jump to stage 5 and start exit to avoid getting stuck
+  // If generation resolves with error early, jump to stage 5 and start exit to avoid getting stuck
   useEffect(() => {
     if (!isActive || isExiting) return
-    if (status !== 'pending' && stageIndex < STAGES.length - 1) {
+    if (status === 'error' && stageIndex < STAGES.length - 1) {
       setStageIndex(STAGES.length - 1)
       startExit()
     }

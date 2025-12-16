@@ -981,6 +981,15 @@ function HomeContent() {
           // Save to My Outfits (use original URL)
           saveOutfitToMyOutfits(imageUrl, preparedTryOnFiles, wardrobeItems);
           
+          // Mark trial as used if backend reported free trial consumption (idempotent)
+          if (tryOnRes?.data?.usedFreeTrial || (billing && !billing.trialUsed)) {
+            try {
+              await axios.post('/api/my/trial/consume');
+            } catch (consumeErr) {
+              console.warn('Failed to mark trial consumed client-side', consumeErr);
+            }
+          }
+
           // Refresh billing info after successful try-on
           if (isLoaded && user) {
             fetchBilling();

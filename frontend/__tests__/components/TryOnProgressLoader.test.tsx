@@ -70,5 +70,28 @@ describe('TryOnProgressLoader timing', () => {
     advance(2_400) // allow fade duration
     expect(onFinished).toHaveBeenCalled()
   })
+
+  it('holds at stage 4 until canComplete becomes true even after success', () => {
+    const { rerender } = render(<TryOnProgressLoader isActive status="pending" canComplete={false} />)
+
+    advance(5_000)
+    advance(5_000)
+    advance(5_000) // reach stage 4
+    expect(screen.getByText(/Stage 4\/5/i)).toBeInTheDocument()
+
+    act(() => {
+      rerender(<TryOnProgressLoader isActive status="success" canComplete={false} />)
+    })
+
+    advance(5_000) // stage 4 min gate elapses but completion gate is closed
+    expect(screen.getByText(/Stage 4\/5/i)).toBeInTheDocument()
+
+    act(() => {
+      rerender(<TryOnProgressLoader isActive status="success" canComplete />)
+    })
+
+    advance(100) // allow effect to promote to stage 5
+    expect(screen.getByText(/Stage 5\/5/i)).toBeInTheDocument()
+  })
 })
 

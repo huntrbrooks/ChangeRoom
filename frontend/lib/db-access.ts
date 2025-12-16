@@ -741,6 +741,25 @@ export async function grantFreeTrialOnce(
 }
 
 /**
+ * Mark the free trial as used without adjusting credits.
+ * Returns updated billing or existing if already marked.
+ */
+export async function markFreeTrialUsed(userId: string): Promise<UserBilling> {
+  const result = await sql`
+    UPDATE users_billing
+    SET trial_used = true, updated_at = now()
+    WHERE user_id = ${userId} AND (trial_used = false OR trial_used IS NULL)
+    RETURNING *
+  `;
+
+  if (result.rows.length === 0) {
+    return getOrCreateUserBilling(userId);
+  }
+
+  return result.rows[0] as UserBilling;
+}
+
+/**
  * Reset free trial for a user (for testing/admin purposes)
  * Note: In production, users should only get one free try-on
  */

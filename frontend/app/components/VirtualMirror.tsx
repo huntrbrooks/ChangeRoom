@@ -23,6 +23,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
 }) => {
   const [showLoader, setShowLoader] = useState(false);
   const [hasRun, setHasRun] = useState(false);
+  const [imageReady, setImageReady] = useState(false);
   const loaderFallbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const LOADER_FADE_MS = 2400;
 
@@ -30,13 +31,22 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
   const hasError = Boolean(errorMessage);
   const status: 'pending' | 'success' | 'error' =
     isLoading ? 'pending' : hasResult ? 'success' : hasError ? 'error' : 'pending';
+  const canCompleteLoader = status === 'error' ? true : imageReady;
 
   useEffect(() => {
     if (isLoading) {
       setHasRun(true);
       setShowLoader(true);
+      setImageReady(false);
     }
   }, [isLoading]);
+
+  useEffect(() => {
+    // Reset readiness whenever a new image URL is provided
+    if (imageUrl) {
+      setImageReady(false);
+    }
+  }, [imageUrl]);
 
   // Keep loader visible through resolution (success or error) to allow full fade-out
   useEffect(() => {
@@ -57,7 +67,8 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
       clearTimeout(loaderFallbackTimerRef.current);
       loaderFallbackTimerRef.current = null;
     }
-    if (status !== 'pending') {
+    const canFinish = status !== 'pending' && canCompleteLoader;
+    if (canFinish) {
       loaderFallbackTimerRef.current = setTimeout(() => {
         setShowLoader(false);
       }, LOADER_FADE_MS + 200);
@@ -68,7 +79,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
         loaderFallbackTimerRef.current = null;
       }
     };
-  }, [status]);
+  }, [status, canCompleteLoader]);
 
   const handleLoaderFinished = () => {
     setShowLoader(false);
@@ -87,6 +98,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
         <TryOnProgressLoader
           isActive={showLoader}
           status={status}
+          canComplete={canCompleteLoader}
           failureMessage={hasError ? errorMessage || undefined : undefined}
           onStageChange={onStageChange}
           onFinished={handleLoaderFinished}
@@ -104,6 +116,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
             decoding="async"
             fetchPriority="high"
             onLoad={() => {
+              setImageReady(true);
               console.log('Try-on image loaded successfully');
             }}
             onError={(e) => {
