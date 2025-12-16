@@ -50,7 +50,7 @@ export function PricingTable({
     setLoading(product.plan);
     try {
       let priceId: string;
-      let mode: "subscription" | "payment" = "payment";
+      const mode: "subscription" | "payment" = "payment";
       if (product.plan === 'standard') {
         priceId = stripeConfig.starterXmasPriceId || stripeConfig.starterPriceId;
       } else if (product.plan === 'pro') {

@@ -114,11 +114,11 @@ function errorMessageIncludes(error: unknown, text: string): boolean {
   );
 }
 
-// Lightweight transaction helper for @vercel/postgres
-// @ts-ignore begin exists on the sql client at runtime
-const runTransaction = async <T>(fn: (tx: typeof sql) => Promise<T>): Promise<T> =>
-  // @ts-ignore begin is available on the sql client
-  sql.begin(async (tx: typeof sql) => fn(tx));
+// Lightweight transaction helper for @vercel/postgres (begin is available at runtime)
+const runTransaction = async <T>(fn: (tx: typeof sql) => Promise<T>): Promise<T> => {
+  const client = sql as unknown as { begin: (cb: (tx: typeof sql) => Promise<T>) => Promise<T> };
+  return client.begin(async (tx: typeof sql) => fn(tx));
+};
 
 async function ensureUserBillingWithLock(
   tx: typeof sql,
@@ -147,17 +147,17 @@ async function ensureUserBillingWithLock(
   return inserted.rows[0] as UserBilling;
 }
 
-function coerceLedgerEntry(row: any): CreditLedgerEntry {
+function coerceLedgerEntry(row: Record<string, unknown>): CreditLedgerEntry {
   return {
-    id: row.id,
-    user_id: row.user_id,
-    request_id: row.request_id,
-    hold_id: row.hold_id,
-    entry_type: row.entry_type,
-    credits_change: row.credits_change,
-    balance_after: row.balance_after,
-    metadata: (row.metadata || {}) as Record<string, unknown>,
-    created_at: row.created_at,
+    id: row.id as string,
+    user_id: row.user_id as string,
+    request_id: (row.request_id as string) || null,
+    hold_id: (row.hold_id as string) || null,
+    entry_type: row.entry_type as CreditLedgerEntryType,
+    credits_change: row.credits_change as number,
+    balance_after: (row.balance_after as number) ?? null,
+    metadata: (row.metadata as Record<string, unknown>) || {},
+    created_at: row.created_at as Date,
   };
 }
 
@@ -481,7 +481,6 @@ export async function grantCredits(
   }
 
   return runTransaction(async (tx) => {
-    const billing = await ensureUserBillingWithLock(tx, userId);
     const updated = await tx`
       UPDATE users_billing
       SET 
@@ -661,7 +660,7 @@ export async function decrementCreditsIfAvailable(userId: string): Promise<boole
 /**
  * Atomically mark free trial as used and optionally grant credits once.
  */
-export async function useFreeTrialOnce(
+export async function grantFreeTrialOnce(
   userId: string,
   grantAmount: number
 ): Promise<{ granted: boolean; billing: UserBilling }> {
