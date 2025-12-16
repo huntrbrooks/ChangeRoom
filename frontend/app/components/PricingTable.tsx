@@ -4,11 +4,18 @@
 import React from 'react';
 import { Check, Zap, Crown, Sparkles } from 'lucide-react';
 import { getAllProducts, ProductFeatures, PlanType } from '@/lib/products';
-import { stripePublicConfig } from '@/lib/config';
 import { useUser } from '@clerk/nextjs';
 import { trackProductView, trackFeatureClick, trackCheckoutInitiated } from '@/lib/clerk-tracking';
-import axios from 'axios';
 import { ANALYTICS_EVENTS, captureEvent } from '@/lib/analytics';
+
+const checkoutLinks = {
+  starter: 'https://buy.stripe.com/dRmbJ15uoevr14AbLhbMQ07',
+  starterXmas: 'https://buy.stripe.com/4gM5kDbSMgDzeVq2aHbMQ06',
+  value: 'https://buy.stripe.com/7sY8wP1e80EBeVqbLhbMQ05',
+  proPack: 'https://buy.stripe.com/bJebJ1e0UcnjfZu8z5bMQ04',
+  creatorSubscription: 'https://buy.stripe.com/cNiaEX6ys2MJaFa16DbMQ03',
+  powerSubscription: 'https://buy.stripe.com/fZu8wPe0U2MJcNi7v1bMQ02',
+} as const;
 
 interface PricingTableProps {
   currentPlan?: PlanType;
@@ -50,19 +57,15 @@ export function PricingTable({
     // Default: initiate checkout
     setLoading(product.plan);
     try {
-      let priceId: string;
-      const mode: "subscription" | "payment" = "payment";
-      if (product.plan === 'standard') {
-        priceId = stripePublicConfig.starterXmasPriceId || stripePublicConfig.starterPriceId;
-      } else if (product.plan === 'pro') {
-        priceId = stripePublicConfig.proPriceId;
-      } else {
-        return;
-      }
+      const url =
+        product.plan === 'standard'
+          ? checkoutLinks.starterXmas || checkoutLinks.starter
+          : product.plan === 'pro'
+            ? checkoutLinks.proPack
+            : '';
 
-      // Validate price ID before proceeding
-      if (!priceId || !priceId.trim() || !priceId.startsWith('price_')) {
-        console.error('Invalid price ID for plan:', product.plan, priceId);
+      if (!url) {
+        console.error('Missing checkout URL for plan:', product.plan);
         alert('Payment configuration error. Please contact support.');
         setLoading(null);
         return;
@@ -70,32 +73,21 @@ export function PricingTable({
 
       // Track checkout initiation
       if (user) {
-        await trackCheckoutInitiated(user, product.plan, priceId);
+        await trackCheckoutInitiated(user, product.plan, url);
       }
       captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
         plan: product.plan,
-        price_id: priceId,
-        mode,
+        checkout_url: url,
+        mode: 'payment',
         source: 'pricing_table',
         user_id: user?.id,
       });
 
-      const response = await axios.post('/api/billing/create-checkout-session', {
-        priceId,
-        mode,
-        startTrial: currentPlan === 'free',
-      });
-
-      if (response.data?.url) {
-        window.location.href = response.data.url;
-      } else {
-        throw new Error('No checkout URL returned');
-      }
+      window.location.href = url;
     } catch (error: any) {
       console.error('Checkout error:', error);
       const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
-      const errorDetails = error.response?.data?.details || '';
-      alert(errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage);
+      alert(errorMessage);
     } finally {
       setLoading(null);
     }
@@ -360,41 +352,31 @@ export function PricingTable({
               <button
                 onClick={async () => {
                   setLoading('small-pack');
-                  const priceId = stripePublicConfig.starterXmasPriceId || stripePublicConfig.starterPriceId;
-                  
-                  // Validate price ID
-                  if (!priceId || !priceId.trim() || !priceId.startsWith('price_')) {
-                    console.error('Invalid price ID for small credit pack:', priceId);
+                  const url = checkoutLinks.starter || checkoutLinks.starterXmas;
+
+                  if (!url) {
+                    console.error('Missing checkout URL for small credit pack');
                     alert('Payment configuration error. Please contact support.');
                     setLoading(null);
                     return;
                   }
 
                   if (user) {
-                    await trackCheckoutInitiated(user, 'credit-pack', priceId);
+                    await trackCheckoutInitiated(user, 'credit-pack', url);
                   }
                   captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
                     plan: 'credit-pack',
-                    price_id: priceId,
+                    checkout_url: url,
                     mode: 'payment',
                     source: 'pricing_table_small_pack',
                     user_id: user?.id,
                   });
                   try {
-                    const response = await axios.post('/api/billing/create-checkout-session', {
-                      priceId,
-                      mode: 'payment',
-                    });
-                    if (response.data?.url) {
-                      window.location.href = response.data.url;
-                    } else {
-                      throw new Error('No checkout URL returned');
-                    }
+                    window.location.href = url;
                   } catch (error: any) {
                     console.error('Checkout error:', error);
                     const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
-                    const errorDetails = error.response?.data?.details || '';
-                    alert(errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage);
+                    alert(errorMessage);
                   } finally {
                     setLoading(null);
                   }
@@ -417,41 +399,31 @@ export function PricingTable({
               <button
                 onClick={async () => {
                   setLoading('large-pack');
-                  const priceId = stripePublicConfig.proPriceId;
-                  
-                  // Validate price ID
-                  if (!priceId || !priceId.trim() || !priceId.startsWith('price_')) {
-                    console.error('Invalid price ID for large credit pack:', priceId);
+                  const url = checkoutLinks.proPack;
+
+                  if (!url) {
+                    console.error('Missing checkout URL for large credit pack');
                     alert('Payment configuration error. Please contact support.');
                     setLoading(null);
                     return;
                   }
 
                   if (user) {
-                    await trackCheckoutInitiated(user, 'credit-pack', priceId);
+                    await trackCheckoutInitiated(user, 'credit-pack', url);
                   }
                   captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
                     plan: 'credit-pack',
-                    price_id: priceId,
+                    checkout_url: url,
                     mode: 'payment',
                     source: 'pricing_table_large_pack',
                     user_id: user?.id,
                   });
                   try {
-                    const response = await axios.post('/api/billing/create-checkout-session', {
-                      priceId,
-                      mode: 'payment',
-                    });
-                    if (response.data?.url) {
-                      window.location.href = response.data.url;
-                    } else {
-                      throw new Error('No checkout URL returned');
-                    }
+                    window.location.href = url;
                   } catch (error: any) {
                     console.error('Checkout error:', error);
                     const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
-                    const errorDetails = error.response?.data?.details || '';
-                    alert(errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage);
+                    alert(errorMessage);
                   } finally {
                     setLoading(null);
                   }
