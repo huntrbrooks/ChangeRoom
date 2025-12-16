@@ -7,6 +7,7 @@ interface FileWithMetadata extends File {
   metadata?: Record<string, unknown>;
   detailed_description?: string;
   category?: string;
+  brand?: string;
 }
 
 interface AnalyzedItem {

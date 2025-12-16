@@ -348,11 +348,11 @@ export function PricingTable({
                 <h4 className="font-semibold text-black">Small Pack</h4>
               </div>
               <div className="text-2xl font-bold text-black mb-2">20 credits</div>
-              <div className="text-sm text-black/60 mb-4">$4.99 one-time</div>
+              <div className="text-sm text-black/60 mb-4">A$14.99 one-time</div>
               <button
                 onClick={async () => {
                   setLoading('small-pack');
-                  const priceId = stripeConfig.creditPackSmallPriceId;
+                  const priceId = stripeConfig.starterXmasPriceId || stripeConfig.starterPriceId;
                   
                   // Validate price ID
                   if (!priceId || !priceId.trim() || !priceId.startsWith('price_')) {
@@ -398,11 +398,11 @@ export function PricingTable({
                 <h4 className="font-semibold text-black">Large Pack</h4>
               </div>
               <div className="text-2xl font-bold text-black mb-2">100 credits</div>
-              <div className="text-sm text-black/60 mb-4">$19.99 one-time</div>
+              <div className="text-sm text-black/60 mb-4">A$89.99 one-time</div>
               <button
                 onClick={async () => {
                   setLoading('large-pack');
-                  const priceId = stripeConfig.creditPackLargePriceId;
+                  const priceId = stripeConfig.proPriceId;
                   
                   // Validate price ID
                   if (!priceId || !priceId.trim() || !priceId.startsWith('price_')) {

@@ -639,6 +639,8 @@ function HomeContent() {
 
     let preparedTryOnFiles: File[] = [];
 
+    let requestId: string | null = null;
+
     try {
       const ingestUrl = process.env.NEXT_PUBLIC_INGEST_URL;
       const logIngest = (payload: Record<string, unknown>) => {
@@ -667,7 +669,7 @@ function HomeContent() {
       // Step 1: Call Try-On API (sequential execution - must succeed before product search)
       let tryOnRes;
       try {
-        const requestId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        requestId = (typeof crypto !== 'undefined' && crypto.randomUUID)
           ? crypto.randomUUID()
           : `req-${Date.now()}`;
         const tryOnFormData = new FormData();
@@ -899,7 +901,9 @@ function HomeContent() {
         // #endregion
         if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
           try {
-            await axios.post('/api/try-on/cancel', { requestId });
+            if (requestId) {
+              await axios.post('/api/try-on/cancel', { requestId });
+            }
           } catch {
             // ignore
           }

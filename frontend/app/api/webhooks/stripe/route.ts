@@ -127,12 +127,12 @@ export async function POST(req: NextRequest) {
           break;
         }
 
-        // Determine plan from price ID
+        // Determine plan from price ID (subscriptions mapped via Creator/Power)
         const priceId = subscription.items.data[0]?.price.id;
         let plan: "free" | "standard" | "pro" = "free";
-        if (priceId === stripeConfig.standardPriceId) {
+        if (priceId === stripeConfig.creatorPriceId) {
           plan = "standard";
-        } else if (priceId === stripeConfig.proPriceId) {
+        } else if (priceId === stripeConfig.powerPriceId) {
           plan = "pro";
         }
 

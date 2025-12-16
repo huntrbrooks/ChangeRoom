@@ -207,6 +207,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         subcategory?: string;
         color?: string;
         style?: string;
+        brand?: string;
         description?: string;
         tags?: string[];
         filename?: string;

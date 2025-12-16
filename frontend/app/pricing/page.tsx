@@ -1,13 +1,8 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import nextDynamic from 'next/dynamic';
 import type { Metadata } from 'next';
 import { ArrowLeft } from 'lucide-react';
-
-const DynamicPricingTable = nextDynamic(
-  () => import('../components/PricingTable').then((m) => m.PricingTable),
-  { ssr: false }
-);
+import { PricingTable } from '../components/PricingTable';
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
@@ -72,7 +67,7 @@ function PricingPageContent() {
         </div>
 
         <div className="bg-white border border-[#8B5CF6]/30 rounded-2xl p-4 md:p-6 shadow-sm">
-          <DynamicPricingTable showCreditPacks />
+          <PricingTable showCreditPacks />
         </div>
       </div>
     </div>

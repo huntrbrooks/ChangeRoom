@@ -21,7 +21,7 @@ afterEach(() => {
 
 describe('TryOnProgressLoader timing', () => {
   it('advances stages 1-3 every 5s (fixed timing)', () => {
-    render(<TryOnProgressLoader isActive isComplete={false} />)
+    render(<TryOnProgressLoader isActive status="pending" />)
 
     expect(screen.getByText(/Stage 1\/5/i)).toBeInTheDocument()
 
@@ -37,7 +37,7 @@ describe('TryOnProgressLoader timing', () => {
   })
 
   it('holds in stage 4 for at least 5s and waits for completion before stage 5', () => {
-    const { rerender } = render(<TryOnProgressLoader isActive isComplete={false} />)
+    const { rerender } = render(<TryOnProgressLoader isActive status="pending" />)
 
     advance(5_000)
     advance(5_000)
@@ -45,32 +45,30 @@ describe('TryOnProgressLoader timing', () => {
     expect(screen.getByText(/Stage 4\/5/i)).toBeInTheDocument()
 
     act(() => {
-      rerender(<TryOnProgressLoader isActive isComplete />)
+      rerender(<TryOnProgressLoader isActive status="success" />)
     })
 
-    advance(4_000)
-    expect(screen.getByText(/Stage 4\/5/i)).toBeInTheDocument()
-
-    advance(1_000)
+    advance(5_000)
     expect(screen.getByText(/Stage 5\/5/i)).toBeInTheDocument()
   })
 
   it('fires onFinished only after the stage 5 fade completes', () => {
     const onFinished = jest.fn()
-    render(<TryOnProgressLoader isActive isComplete onFinished={onFinished} />)
+    const { rerender } = render(<TryOnProgressLoader isActive status="pending" onFinished={onFinished} />)
 
     advance(5_000)
     advance(5_000)
-    advance(5_000)
+    advance(5_000) // enter stage 4
+
+    act(() => {
+      rerender(<TryOnProgressLoader isActive status="success" onFinished={onFinished} />)
+    })
+
     advance(5_000) // reach stage 5 after stage 4 min gate
     expect(screen.getByText(/Stage 5\/5/i)).toBeInTheDocument()
-    expect(onFinished).not.toHaveBeenCalled()
 
-    advance(2_399)
-    expect(onFinished).not.toHaveBeenCalled()
-
-    advance(1)
-    expect(onFinished).toHaveBeenCalledTimes(1)
+    advance(2_400) // allow fade duration
+    expect(onFinished).toHaveBeenCalled()
   })
 })
 

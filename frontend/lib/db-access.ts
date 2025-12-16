@@ -115,9 +115,9 @@ function errorMessageIncludes(error: unknown, text: string): boolean {
 }
 
 // Lightweight transaction helper for @vercel/postgres
-// @ts-expect-error begin exists on the sql client at runtime
+// @ts-ignore begin exists on the sql client at runtime
 const runTransaction = async <T>(fn: (tx: typeof sql) => Promise<T>): Promise<T> =>
-  // @ts-expect-error begin is available on the sql client
+  // @ts-ignore begin is available on the sql client
   sql.begin(async (tx: typeof sql) => fn(tx));
 
 async function ensureUserBillingWithLock(
