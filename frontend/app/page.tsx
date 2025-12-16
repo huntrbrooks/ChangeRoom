@@ -123,13 +123,6 @@ function HomeContent() {
   }, [isLoaded, user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (activeTab === 'my-outfits' && shouldLockMyOutfits) {
-      setActiveTab('try-on');
-      router.push('/pricing?ref=my-outfits');
-    }
-  }, [activeTab, router, shouldLockMyOutfits]);
-
-  useEffect(() => {
     if (
       isPreviewResult &&
       generatedImage &&
@@ -221,6 +214,14 @@ function HomeContent() {
       !hasPaidAccess,
     [billing, hasCreditsAvailable, hasPaidAccess, isBypass, isLoaded, user]
   );
+
+  useEffect(() => {
+    if (activeTab === 'my-outfits' && shouldLockMyOutfits) {
+      setActiveTab('try-on');
+      router.push('/pricing?ref=my-outfits');
+    }
+  }, [activeTab, router, shouldLockMyOutfits]);
+
   const canAttemptTryOn = isAuthenticated && !isGenerating;
 
   const requireAuth = useCallback(() => {
