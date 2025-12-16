@@ -484,6 +484,106 @@ export function PricingTable({
           </div>
         </div>
       )}
+
+      {/* Subscriptions */}
+      <div className="mt-10 pt-8 border-t border-black/20">
+        <h3 className="text-lg font-semibold text-black mb-4">Subscriptions</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Creator Subscription */}
+          <div className="border border-black/20 rounded-lg p-4 bg-gray-100/30">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="w-4 h-4 text-black" />
+              <h4 className="font-semibold text-black">Creator Subscription</h4>
+            </div>
+            <div className="text-2xl font-bold text-black mb-1">A$24.99 / month</div>
+            <div className="text-sm text-black/60 mb-4">25 credits per month</div>
+            <button
+              onClick={async () => {
+                setLoading('creator-sub');
+                const url = checkoutLinks.creatorSubscription;
+
+                if (!url) {
+                  console.error('Missing checkout URL for creator subscription');
+                  alert('Payment configuration error. Please contact support.');
+                  setLoading(null);
+                  return;
+                }
+
+                if (user) {
+                  await trackCheckoutInitiated(user, 'subscription', url);
+                }
+                captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
+                  plan: 'creator-subscription',
+                  checkout_url: url,
+                  mode: 'subscription',
+                  source: 'pricing_table_creator_subscription',
+                  user_id: user?.id,
+                });
+                try {
+                  window.location.href = url;
+                } catch (error: any) {
+                  console.error('Checkout error:', error);
+                  const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
+                  alert(errorMessage);
+                } finally {
+                  setLoading(null);
+                }
+              }}
+              disabled={loading !== null}
+              className="w-full py-2 bg-black/20 text-black rounded-lg font-semibold hover:bg-black/30 transition-colors disabled:opacity-50 border border-black/30"
+            >
+              {loading === 'creator-sub' ? 'Loading...' : 'Subscribe'}
+            </button>
+          </div>
+
+          {/* Power Subscription */}
+          <div className="border border-black/20 rounded-lg p-4 bg-gray-100/30">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="w-4 h-4 text-black" />
+              <h4 className="font-semibold text-black">Power Subscription</h4>
+            </div>
+            <div className="text-2xl font-bold text-black mb-1">A$49.99 / month</div>
+            <div className="text-sm text-black/60 mb-4">70 credits per month</div>
+            <button
+              onClick={async () => {
+                setLoading('power-sub');
+                const url = checkoutLinks.powerSubscription;
+
+                if (!url) {
+                  console.error('Missing checkout URL for power subscription');
+                  alert('Payment configuration error. Please contact support.');
+                  setLoading(null);
+                  return;
+                }
+
+                if (user) {
+                  await trackCheckoutInitiated(user, 'subscription', url);
+                }
+                captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
+                  plan: 'power-subscription',
+                  checkout_url: url,
+                  mode: 'subscription',
+                  source: 'pricing_table_power_subscription',
+                  user_id: user?.id,
+                });
+                try {
+                  window.location.href = url;
+                } catch (error: any) {
+                  console.error('Checkout error:', error);
+                  const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
+                  alert(errorMessage);
+                } finally {
+                  setLoading(null);
+                }
+              }}
+              disabled={loading !== null}
+              className="w-full py-2 bg-black/20 text-black rounded-lg font-semibold hover:bg-black/30 transition-colors disabled:opacity-50 border border-black/30"
+            >
+              {loading === 'power-sub' ? 'Loading...' : 'Subscribe'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
