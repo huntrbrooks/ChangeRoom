@@ -510,7 +510,7 @@ export function PricingTable({
                 }
 
                 if (user) {
-                  await trackCheckoutInitiated(user, 'subscription', url);
+                  await trackCheckoutInitiated(user, 'standard', url);
                 }
                 captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
                   plan: 'creator-subscription',
@@ -557,7 +557,7 @@ export function PricingTable({
                 }
 
                 if (user) {
-                  await trackCheckoutInitiated(user, 'subscription', url);
+                  await trackCheckoutInitiated(user, 'pro', url);
                 }
                 captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
                   plan: 'power-subscription',
