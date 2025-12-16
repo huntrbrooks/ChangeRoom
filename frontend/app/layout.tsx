@@ -11,6 +11,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Footer } from "./components/Footer";
 import PwaRegister from "./components/PwaRegister";
+import { PostHogClientProvider } from "./providers/PostHogProvider";
+import { AnalyticsUserSync } from "./components/AnalyticsUserSync";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -102,18 +104,20 @@ export default function RootLayout({
       <html lang="en">
         <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-black flex flex-col min-h-screen`}>
           <PwaRegister />
-          {statusMessage && (
-            <div className="w-full bg-yellow-300 text-black text-center py-2 text-sm font-semibold border-b border-yellow-700">
-              {statusMessage}
+          <PostHogClientProvider>
+            {statusMessage && (
+              <div className="w-full bg-yellow-300 text-black text-center py-2 text-sm font-semibold border-b border-yellow-700">
+                {statusMessage}
+              </div>
+            )}
+            <header className="flex justify-end items-center p-4 gap-4 h-16 bg-white border-b border-black/10">
+              {/* Clerk components unavailable - invalid or missing key */}
+            </header>
+            <div className="flex-1">
+              {children}
             </div>
-          )}
-          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-white border-b border-black/10">
-            {/* Clerk components unavailable - invalid or missing key */}
-          </header>
-          <div className="flex-1">
-            {children}
-          </div>
-          <Footer />
+            <Footer />
+          </PostHogClientProvider>
         </body>
       </html>
     );
@@ -133,28 +137,31 @@ export default function RootLayout({
           className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#FAF9F6] text-black flex flex-col min-h-screen`}
         >
           <PwaRegister />
-          {statusMessage && (
-            <div className="w-full bg-yellow-300 text-black text-center py-2 text-sm font-semibold border-b border-yellow-700">
-              {statusMessage}
+          <PostHogClientProvider>
+            <AnalyticsUserSync />
+            {statusMessage && (
+              <div className="w-full bg-yellow-300 text-black text-center py-2 text-sm font-semibold border-b border-yellow-700">
+                {statusMessage}
+              </div>
+            )}
+            <header className="flex justify-end items-center p-4 gap-4 h-16 bg-[#FAF9F6] border-b border-[#8B5CF6]/20">
+              <SignedOut>
+                <SignInButton />
+                <SignUpButton>
+                  <button className="bg-black text-white rounded-none font-semibold text-xs sm:text-sm h-10 sm:h-12 px-6 sm:px-8 cursor-pointer hover:bg-gray-900 transition-colors uppercase tracking-wider">
+                    Sign Up
+                  </button>
+                </SignUpButton>
+              </SignedOut>
+              <SignedIn>
+                <UserButton />
+              </SignedIn>
+            </header>
+            <div className="flex-1">
+              {children}
             </div>
-          )}
-          <header className="flex justify-end items-center p-4 gap-4 h-16 bg-[#FAF9F6] border-b border-[#8B5CF6]/20">
-            <SignedOut>
-              <SignInButton />
-              <SignUpButton>
-                <button className="bg-black text-white rounded-none font-semibold text-xs sm:text-sm h-10 sm:h-12 px-6 sm:px-8 cursor-pointer hover:bg-gray-900 transition-colors uppercase tracking-wider">
-                  Sign Up
-                </button>
-              </SignUpButton>
-            </SignedOut>
-            <SignedIn>
-              <UserButton />
-            </SignedIn>
-          </header>
-          <div className="flex-1">
-            {children}
-          </div>
-          <Footer />
+            <Footer />
+          </PostHogClientProvider>
         </body>
       </html>
     </ClerkProvider>

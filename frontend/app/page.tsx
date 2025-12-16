@@ -17,6 +17,7 @@ import { Sparkles, Search, Loader2, CreditCard, Zap, Shirt } from 'lucide-react'
 import { getWearingStylePromptText } from '@/lib/wearingStyles';
 import { isBypassUser } from '@/lib/bypass-config';
 import { ensureAbsoluteUrl } from '@/lib/url';
+import { ANALYTICS_EVENTS, captureEvent } from '@/lib/analytics';
 
 // Force dynamic rendering to prevent static generation issues with Clerk
 export const dynamic = 'force-dynamic';
@@ -73,6 +74,8 @@ function HomeContent() {
   const [isPreviewResult, setIsPreviewResult] = useState(false);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
+  const [lastRequestId, setLastRequestId] = useState<string | null>(null);
+  const [hasShownPaywallAfterResult, setHasShownPaywallAfterResult] = useState(false);
   const [activeTab, setActiveTab] = useState<'try-on' | 'my-outfits'>('try-on');
   const [isShopSaveOpen, setIsShopSaveOpen] = useState(false);
   const [shopSaveResults, setShopSaveResults] = useState<ShopSaveResult[]>([]);
@@ -117,6 +120,32 @@ function HomeContent() {
       fetchBilling();
     }
   }, [isLoaded, user]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (
+      isPreviewResult &&
+      generatedImage &&
+      !isGenerating &&
+      !hasShownPaywallAfterResult
+    ) {
+      setShowPaywall(true);
+      setHasShownPaywallAfterResult(true);
+      captureEvent(ANALYTICS_EVENTS.PAYWALL_VIEW_AFTER_RESULT, {
+        request_id: lastRequestId,
+        plan: billing?.plan ?? 'free',
+        credits_available: billing?.creditsAvailable ?? null,
+        used_free_trial: true,
+      });
+    }
+  }, [
+    billing?.creditsAvailable,
+    billing?.plan,
+    generatedImage,
+    hasShownPaywallAfterResult,
+    isGenerating,
+    isPreviewResult,
+    lastRequestId,
+  ]);
 
   // Check for Stripe checkout session completion
   useEffect(() => {
@@ -623,6 +652,8 @@ function HomeContent() {
     // Clear previous image to show loading state immediately
     setGeneratedImage(null);
     setIsPreviewResult(false);
+    setHasShownPaywallAfterResult(false);
+    setShowPaywall(false);
 
     // Create abort controller for cancellation
     const controller = new AbortController();
@@ -687,6 +718,18 @@ function HomeContent() {
       tryOnFormData.append('main_index', '0');
 
         preparedTryOnFiles = activeWardrobeItems.map(item => item.file);
+
+        setLastRequestId(requestId);
+        captureEvent(ANALYTICS_EVENTS.TRY_ON_ATTEMPT, {
+          request_id: requestId,
+          wardrobe_items: activeWardrobeItems.length,
+          user_images: userImages.length,
+          plan: billing?.plan ?? 'free',
+          credits_available: billing?.creditsAvailable ?? null,
+          free_trial_eligible: isOnTrial,
+          bypass: isBypass,
+          is_authenticated: isAuthenticated,
+        });
 
         preparedTryOnFiles.forEach((file, index) => {
           if (!file) {
@@ -868,6 +911,22 @@ function HomeContent() {
 
         if (tryOnRes.data.image_url) {
           const imageUrl = tryOnRes.data.image_url;
+          
+          captureEvent(ANALYTICS_EVENTS.TRY_ON_SUCCESS, {
+            request_id: requestId,
+            used_free_trial: Boolean(tryOnRes?.data?.usedFreeTrial),
+            plan: billing?.plan ?? 'free',
+            credits_available: billing?.creditsAvailable ?? null,
+            wardrobe_items: preparedTryOnFiles.length,
+            user_images: userImages.length,
+          });
+          if (tryOnRes?.data?.usedFreeTrial) {
+            captureEvent(ANALYTICS_EVENTS.FREE_TRY_ON_COMPLETED, {
+              request_id: requestId,
+              plan: billing?.plan ?? 'free',
+              credits_available: billing?.creditsAvailable ?? null,
+            });
+          }
           
           // For data URLs (base64), we can't add a timestamp, but React will update if the URL changes
           // For regular URLs, add timestamp to force refresh on repeated uses

@@ -7,6 +7,7 @@ import {
   updateUserBillingCredits,
   setUserBillingFrozen,
 } from "@/lib/db-access";
+import { ANALYTICS_EVENTS, captureServerEvent } from "@/lib/server-analytics";
 
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
 function getStripe() {
@@ -74,6 +75,8 @@ export async function POST(req: NextRequest) {
           [stripeConfig.proPriceId]: 100,
         };
 
+        let derivedPlan: "free" | "standard" | "pro" | "credit-pack" = "credit-pack";
+
         if (session.mode === "subscription") {
           // Handle subscription creation (Creator/Power)
           const subscriptionId = session.subscription as string;
@@ -84,6 +87,7 @@ export async function POST(req: NextRequest) {
           } else if (priceIdFromSession === stripeConfig.powerPriceId) {
             plan = "pro";
           }
+          derivedPlan = plan;
 
           await updateUserBillingPlan(
             clerkUserId,
@@ -113,6 +117,25 @@ export async function POST(req: NextRequest) {
             }
           }
         }
+        await captureServerEvent(
+          ANALYTICS_EVENTS.PURCHASE_COMPLETED,
+          {
+            mode: session.mode,
+            price_id: priceIdFromSession,
+            plan: derivedPlan,
+            credit_amount:
+              session.mode === "payment"
+                ? parseInt(session.metadata?.creditAmount || "0", 10) ||
+                  creditAmountMap[priceIdFromSession] ||
+                  0
+                : undefined,
+            session_id: session.id,
+            currency: session.currency,
+            amount_total: typeof session.amount_total === "number" ? session.amount_total / 100 : undefined,
+            user_id: clerkUserId,
+          },
+          clerkUserId || customerId
+        );
         break;
       }
 
