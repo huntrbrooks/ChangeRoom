@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
@@ -70,6 +70,7 @@ function HomeContent() {
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isTryOnLoading, setIsTryOnLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [isPreviewResult, setIsPreviewResult] = useState(false);
@@ -86,6 +87,8 @@ function HomeContent() {
   const cardClass =
     "rounded-2xl border border-black/10 bg-white/95 shadow-[0_12px_40px_rgba(0,0,0,0.06)] backdrop-blur-sm";
   const cardPadding = "p-3 sm:p-4 md:p-6";
+  const resultImageLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const creditLoggedRef = useRef(false);
 
   const withRetry = useCallback(
     async function withRetryFn<T>(fn: () => Promise<T>, retries = 2, delayMs = 1500): Promise<T> {
@@ -108,6 +111,14 @@ function HomeContent() {
 
   const handleLoaderStageChange = useCallback((stageId: number) => {
     console.info('try-on-stage', { stageId, ts: Date.now() });
+  }, []);
+
+  const handleResultImageLoaded = useCallback(() => {
+    if (resultImageLoadTimerRef.current) {
+      clearTimeout(resultImageLoadTimerRef.current);
+      resultImageLoadTimerRef.current = null;
+    }
+    setIsTryOnLoading(false);
   }, []);
 
   useEffect(() => {
@@ -214,6 +225,27 @@ function HomeContent() {
       !hasPaidAccess,
     [billing, hasCreditsAvailable, hasPaidAccess, isBypass, isLoaded, user]
   );
+
+  const noteCreditUse = useCallback(() => {
+    if (creditLoggedRef.current) {
+      return;
+    }
+    creditLoggedRef.current = true;
+    console.info('credit-used', {
+      requestId: lastRequestId,
+      plan: billing?.plan ?? 'unknown',
+      creditsBefore: billing?.creditsAvailable ?? null,
+    });
+    setBilling((prev) => {
+      if (!prev || isBypass) return prev;
+      // Skip decrement for free trial users (trial handled separately)
+      if (isOnTrial) return prev;
+      if (typeof prev.creditsAvailable === 'number' && prev.creditsAvailable > 0) {
+        return { ...prev, creditsAvailable: prev.creditsAvailable - 1 };
+      }
+      return prev;
+    });
+  }, [billing?.creditsAvailable, billing?.plan, isBypass, isOnTrial, lastRequestId]);
 
   useEffect(() => {
     if (activeTab === 'my-outfits' && shouldLockMyOutfits) {
@@ -681,6 +713,12 @@ function HomeContent() {
     }
 
     // Reset state for new generation
+    creditLoggedRef.current = false;
+    if (resultImageLoadTimerRef.current) {
+      clearTimeout(resultImageLoadTimerRef.current);
+      resultImageLoadTimerRef.current = null;
+    }
+    setIsTryOnLoading(true);
     setIsGenerating(true);
     setError(null);
     setProducts([]);
@@ -971,6 +1009,14 @@ function HomeContent() {
           }
           
           // Force state update by setting to null first, then to new URL
+          noteCreditUse();
+          if (resultImageLoadTimerRef.current) {
+            clearTimeout(resultImageLoadTimerRef.current);
+            resultImageLoadTimerRef.current = null;
+          }
+          resultImageLoadTimerRef.current = setTimeout(() => {
+            setIsTryOnLoading(false);
+          }, 20000);
           setGeneratedImage(null);
           // Use requestAnimationFrame to ensure DOM update
           requestAnimationFrame(() => {
@@ -1011,6 +1057,7 @@ function HomeContent() {
             // ignore
           }
           setError('Operation cancelled');
+          setIsTryOnLoading(false);
           setIsGenerating(false);
           console.error = originalError;
           return;
@@ -1019,6 +1066,7 @@ function HomeContent() {
         // Handle no credits error
         if (error.response?.status === 402 || error.response?.data?.error === 'no_credits') {
           redirectToPricing();
+          setIsTryOnLoading(false);
           setIsGenerating(false);
           console.error = originalError;
           return;
@@ -1033,6 +1081,7 @@ function HomeContent() {
           ? `The try-on is taking longer than expected. This usually means our servers are busy. Please try again in a few moments.`
           : error.response?.data?.detail || error.response?.data?.error || error.message || "We couldn't generate your try-on. Please check your photos and try again.";
         setError(`Try-on failed: ${errorMessage}`);
+        setIsTryOnLoading(false);
         setIsGenerating(false);
         console.error = originalError; // Restore original error handler
         return; // Stop execution if try-on fails
@@ -1100,6 +1149,7 @@ function HomeContent() {
       const error = err as { name?: string; code?: string; response?: { status?: number; data?: { detail?: string } }; message?: string };
       if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
         setError('Operation cancelled');
+        setIsTryOnLoading(false);
         setIsGenerating(false);
         console.error = originalError;
         return;
@@ -1113,11 +1163,15 @@ function HomeContent() {
       } else {
         setError(error.response?.data?.detail || error.message || "An unexpected error occurred. Please try again.");
       }
+      setIsTryOnLoading(false);
     } finally {
       setIsGenerating(false);
       // Clean up abort controller
       if (controller) {
         setAbortController(null);
+      }
+      if (!creditLoggedRef.current) {
+        setIsTryOnLoading(false);
       }
       console.error = originalError; // Restore original error handler
     }
@@ -1482,12 +1536,13 @@ function HomeContent() {
               </h2>
               <VirtualMirror
                 imageUrl={generatedImage}
-                isLoading={isGenerating}
+                isLoading={isTryOnLoading}
                 errorMessage={error}
                 onStageChange={handleLoaderStageChange}
                 isPreview={isPreviewResult}
                 onDownloadClean={redirectToPricing}
                 onTryAnother={redirectToPricing}
+                onImageLoaded={handleResultImageLoaded}
               />
               {generatedImage && !isGenerating && user && (
                 <div className="mt-4 rounded-lg border border-black/20 bg-black/5 p-4">

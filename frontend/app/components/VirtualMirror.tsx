@@ -10,6 +10,7 @@ interface VirtualMirrorProps {
   isPreview?: boolean;
   onDownloadClean?: () => void;
   onTryAnother?: () => void;
+  onImageLoaded?: () => void;
 }
 
 export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
@@ -20,6 +21,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
   isPreview = false,
   onDownloadClean,
   onTryAnother,
+  onImageLoaded,
 }) => {
   const [showLoader, setShowLoader] = useState(false);
   const [hasRun, setHasRun] = useState(false);
@@ -117,6 +119,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
             fetchPriority="high"
             onLoad={() => {
               setImageReady(true);
+              onImageLoaded?.();
               console.log('Try-on image loaded successfully');
             }}
             onError={(e) => {

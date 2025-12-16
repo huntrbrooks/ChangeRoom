@@ -219,6 +219,7 @@ export function TryOnProgressLoader({
           (statusRef.current === 'error' || canCompleteRef.current === true)
         if (readyToExit) {
           setStageIndex(STAGES.length - 1)
+          startExit()
         }
       }, MIN_STAGE_MS)
     }
@@ -241,8 +242,9 @@ export function TryOnProgressLoader({
       (status === 'error' || canCompleteRef.current === true)
     ) {
       setStageIndex(STAGES.length - 1)
+      startExit()
     }
-  }, [isActive, isExiting, status, stageIndex, canComplete])
+  }, [isActive, isExiting, status, stageIndex, canComplete, startExit])
 
   // If generation resolves with error early, jump to stage 5 and start exit to avoid getting stuck
   useEffect(() => {

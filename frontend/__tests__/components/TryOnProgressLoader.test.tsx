@@ -68,6 +68,9 @@ describe('TryOnProgressLoader timing', () => {
     expect(screen.getByText(/Stage 5\/5/i)).toBeInTheDocument()
 
     advance(2_400) // allow fade duration
+    act(() => {
+      jest.runOnlyPendingTimers()
+    })
     expect(onFinished).toHaveBeenCalled()
   })
 
