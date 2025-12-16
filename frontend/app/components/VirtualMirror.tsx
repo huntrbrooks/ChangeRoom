@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Download, Share2 } from 'lucide-react';
 import { TryOnProgressLoader } from './TryOnProgressLoader';
 
@@ -26,6 +26,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
   const [showLoader, setShowLoader] = useState(false);
   const [hasRun, setHasRun] = useState(false);
   const [imageReady, setImageReady] = useState(false);
+  const imgElRef = useRef<HTMLImageElement | null>(null);
   const loaderFallbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const LOADER_FADE_MS = 2400;
 
@@ -49,6 +50,50 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
       setImageReady(false);
     }
   }, [imageUrl]);
+
+  // Failproof: mark ready even if the browser doesn't fire onLoad (cached/instant render)
+  useEffect(() => {
+    if (!imageUrl) return;
+
+    let cancelled = false;
+
+    const markIfComplete = () => {
+      const el = imgElRef.current;
+      if (!el) return;
+      if (el.complete && el.naturalWidth > 0) {
+        if (!cancelled) {
+          setImageReady(true);
+          onImageLoaded?.();
+        }
+      }
+    };
+
+    // 1) Check DOM img after mount
+    const raf = requestAnimationFrame(markIfComplete);
+
+    // 2) Preload via Image() as a backup (covers some edge cases where ref isn't set yet)
+    try {
+      const pre = new Image();
+      pre.src = imageUrl;
+      if (pre.complete) {
+        markIfComplete();
+      } else {
+        pre.onload = () => {
+          if (!cancelled) {
+            setImageReady(true);
+            onImageLoaded?.();
+          }
+        };
+      }
+    } catch {
+      // ignore
+    }
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
+  }, [imageUrl, onImageLoaded]);
 
   // Keep loader visible through resolution (success or error) to allow full fade-out
   useEffect(() => {
@@ -114,6 +159,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
             key={imageUrl} 
             src={imageUrl} 
             alt="Virtual Try-On Result" 
+            ref={imgElRef}
             className="w-full h-full object-cover"
             loading="eager"
             decoding="async"
