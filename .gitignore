@@ -10,3 +10,4 @@ dist/
 build/
 *.pyc
 .cursor/debug.log
+.cursor/plans/
