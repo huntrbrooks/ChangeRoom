@@ -340,19 +340,19 @@ export function PricingTable({
       {showCreditPacks && (
         <div className="mt-8 pt-8 border-t border-black/20">
           <h3 className="text-lg font-semibold text-black mb-4">Or Buy Credits</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Small Pack */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Starter Pack */}
             <div className="border border-black/20 rounded-lg p-4 bg-gray-100/30">
               <div className="flex items-center gap-2 mb-3">
                 <Sparkles className="w-4 h-4 text-black" />
-                <h4 className="font-semibold text-black">Small Pack</h4>
+                <h4 className="font-semibold text-black">Starter Pack</h4>
               </div>
-              <div className="text-2xl font-bold text-black mb-2">20 credits</div>
+              <div className="text-2xl font-bold text-black mb-2">10 credits</div>
               <div className="text-sm text-black/60 mb-4">A$14.99 one-time</div>
               <button
                 onClick={async () => {
                   setLoading('small-pack');
-                  const url = checkoutLinks.starter || checkoutLinks.starterXmas;
+                  const url = checkoutLinks.starter;
 
                   if (!url) {
                     console.error('Missing checkout URL for small credit pack');
@@ -388,11 +388,58 @@ export function PricingTable({
               </button>
             </div>
 
-            {/* Large Pack */}
+            {/* Value Pack */}
             <div className="border border-black/20 rounded-lg p-4 bg-gray-100/30">
               <div className="flex items-center gap-2 mb-3">
                 <Sparkles className="w-4 h-4 text-black" />
-                <h4 className="font-semibold text-black">Large Pack</h4>
+                <h4 className="font-semibold text-black">Value Pack</h4>
+              </div>
+              <div className="text-2xl font-bold text-black mb-2">30 credits</div>
+              <div className="text-sm text-black/60 mb-4">A$34.99 one-time</div>
+              <button
+                onClick={async () => {
+                  setLoading('value-pack');
+                  const url = checkoutLinks.value;
+
+                  if (!url) {
+                    console.error('Missing checkout URL for value credit pack');
+                    alert('Payment configuration error. Please contact support.');
+                    setLoading(null);
+                    return;
+                  }
+
+                  if (user) {
+                    await trackCheckoutInitiated(user, 'credit-pack', url);
+                  }
+                  captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
+                    plan: 'credit-pack',
+                    checkout_url: url,
+                    mode: 'payment',
+                    source: 'pricing_table_value_pack',
+                    user_id: user?.id,
+                  });
+                  try {
+                    window.location.href = url;
+                  } catch (error: any) {
+                    console.error('Checkout error:', error);
+                    const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
+                    alert(errorMessage);
+                  } finally {
+                    setLoading(null);
+                  }
+                }}
+                disabled={loading !== null}
+                className="w-full py-2 bg-black/20 text-black rounded-lg font-semibold hover:bg-black/30 transition-colors disabled:opacity-50 border border-black/30"
+              >
+                {loading === 'value-pack' ? 'Loading...' : 'Buy Now'}
+              </button>
+            </div>
+
+            {/* Pro Pack */}
+            <div className="border border-black/20 rounded-lg p-4 bg-gray-100/30">
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles className="w-4 h-4 text-black" />
+                <h4 className="font-semibold text-black">Pro Pack</h4>
               </div>
               <div className="text-2xl font-bold text-black mb-2">100 credits</div>
               <div className="text-sm text-black/60 mb-4">A$89.99 one-time</div>

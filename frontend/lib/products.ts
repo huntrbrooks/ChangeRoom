@@ -59,8 +59,8 @@ export const productFeatures: Record<PlanType, ProductFeatures> = {
   },
   standard: {
     plan: 'standard',
-    name: 'Christmas Starter',
-    description: 'Limited Xmas promo - 20 credits',
+    name: 'Starter (Xmas Promo)',
+    description: 'Limited Xmas promo - 20 credits one-time',
     price: {
       amount: 14.99,
       currency: 'AUD',
@@ -94,17 +94,12 @@ export const productFeatures: Record<PlanType, ProductFeatures> = {
         name: 'High Quality Results',
         description: 'Photorealistic try-on images',
       },
-      {
-        id: 'monthly-refresh',
-        name: 'Monthly Credit Refresh',
-        description: 'Credits automatically refresh each month',
-      },
     ],
   },
   pro: {
     plan: 'pro',
-    name: 'Pro',
-    description: 'Best value for power users and professionals',
+    name: 'Pro Pack',
+    description: '100 credits one-time (best value)',
     price: {
       amount: 89.99,
       currency: 'AUD',
@@ -138,11 +133,6 @@ export const productFeatures: Record<PlanType, ProductFeatures> = {
         id: 'high-quality',
         name: 'High Quality Results',
         description: 'Photorealistic try-on images',
-      },
-      {
-        id: 'monthly-refresh',
-        name: 'Monthly Credit Refresh',
-        description: 'Credits automatically refresh each month',
       },
       {
         id: 'priority-support',
