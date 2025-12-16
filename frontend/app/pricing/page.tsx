@@ -21,28 +21,26 @@ function PricingPageContent() {
   return (
     <div className="min-h-screen bg-[#FAF9F6] text-black">
       <header className="border-b border-[#8B5CF6]/20 sticky top-0 bg-[#FAF9F6]/95 backdrop-blur-md z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+        <div className="container mx-auto px-4 py-4 grid grid-cols-[1fr_auto_1fr] items-center">
           <Link
             href="/"
-            className="flex items-center gap-2 text-[#8B5CF6] hover:text-[#8B5CF6]/80 transition-colors"
+            className="flex items-center gap-2 text-[#8B5CF6] hover:text-[#8B5CF6]/80 transition-colors justify-self-start"
           >
             <ArrowLeft size={20} />
             <span>Back to Home</span>
           </Link>
-          <div className="flex-1 flex justify-center">
-            <div className="flex flex-col items-center">
-              <Image
-                src="/main logo Black.png"
-                alt="IGetDressed.Online logo"
-                width={240}
-                height={48}
-                priority
-                className="h-8 md:h-10 w-auto object-contain"
-              />
-              <span className="sr-only">Pricing & Plans</span>
-            </div>
+          <div className="flex flex-col items-center justify-center">
+            <Image
+              src="/main logo Black.png"
+              alt="IGetDressed.Online logo"
+              width={240}
+              height={48}
+              priority
+              className="h-8 md:h-10 w-auto object-contain"
+            />
+            <span className="sr-only">Pricing & Plans</span>
           </div>
-          <div className="w-20" aria-hidden />
+          <div className="justify-self-end" aria-hidden />
         </div>
       </header>
 
