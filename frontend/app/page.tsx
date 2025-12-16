@@ -89,6 +89,7 @@ function HomeContent() {
   const cardPadding = "p-3 sm:p-4 md:p-6";
   const resultImageLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const creditLoggedRef = useRef(false);
+  const trialConsumedRef = useRef(false);
 
   const withRetry = useCallback(
     async function withRetryFn<T>(fn: () => Promise<T>, retries = 2, delayMs = 1500): Promise<T> {
@@ -714,6 +715,7 @@ function HomeContent() {
 
     // Reset state for new generation
     creditLoggedRef.current = false;
+    trialConsumedRef.current = false;
     if (resultImageLoadTimerRef.current) {
       clearTimeout(resultImageLoadTimerRef.current);
       resultImageLoadTimerRef.current = null;
@@ -1031,6 +1033,8 @@ function HomeContent() {
           if (tryOnRes?.data?.usedFreeTrial || (billing && !billing.trialUsed)) {
             try {
               await axios.post('/api/my/trial/consume');
+          trialConsumedRef.current = true;
+          setBilling((prev) => (prev ? { ...prev, trialUsed: true } : prev));
             } catch (consumeErr) {
               console.warn('Failed to mark trial consumed client-side', consumeErr);
             }
@@ -1170,7 +1174,7 @@ function HomeContent() {
       if (controller) {
         setAbortController(null);
       }
-      if (!creditLoggedRef.current) {
+      if (!creditLoggedRef.current && !trialConsumedRef.current) {
         setIsTryOnLoading(false);
       }
       console.error = originalError; // Restore original error handler
