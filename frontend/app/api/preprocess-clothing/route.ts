@@ -4,10 +4,32 @@ import OpenAI from "openai";
 import type { ChatCompletionContentPart } from "openai/resources/chat/completions";
 import { openaiConfig } from "@/lib/config";
 import { insertClothingItems } from "@/lib/db-access";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { r2, getPublicUrl } from "@/lib/r2";
+import { r2Config } from "@/lib/config";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
 
 const openai = new OpenAI({
   apiKey: openaiConfig.apiKey,
 });
+
+async function getR2ObjectDataUrl(key: string): Promise<{ dataUrl: string; mimeType: string }> {
+  const command = new GetObjectCommand({
+    Bucket: r2Config.bucketName,
+    Key: key,
+  });
+  const res = await r2.send(command);
+
+  const chunks: Uint8Array[] = [];
+  // @ts-expect-error Body is a stream; type defs don't always include async iterator
+  for await (const chunk of res.Body) {
+    chunks.push(chunk);
+  }
+  const buffer = Buffer.concat(chunks);
+  const mimeType = res.ContentType || "image/jpeg";
+  const base64 = buffer.toString("base64");
+  return { dataUrl: `data:${mimeType};base64,${base64}`, mimeType };
+}
 
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
@@ -17,12 +39,26 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // Best-effort per-instance rate limiting
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip") ||
+      "unknown";
+    const rlUser = checkRateLimit(`preprocess:user:${userId}`, 10, 60_000);
+    const rlIp = checkRateLimit(`preprocess:ip:${ip}`, 30, 60_000);
+    if (!rlUser.allowed || !rlIp.allowed) {
+      return NextResponse.json(
+        { error: "rate_limited", retryAfterMs: 60_000 },
+        { status: 429 }
+      );
+    }
+
     const body = await req.json();
     const { items } = body as {
       items: {
         storageKey: string;
-        publicUrl: string;
-        mimeType: string;
+        publicUrl?: string;
+        mimeType?: string;
         originalFilename?: string;
       }[];
     };
@@ -39,6 +75,19 @@ export async function POST(req: NextRequest) {
         { error: "Maximum 5 items allowed" },
         { status: 400 }
       );
+    }
+
+    // Validate storage keys belong to this user
+    for (const item of items) {
+      if (
+        typeof item?.storageKey !== "string" ||
+        !item.storageKey.startsWith(`clothing/user_${userId}/`)
+      ) {
+        return NextResponse.json(
+          { error: "Invalid storage key for this user" },
+          { status: 403 }
+        );
+      }
     }
 
     const contentParts: ChatCompletionContentPart[] = [
@@ -66,11 +115,13 @@ Return JSON only, matching the schema, one item per input image, with index matc
       },
     ];
 
+    // Fetch the images from R2 using storageKey; do NOT trust client-provided URLs to avoid SSRF.
     for (const it of items) {
+      const { dataUrl } = await getR2ObjectDataUrl(it.storageKey);
       contentParts.push({
         type: "image_url",
         image_url: {
-          url: it.publicUrl,
+          url: dataUrl,
         },
       });
     }
@@ -146,16 +197,6 @@ Return JSON only, matching the schema, one item per input image, with index matc
       }[];
     };
 
-    // Validate storage keys belong to this user
-    for (const item of items) {
-      if (!item.storageKey.startsWith(`clothing/user_${userId}/`)) {
-        return NextResponse.json(
-          { error: "Invalid storage key for this user" },
-          { status: 403 }
-        );
-      }
-    }
-
     // Prepare items for insertion
     const itemsToInsert = parsed.items
       .map((meta) => {
@@ -164,7 +205,7 @@ Return JSON only, matching the schema, one item per input image, with index matc
 
         return {
           storageKey: src.storageKey,
-          publicUrl: src.publicUrl,
+          publicUrl: getPublicUrl(src.storageKey),
           category: meta.category,
           subcategory: meta.subcategory || null,
           color: meta.color || null,

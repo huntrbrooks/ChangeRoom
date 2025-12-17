@@ -4,7 +4,6 @@ import { stripeConfig } from "@/lib/config";
 import {
   getUserBillingByStripeCustomer,
   updateUserBillingPlan,
-  updateUserBillingCredits,
   grantCredits,
   setUserBillingFrozen,
 } from "@/lib/db-access";

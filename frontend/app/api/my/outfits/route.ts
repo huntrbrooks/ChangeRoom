@@ -104,8 +104,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const billing = await getOrCreateUserBilling(userId);
-    const hasPurchase = billing.plan !== "free" || (await hasPaidCreditGrant(userId));
+    await getOrCreateUserBilling(userId);
     // Allow saving even if My Outfits viewing is gated; do not block on purchase
 
     const body = await req.json().catch(() => ({}));

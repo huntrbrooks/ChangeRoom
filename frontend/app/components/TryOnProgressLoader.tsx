@@ -228,7 +228,7 @@ export function TryOnProgressLoader({
         stageTimerRef.current = null
       }
     }
-  }, [isActive, isExiting, stageIndex])
+  }, [isActive, isExiting, stageIndex, startExit])
 
   // If completion gate opens after stage 4 min time (or error), advance to stage 5
   useEffect(() => {

@@ -7,6 +7,7 @@ import {
   updateUserBillingPlan,
   isUserOnFreeTrial,
 } from "@/lib/db-access";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
 function getStripe() {
@@ -29,6 +30,19 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip") ||
+      "unknown";
+    const rlUser = checkRateLimit(`checkout-session:user:${userId}`, 10, 60_000);
+    const rlIp = checkRateLimit(`checkout-session:ip:${ip}`, 30, 60_000);
+    if (!rlUser.allowed || !rlIp.allowed) {
+      return NextResponse.json(
+        { error: "rate_limited", retryAfterMs: 60_000 },
+        { status: 429 }
+      );
+    }
+
     const body = await req.json();
     const { priceId, mode, startTrial } = body as {
       priceId: string;

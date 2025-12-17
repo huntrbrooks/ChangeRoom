@@ -7,13 +7,19 @@ import { VirtualMirror } from '@/app/components/VirtualMirror'
 jest.mock('@/app/components/TryOnProgressLoader', () => {
   const React = require('react')
   return {
-    TryOnProgressLoader: (props: any) => {
+    TryOnProgressLoader: ({
+      status,
+      onFinished,
+    }: {
+      status: 'pending' | 'success' | 'error'
+      onFinished?: () => void
+    }) => {
       React.useEffect(() => {
-        if (props.status !== 'pending') {
-          props.onFinished?.()
+        if (status !== 'pending') {
+          onFinished?.()
         }
-      }, [props.status, props.onFinished])
-      return <div data-testid="mock-loader" data-status={props.status} />
+      }, [status, onFinished])
+      return <div data-testid="mock-loader" data-status={status} />
     },
   }
 })

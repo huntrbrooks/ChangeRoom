@@ -3,12 +3,26 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 import { generateSignedPutUrl, getPublicUrl } from "@/lib/r2";
 import { randomUUID } from "crypto";
 import { countClothingItemsByUser } from "@/lib/db-access";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
 
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    "unknown";
+  const rlUser = checkRateLimit(`upload-urls:user:${userId}`, 60, 60_000);
+  const rlIp = checkRateLimit(`upload-urls:ip:${ip}`, 120, 60_000);
+  if (!rlUser.allowed || !rlIp.allowed) {
+    return NextResponse.json(
+      { error: "rate_limited", retryAfterMs: 60_000 },
+      { status: 429 }
+    );
   }
 
   const body = await req.json();
@@ -19,6 +33,9 @@ export async function POST(req: NextRequest) {
 
   if (!files || !Array.isArray(files) || files.length === 0) {
     return NextResponse.json({ error: "No files" }, { status: 400 });
+  }
+  if (files.length > 10) {
+    return NextResponse.json({ error: "Too many files" }, { status: 400 });
   }
 
   if (!kind || (kind !== "clothing" && kind !== "person")) {
@@ -55,21 +72,34 @@ export async function POST(req: NextRequest) {
   const uploads = [];
 
   for (const f of files) {
+    const mimeType = typeof f?.mimeType === "string" ? f.mimeType : "";
+    if (
+      mimeType !== "image/jpeg" &&
+      mimeType !== "image/jpg" &&
+      mimeType !== "image/png" &&
+      mimeType !== "image/webp"
+    ) {
+      return NextResponse.json(
+        { error: "Unsupported mimeType" },
+        { status: 400 }
+      );
+    }
+
     const ext =
       f.extension ||
-      (f.mimeType === "image/png" ? "png" : "jpg");
+      (mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "jpg");
 
     const id = randomUUID();
     const key = `${kind}/user_${userId}/${id}.${ext}`;
 
-    const uploadUrl = await generateSignedPutUrl(key, f.mimeType, 600); // 10 minutes
+    const uploadUrl = await generateSignedPutUrl(key, mimeType, 600); // 10 minutes
     const publicUrl = getPublicUrl(key);
 
     uploads.push({
       key,
       uploadUrl,
       publicUrl,
-      mimeType: f.mimeType,
+      mimeType,
     });
   }
 

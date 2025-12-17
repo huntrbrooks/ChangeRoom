@@ -17,6 +17,9 @@ This document lists all required and optional environment variables for the Chan
 |----------|-------------|---------|---------|
 | `PYTHON_VERSION` | Python version for deployment | `3.10.0` | `3.10.0` |
 | `PORT` | Server port (set by hosting platform) | `8000` | `8000` |
+| `ALLOWED_ORIGINS` | Comma-separated CORS allowlist for the backend | (built-in defaults) | `https://igetdressed.online,https://www.igetdressed.online` |
+| `MAX_FILE_SIZE` | Max bytes per uploaded image | `10485760` | `10485760` |
+| `MAX_TOTAL_SIZE` | Max bytes per request across all images | `52428800` | `52428800` |
 
 ## Frontend Environment Variables
 
@@ -50,6 +53,7 @@ This document lists all required and optional environment variables for the Chan
 | `TRYON_FREE_CREDITS` | Number of free credits for new users | `10` | `10` |
 | `TRYON_STANDARD_MONTHLY_CREDITS` | Monthly credits for Standard plan | `50` | `50` |
 | `TRYON_PRO_MONTHLY_CREDITS` | Monthly credits for Pro plan | `250` | `250` |
+| `METRICS_EMAIL_SECRET` | Secret token to call the admin-only `/api/metrics-email` route | (none) | `your-long-random-token` |
 
 ## Environment Setup
 
@@ -94,6 +98,7 @@ All environment variables must be set in your hosting platform (e.g., Render, Ve
    - Set all required variables in Vercel dashboard
    - Ensure `NEXT_PUBLIC_*` variables are set for client-side access
    - Use production API keys (not test keys)
+   - Set `METRICS_EMAIL_SECRET` to enable the admin-only metrics endpoint
 
 ## Security Notes
 
@@ -103,6 +108,22 @@ All environment variables must be set in your hosting platform (e.g., Render, Ve
 4. **Use environment-specific values** - Test keys for dev, live keys for prod
 5. **Restrict API key permissions** - Only grant necessary permissions
 6. **Monitor API usage** - Set up alerts for unusual activity
+
+## Production hardening checklist (recommended)
+
+### Frontend (Vercel)
+- **Set `METRICS_EMAIL_SECRET`**:
+  - Call `/api/metrics-email` with `Authorization: Bearer <METRICS_EMAIL_SECRET>` (or `x-metrics-token`)
+  - If unset, the endpoint returns **404** (disabled by default)
+- **Keep Stripe webhook secret private**: `STRIPE_WEBHOOK_SECRET`
+- **R2 + DB secrets**: keep `R2_*` and `DATABASE_URL` server-only (do not expose via `NEXT_PUBLIC_*`)
+
+### Backend (Render)
+- **CORS allowlist**: set `ALLOWED_ORIGINS` to your production domains.
+- **Uploads limits**: tune `MAX_FILE_SIZE` / `MAX_TOTAL_SIZE` as needed.
+- **Endpoint protections**:
+  - Expensive endpoints are **rate-limited** per instance (best-effort).
+  - `/api/read-image-metadata` is restricted to files **inside `uploads/`** (prevents arbitrary server file reads).
 
 ## Validation
 

@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import Stripe from "stripe";
 import { stripeConfig, appConfig } from "@/lib/config";
 import { getOrCreateUserBilling } from "@/lib/db-access";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
 function getStripe() {
@@ -23,6 +24,19 @@ export async function POST(_req: NextRequest) {
   }
 
   try {
+    const ip =
+      _req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      _req.headers.get("x-real-ip") ||
+      "unknown";
+    const rlUser = checkRateLimit(`billing-portal:user:${userId}`, 10, 60_000);
+    const rlIp = checkRateLimit(`billing-portal:ip:${ip}`, 30, 60_000);
+    if (!rlUser.allowed || !rlIp.allowed) {
+      return NextResponse.json(
+        { error: "rate_limited", retryAfterMs: 60_000 },
+        { status: 429 }
+      );
+    }
+
     const billing = await getOrCreateUserBilling(userId);
 
     if (!billing.stripe_customer_id) {

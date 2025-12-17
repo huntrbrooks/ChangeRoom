@@ -76,13 +76,17 @@ Analyze clothing images with OpenAI and save to database.
   "items": [
     {
       "storageKey": "clothing/user_xxx/uuid.jpg",
-      "publicUrl": "https://cdn.../clothing/...",
+      "publicUrl": "https://cdn.../clothing/...", 
       "mimeType": "image/jpeg",
       "originalFilename": "my-shirt.jpg"
     }
   ]
 }
 ```
+
+**Notes:**
+- `publicUrl` is **optional** and is **not trusted** for fetching images (to avoid SSRF). The route reads the object directly from R2 using `storageKey`.
+- `mimeType` is optional; metadata is derived from the stored object when possible.
 
 **Response:**
 ```json
@@ -168,6 +172,12 @@ Fetch user's clothing items and person images.
 3. Run database migrations
 4. Configure R2 bucket and CDN
 5. Update frontend components to use new API routes
+
+## Security & production notes
+
+- **Rate limits**: several routes apply best-effort per-instance rate limits (you can add a shared Redis limiter later if needed).
+- **Open redirect protection**: `/api/r` only allows `http`/`https` targets.
+- **Admin-only metrics**: `/api/metrics-email` is admin-only and requires `METRICS_EMAIL_SECRET` (see `ENVIRONMENT_VARIABLES.md`).
 
 
 

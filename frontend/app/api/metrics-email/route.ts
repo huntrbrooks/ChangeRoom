@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 const POSTHOG_PROJECT_ID = process.env.POSTHOG_PROJECT_ID;
 const POSTHOG_KEY = process.env.POSTHOG_KEY;
@@ -9,6 +10,15 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const METRICS_EMAIL_TO = process.env.METRICS_EMAIL_TO;
 const METRICS_EMAIL_FROM =
   process.env.METRICS_EMAIL_FROM || "metrics@igetdressed.online";
+const METRICS_EMAIL_SECRET = process.env.METRICS_EMAIL_SECRET;
+
+const getToken = (req: NextRequest) => {
+  const auth = req.headers.get("authorization") || "";
+  const bearer = auth.toLowerCase().startsWith("bearer ")
+    ? auth.slice(7).trim()
+    : null;
+  return bearer || req.headers.get("x-metrics-token");
+};
 
 type MetricsRow = Record<string, number>;
 
@@ -145,6 +155,25 @@ function buildEmailHtml(metrics: MetricsRow): string {
 
 async function handleRequest(_req: NextRequest) {
   try {
+    // Admin-only: require a shared secret; if not set, behave as if the route does not exist.
+    if (!METRICS_EMAIL_SECRET) {
+      return NextResponse.json({ error: "not_found" }, { status: 404 });
+    }
+    const token = getToken(_req);
+    if (!token || token !== METRICS_EMAIL_SECRET) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+
+    // Best-effort per-instance rate limit
+    const ip =
+      _req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      _req.headers.get("x-real-ip") ||
+      "unknown";
+    const rl = checkRateLimit(`metrics-email:${ip}`, 5, 60_000);
+    if (!rl.allowed) {
+      return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+    }
+
     const metrics = await fetchMetrics();
 
     if (!RESEND_API_KEY || !METRICS_EMAIL_TO) {

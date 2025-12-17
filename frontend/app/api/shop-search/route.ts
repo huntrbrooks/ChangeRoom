@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { findBestOffersForQuery, buildSearchQueryFromItem } from "@/lib/shop/providers";
 import { getClothingItemsByIds, upsertClothingItemOffers, getClothingItemOffers } from "@/lib/db-access";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 type DbClothingItem = Awaited<ReturnType<typeof getClothingItemsByIds>>[number];
 
@@ -32,6 +33,19 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip") ||
+      "unknown";
+    const rlUser = checkRateLimit(`shop-search:user:${userId}`, 30, 60_000);
+    const rlIp = checkRateLimit(`shop-search:ip:${ip}`, 60, 60_000);
+    if (!rlUser.allowed || !rlIp.allowed) {
+      return NextResponse.json(
+        { error: "rate_limited", retryAfterMs: 60_000 },
+        { status: 429 }
+      );
+    }
+
     const startedAt = Date.now();
     const body = await req.json();
     const { clothingItemIds, itemMetadata } = body as {
@@ -182,6 +196,19 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip") ||
+      "unknown";
+    const rlUser = checkRateLimit(`shop-search-get:user:${userId}`, 60, 60_000);
+    const rlIp = checkRateLimit(`shop-search-get:ip:${ip}`, 120, 60_000);
+    if (!rlUser.allowed || !rlIp.allowed) {
+      return NextResponse.json(
+        { error: "rate_limited", retryAfterMs: 60_000 },
+        { status: 429 }
+      );
+    }
+
     const searchParams = req.nextUrl.searchParams;
     const clothingItemId = searchParams.get("clothingItemId");
 

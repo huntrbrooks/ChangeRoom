@@ -108,3 +108,15 @@ def test_read_metadata_nonexistent_file(client: TestClient):
     response = client.get("/api/read-image-metadata?image_path=nonexistent.jpg")
     assert response.status_code == 404
 
+
+def test_read_metadata_rejects_absolute_path(client: TestClient):
+    """Should reject absolute paths to prevent arbitrary file reads."""
+    response = client.get("/api/read-image-metadata?image_path=/etc/passwd")
+    assert response.status_code == 400
+
+
+def test_read_metadata_rejects_path_traversal(client: TestClient):
+    """Should reject path traversal attempts."""
+    response = client.get("/api/read-image-metadata?image_path=../secrets.txt")
+    assert response.status_code == 400
+

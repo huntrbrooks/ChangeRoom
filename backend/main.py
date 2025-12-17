@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -12,6 +12,7 @@ import json as json_lib
 import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
+import time
 
 # Ensure UTF-8 encoding for all string operations
 import locale
@@ -79,6 +80,29 @@ MAX_TOTAL_SIZE = int(os.getenv("MAX_TOTAL_SIZE", 50 * 1024 * 1024))  # 50MB defa
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
+_rate_buckets: dict[str, tuple[int, float]] = {}
+
+def check_rate_limit(key: str, limit: int, window_seconds: int) -> bool:
+    """
+    Simple best-effort in-memory rate limiter (per-instance).
+    Returns True if allowed, False if rate-limited.
+    """
+    now = time.time()
+    count, expires_at = _rate_buckets.get(key, (0, 0.0))
+    if expires_at <= now:
+        _rate_buckets[key] = (1, now + window_seconds)
+        return True
+    if count >= limit:
+        return False
+    _rate_buckets[key] = (count + 1, expires_at)
+    return True
+
+def get_client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip() or "unknown"
+    return request.headers.get("x-real-ip") or request.client.host if request.client else "unknown"
+
 def validate_image_file(file: UploadFile) -> tuple[bool, str]:
     """Validate that uploaded file is a valid image"""
     if not file.content_type or file.content_type.lower() not in ALLOWED_IMAGE_TYPES:
@@ -102,6 +126,7 @@ async def root():
 
 @app.post("/api/try-on")
 async def try_on(
+    request: Request,
     user_image: Optional[UploadFile] = File(None),  # Backward compatibility
     user_images: Optional[List[UploadFile]] = File(None), # New: Multiple user images
     clothing_images: Optional[List[UploadFile]] = File(None),  # Multiple clothing images (up to 5)
@@ -117,18 +142,17 @@ async def try_on(
     Supports multiple user images (up to 5) for better context.
     Supports multiple clothing items for full outfit try-on.
     """
-    # #region agent log
-    try:
-        with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-            f.write(json_lib.dumps({"location":"main.py:117","message":"Backend try-on endpoint entry","data":{"hasUserImage":user_image is not None,"userImagesCount":len(user_images) if user_images else 0,"clothingImagesCount":len(clothing_images) if clothing_images else 0,"hasCategory":category is not None,"hasMetadata":garment_metadata is not None},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"C"})+"\n")
-    except: pass
-    # #endregion
+    # Rate limit per IP to protect expensive endpoint (best-effort)
+    ip = get_client_ip(request)
+    if not check_rate_limit(f"try-on:{ip}", limit=10, window_seconds=60):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
     try:
         # Collect user images
         user_image_files = []
         user_quality_flags = []
         MIN_DIM_HARD_FAIL = 400  # px
         MIN_DIM_WARN = 900      # px
+        total_size = 0
         
         # Handle multiple uploaded user images
         if user_images:
@@ -145,6 +169,7 @@ async def try_on(
                         status_code=413, 
                         detail=f"User image too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB"
                     )
+                total_size += len(img_bytes)
                 img.file.seek(0)
                 # Resolution check
                 try:
@@ -188,6 +213,7 @@ async def try_on(
                      status_code=413, 
                      detail=f"User image too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB"
                  )
+             total_size += len(user_image_bytes)
              try:
                  from PIL import Image as PILImage  # type: ignore
                  pil_img = PILImage.open(io.BytesIO(user_image_bytes))
@@ -226,10 +252,7 @@ async def try_on(
             logger.warning(f"Received {len(user_image_files)} user images, limiting to 5")
             user_image_files = user_image_files[:5]
         
-        total_size = 0 
-        # We've already read user images bytes above but didn't sum them perfectly if mixing types, 
-        # but let's assume individual checks are sufficient for now or we'd need to re-read.
-        # For strict TOTAL_SIZE check we would need to track accumulated bytes.
+        # total_size already includes user images; continue accumulating clothing to enforce MAX_TOTAL_SIZE.
         
         # Collect all clothing images from various sources
         clothing_image_files = []
@@ -469,9 +492,13 @@ async def try_on(
 
 @app.post("/api/identify-products")
 async def identify_products(
+    request: Request,
     clothing_image: UploadFile = File(...),
 ):
     try:
+        ip = get_client_ip(request)
+        if not check_rate_limit(f"identify-products:{ip}", limit=30, window_seconds=60):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
         logger.info("Product identification request received")
         contents = await clothing_image.read()
         analysis = await gemini.analyze_garment(contents)  # Now async
@@ -577,6 +604,7 @@ async def analyze_clothing_stream(clothing_images: List[UploadFile], save_files:
 
 @app.post("/api/analyze-clothing")
 async def analyze_clothing_items(
+    request: Request,
     clothing_images: List[UploadFile] = File(...),
     save_files: bool = Form(True)
 ):
@@ -586,6 +614,9 @@ async def analyze_clothing_items(
     Returns a streaming response with progress and final results including file URLs.
     """
     try:
+        ip = get_client_ip(request)
+        if not check_rate_limit(f"analyze-clothing:{ip}", limit=20, window_seconds=60):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
         logger.info(f"Clothing analysis request received for {len(clothing_images)} items (save_files={save_files})")
         
         if len(clothing_images) > 5:
@@ -659,7 +690,7 @@ async def analyze_and_save_clothing_items(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/read-image-metadata")
-async def read_image_metadata(image_path: str):
+async def read_image_metadata(request: Request, image_path: str):
     """
     Reads embedded metadata from a saved image file.
     
@@ -667,19 +698,28 @@ async def read_image_metadata(image_path: str):
         image_path: Path to the image file (relative to uploads directory or absolute)
     """
     try:
-        # If relative path, assume it's in uploads directory
-        if not os.path.isabs(image_path):
-            image_path = os.path.join("uploads", image_path)
-        
-        if not os.path.exists(image_path):
+        ip = get_client_ip(request)
+        if not check_rate_limit(f"read-metadata:{ip}", limit=60, window_seconds=60):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
+
+        # Security: only allow reading files within uploads directory (no absolute paths, no traversal)
+        if os.path.isabs(image_path):
+            raise HTTPException(status_code=400, detail="image_path must be a relative path within uploads")
+
+        uploads_root = (Path(UPLOADS_DIR)).resolve()
+        candidate = (uploads_root / image_path).resolve()
+        if uploads_root not in candidate.parents and candidate != uploads_root:
+            raise HTTPException(status_code=400, detail="Invalid image_path")
+
+        if not candidate.exists() or not candidate.is_file():
             raise HTTPException(status_code=404, detail="Image file not found")
         
-        metadata = analyze_clothing.read_metadata_from_image(image_path)
+        metadata = analyze_clothing.read_metadata_from_image(str(candidate))
         
         if metadata is None:
             return {"message": "No metadata found in image", "image_path": image_path}
         
-        return {"metadata": metadata, "image_path": image_path}
+        return {"metadata": metadata, "image_path": str(candidate.relative_to(uploads_root))}
         
     except HTTPException:
         raise
@@ -689,6 +729,7 @@ async def read_image_metadata(image_path: str):
 
 @app.post("/api/preprocess-clothing")
 async def preprocess_clothing_batch(
+    request: Request,
     clothing_images: List[UploadFile] = File(...)
 ):
     """
@@ -708,6 +749,9 @@ async def preprocess_clothing_batch(
         JSON with items array containing metadata and file URLs
     """
     try:
+        ip = get_client_ip(request)
+        if not check_rate_limit(f"preprocess-clothing:{ip}", limit=15, window_seconds=60):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
         logger.info(f"Batch preprocessing request received for {len(clothing_images)} images")
         
         if len(clothing_images) > 5:
@@ -758,10 +802,14 @@ async def preprocess_clothing_batch(
 
 @app.post("/api/shop")
 async def shop_endpoint(
+    request: Request,
     query: str = Form(...),
     budget: Optional[float] = Form(None)
 ):
     try:
+        ip = get_client_ip(request)
+        if not check_rate_limit(f"shop:{ip}", limit=60, window_seconds=60):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
         logger.info(f"Shop request received. Query: {query}, Budget: {budget}")
         results = shop.search_products(query, budget)
         logger.info(f"Shop search completed. Found {len(results)} results")

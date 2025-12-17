@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { logAffiliateClick } from "@/lib/db-access";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 /**
  * GET /api/r?url=...
@@ -11,6 +12,15 @@ import { logAffiliateClick } from "@/lib/db-access";
  */
 export async function GET(req: NextRequest) {
   try {
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip") ||
+      "unknown";
+    const rl = checkRateLimit(`r:ip:${ip}`, 120, 60_000);
+    if (!rl.allowed) {
+      return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+    }
+
     const searchParams = req.nextUrl.searchParams;
     const targetUrl = searchParams.get("url");
     const offerId = searchParams.get("offerId");
@@ -33,12 +43,19 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Validate URL
+    // Validate URL + restrict protocols (avoid non-http(s) open redirects)
+    let parsedUrl: URL;
     try {
-      new URL(decodedUrl);
+      parsedUrl = new URL(decodedUrl);
     } catch {
       return NextResponse.json(
         { error: "Invalid URL format" },
+        { status: 400 }
+      );
+    }
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      return NextResponse.json(
+        { error: "Invalid URL protocol" },
         { status: 400 }
       );
     }

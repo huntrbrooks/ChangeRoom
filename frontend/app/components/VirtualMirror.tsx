@@ -127,7 +127,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
         loaderFallbackTimerRef.current = null;
       }
     };
-  }, [status, canCompleteLoader]);
+  }, [status, canCompleteLoader, imageReady]);
 
   const handleLoaderFinished = () => {
     setShowLoader(false);
