@@ -1095,10 +1095,19 @@ function HomeContent() {
         }
 
         const detail = error.response?.data?.detail || error.response?.data?.error || '';
+        const detailText = typeof detail === 'string' ? detail : '';
+        const status = error.response?.status;
+        const looksLikeBlockedByPolicy =
+          /blocked|safety filter|image_safety|content/i.test(detailText.toLowerCase());
+        const looksLikeNoImageAfterRetries =
+          /no image generated after\s*4\s*attempts/i.test(detailText) ||
+          /finish reason:\s*image_/i.test(detailText);
+
+        // Some backend failures currently surface as 500 with the "No image generated after 4 attempts..."
+        // string. Treat those as content blocks for the warning/penalty flow as well.
         const isContentBlocked =
-          error.response?.status === 422 &&
-          typeof detail === 'string' &&
-          /blocked|safety filter|image_safety|content/i.test(detail.toLowerCase());
+          (status === 422 || status === 500) &&
+          (looksLikeBlockedByPolicy || looksLikeNoImageAfterRetries);
 
         if (isContentBlocked) {
           // First content-block after backend automatic retries: warn user.

@@ -1022,7 +1022,7 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                     if attempt == max_attempts:
                         readable_text = text_parts[0][:300] if text_parts else ""
                         safety_hint = ""
-                        if (finish_reason or "").upper() == "IMAGE_SAFETY" or should_rewrite:
+                        if (finish_reason or "").upper() == "IMAGE_SAFETY" or should_rewrite or ((finish_reason or "").upper().startswith("IMAGE_")):
                             safety_hint = " The request was blocked by image safety filters. Please use a less revealing garment description or select a different item."
                         raise ValueError(f"No image generated after {max_attempts} attempts. Finish reason: {finish_reason or 'UNKNOWN'}. Model message: {readable_text}.{safety_hint}")
                     continue

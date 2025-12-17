@@ -444,7 +444,16 @@ async def try_on(
         # #endregion
         logger.error(f"Error in try-on endpoint: {error_type}: {error_detail}", exc_info=True)
         # Provide more helpful error messages
-        if "IMAGE_SAFETY" in error_detail or "safety filter" in error_detail.lower():
+        # Treat safety/policy blocks and “no image after retries with IMAGE_* finish reason” as 422 so the UI can warn/penalize.
+        if (
+            "IMAGE_SAFETY" in error_detail
+            or "safety filter" in error_detail.lower()
+            or (
+                "no image generated after" in error_detail.lower()
+                and "finish reason:" in error_detail.lower()
+                and "image_" in error_detail.lower()
+            )
+        ):
             raise HTTPException(
                 status_code=422,
                 detail="The image request was blocked by safety filters. Please choose less revealing clothing or use a more neutral description."
