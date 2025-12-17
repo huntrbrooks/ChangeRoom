@@ -95,6 +95,7 @@ function HomeContent() {
   const resultImageLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const creditLoggedRef = useRef(false);
   const trialConsumedRef = useRef(false);
+  const contentBlockWarnedRef = useRef(false);
 
   const withRetry = useCallback(
     async function withRetryFn<T>(fn: () => Promise<T>, retries = 2, delayMs = 1500): Promise<T> {
@@ -1000,6 +1001,8 @@ function HomeContent() {
         setIsPreviewResult(Boolean(tryOnRes?.data?.usedFreeTrial));
 
         if (tryOnRes.data.image_url) {
+          // Reset content-block warning state after a successful generation
+          contentBlockWarnedRef.current = false;
           const imageUrl = tryOnRes.data.image_url;
           
           captureEvent(ANALYTICS_EVENTS.TRY_ON_SUCCESS, {
@@ -1088,6 +1091,61 @@ function HomeContent() {
           setIsTryOnLoading(false);
           setIsGenerating(false);
           console.error = originalError;
+          return;
+        }
+
+        const detail = error.response?.data?.detail || error.response?.data?.error || '';
+        const isContentBlocked =
+          error.response?.status === 422 &&
+          typeof detail === 'string' &&
+          /blocked|safety filter|image_safety|content/i.test(detail.toLowerCase());
+
+        if (isContentBlocked) {
+          // First content-block after backend automatic retries: warn user.
+          if (!contentBlockWarnedRef.current) {
+            contentBlockWarnedRef.current = true;
+            setError(
+              "Your try-on was blocked by content safety filters (after automatic retries). " +
+                "Please choose a more modest item or adjust the clothing description. " +
+                "Warning: if your next attempt is blocked again for the same reason, 1 credit will be deducted."
+            );
+            setIsTryOnLoading(false);
+            setIsGenerating(false);
+            console.error = originalError;
+            return;
+          }
+
+          // Second (or later) blocked attempt after warning: apply 1-credit penalty (idempotent by requestId).
+          try {
+            if (requestId) {
+              const penaltyRes = await axios.post('/api/my/credits/content-block-penalty', { requestId });
+              const creditsAvailable = penaltyRes?.data?.creditsAvailable;
+              if (typeof creditsAvailable === 'number') {
+                setBilling((prev) => (prev ? { ...prev, creditsAvailable } : prev));
+              } else {
+                // Fallback to a refresh
+                if (isLoaded && user) fetchBilling();
+              }
+            }
+            setError(
+              "Your try-on was blocked again by content safety filters. " +
+                "1 credit has been deducted. Please choose a different (more modest) item or adjust the description and try again."
+            );
+          } catch (penaltyErr: unknown) {
+            const pErr = penaltyErr as { response?: { status?: number; data?: { error?: string } } };
+            if (pErr.response?.status === 402 || pErr.response?.data?.error === 'no_credits') {
+              redirectToPricing();
+            } else {
+              setError(
+                "Your try-on was blocked again by content safety filters. " +
+                  "We could not apply the credit deduction automatically—please refresh and try again."
+              );
+            }
+          } finally {
+            setIsTryOnLoading(false);
+            setIsGenerating(false);
+            console.error = originalError;
+          }
           return;
         }
         

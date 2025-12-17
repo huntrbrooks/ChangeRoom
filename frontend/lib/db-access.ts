@@ -874,6 +874,88 @@ export async function decrementCreditsIfAvailable(userId: string): Promise<boole
 }
 
 /**
+ * Apply a 1-credit penalty for repeated content blocks (idempotent by requestId).
+ *
+ * IMPORTANT: This must NOT consume free trial. It only decrements paid credits_available.
+ * We record a credit_ledger_entries row with entry_type='adjustment' for auditing.
+ */
+export async function applyContentBlockPenalty(params: {
+  userId: string;
+  requestId: string;
+  amount?: number;
+}): Promise<{ charged: boolean; billing: UserBilling }> {
+  const { userId, requestId } = params;
+  const amount = params.amount ?? 1;
+
+  if (!requestId || !requestId.trim()) {
+    throw new Error("request_id_required");
+  }
+  if (amount <= 0) {
+    throw new Error("amount_must_be_positive");
+  }
+
+  await ensureUsersBillingTable();
+  await ensureCreditTables();
+
+  return runTransaction(async (tx) => {
+    const billing = await ensureUserBillingWithLock(tx, userId);
+    if (billing.is_frozen) {
+      throw new Error("account_frozen");
+    }
+
+    // Idempotency: if an adjustment already exists for this requestId, do not charge again.
+    const existing = await tx`
+      SELECT id FROM credit_ledger_entries
+      WHERE request_id = ${requestId} AND entry_type = 'adjustment'
+      LIMIT 1
+    `;
+    if (existing.rows.length > 0) {
+      const refreshed = await ensureUserBillingWithLock(tx, userId);
+      return { charged: false, billing: refreshed };
+    }
+
+    if (billing.credits_available < amount) {
+      throw new Error("insufficient_credits");
+    }
+
+    const updatedBilling = await tx`
+      UPDATE users_billing
+      SET
+        credits_available = credits_available - ${amount},
+        updated_at = now()
+      WHERE user_id = ${userId}
+      RETURNING *
+    `;
+
+    const updated = updatedBilling.rows[0] as UserBilling;
+
+    await tx`
+      INSERT INTO credit_ledger_entries (
+        id,
+        user_id,
+        request_id,
+        entry_type,
+        credits_change,
+        balance_after,
+        metadata
+      )
+      VALUES (
+        ${generateUuid()},
+        ${userId},
+        ${requestId},
+        'adjustment',
+        ${-amount},
+        ${updated.credits_available},
+        ${JSON.stringify({ reason: "content_block_penalty", amount })}
+      )
+      ON CONFLICT (request_id, entry_type) DO NOTHING
+    `;
+
+    return { charged: true, billing: updated };
+  });
+}
+
+/**
  * Atomically mark free trial as used and optionally grant credits once.
  */
 export async function grantFreeTrialOnce(

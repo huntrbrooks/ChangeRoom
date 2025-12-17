@@ -34,7 +34,7 @@ describe('ProductCard', () => {
     render(<ProductCard product={mockProduct} />)
     
     const image = screen.getByAltText('Test Product')
-    expect(image.getAttribute('src')).toContain(encodeURIComponent('https://example.com/image.jpg'))
+    expect(image.getAttribute('src')).toBe('https://example.com/image.jpg')
   })
 })
 
