@@ -4,6 +4,9 @@ import logging
 import base64
 import io
 import json
+import re
+import copy
+from typing import Any, Dict, List, Optional, Tuple, Union
 from PIL import Image
 import httpx
 
@@ -11,6 +14,249 @@ logger = logging.getLogger(__name__)
 
 # This module uses direct REST API calls to Gemini API with API key authentication.
 # No SDKs or OAuth2 are required - just set GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable.
+
+# OpenAI SDK is optional at runtime; used for safety/prompt rewrites on retries.
+try:
+    from openai import AsyncOpenAI  # type: ignore
+    OPENAI_AVAILABLE = True
+except Exception:
+    AsyncOpenAI = None  # type: ignore
+    OPENAI_AVAILABLE = False
+
+
+CONTENT_REJECTION_FINISH_REASONS = {"IMAGE_SAFETY", "SAFETY", "CONTENT_FILTER", "PROHIBITED_CONTENT"}
+CONTENT_REJECTION_KEYWORDS = [
+    "image_safety",
+    "safety filter",
+    "safety filters",
+    "blocked",
+    "block",
+    "content policy",
+    "policy",
+    "sexually explicit",
+    "sexual",
+    "adult",
+    "nsfw",
+    "nudity",
+    "explicit",
+]
+
+
+def is_content_rejection(
+    *,
+    finish_reason: Optional[str] = None,
+    http_status: Optional[int] = None,
+    error_text: Optional[str] = None,
+    safety_ratings: Optional[List[Dict[str, Any]]] = None,
+) -> bool:
+    """
+    Returns True if the failure looks like a content/safety rejection that should trigger
+    prompt/metadata rewriting, as opposed to transient network/timeouts or unknown errors.
+    """
+    fr = (finish_reason or "").strip().upper()
+    if fr in CONTENT_REJECTION_FINISH_REASONS:
+        return True
+
+    # Some Gemini errors return 400/403 with policy text.
+    if http_status in (400, 403, 422):
+        text = (error_text or "").lower()
+        if any(k in text for k in CONTENT_REJECTION_KEYWORDS):
+            return True
+
+    # Safety ratings sometimes include categories/thresholds even when finishReason isn't set.
+    if safety_ratings:
+        try:
+            for r in safety_ratings:
+                cat = str(r.get("category", "")).lower()
+                prob = str(r.get("probability", "")).lower()
+                if "sex" in cat or "explicit" in cat or "sexual" in cat:
+                    return True
+                if prob in ("high", "medium"):
+                    # A conservative signal that this candidate might be blocked.
+                    return True
+        except Exception:
+            pass
+
+    # Fallback: keyword scan
+    text = (error_text or "").lower()
+    return any(k in text for k in CONTENT_REJECTION_KEYWORDS)
+
+
+def rewrite_for_modesty_heuristic(
+    metadata: Optional[Dict[str, Any]],
+    prompt: str,
+    *,
+    strictness: str = "moderate",
+) -> Tuple[Dict[str, Any], str, str]:
+    """
+    Heuristic rewrite to reduce safety filter triggers while preserving intent.
+    Does not remove wearing directives; it only sanitizes wording and adds more
+    conservative framing instructions.
+    """
+    safe_meta: Dict[str, Any] = copy.deepcopy(metadata) if isinstance(metadata, dict) else {}
+
+    def sanitize_text(s: str) -> str:
+        # Keep this conservative; we want to avoid generating explicit phrases, but allow neutral guidance.
+        replacements = {
+            "lingerie": "intimate apparel",
+            "thong": "minimal undergarment",
+            "bra": "supportive top",
+            "panties": "undergarments",
+            "nude": "neutral tone",
+            "see-through": "semi-transparent",
+            "transparent": "semi-transparent",
+            "sheer": "semi-transparent",
+            "fishnet": "patterned fabric",
+            "fetish": "specialty",
+            "bondage": "restraint-style",
+            "stripper": "dance wear",
+            "pole dancing": "fitness wear",
+            "provocative": "bold",
+            "sexy": "stylish",
+            "seductive": "elegant",
+            "risque": "daring",
+            "cleavage": "neckline area",
+        }
+        out = s
+        for old, new in replacements.items():
+            out = re.sub(rf"\b{re.escape(old)}\b", new, out, flags=re.IGNORECASE)
+        # Remove extra whitespace
+        out = re.sub(r"\s+", " ", out).strip()
+        return out
+
+    def sanitize_value(v: Any) -> Any:
+        if isinstance(v, str):
+            return sanitize_text(v)
+        if isinstance(v, list):
+            return [sanitize_value(x) for x in v]
+        if isinstance(v, dict):
+            return {k: sanitize_value(x) for k, x in v.items()}
+        return v
+
+    safe_meta = sanitize_value(safe_meta)
+
+    # Encourage conservative framing; do not overwrite explicit user intent, only set if missing.
+    safe_meta.setdefault("framing", "three_quarter")
+    safe_meta.setdefault("background", "neutral studio background")
+    safe_meta.setdefault("camera", "professional fashion editorial, neutral studio, avoid close-ups")
+    safe_meta.setdefault("pose", "neutral standing pose")
+    safe_meta.setdefault("content_policy", "general_audience")
+
+    guidance = (
+        "\n\nSAFETY COMPLIANCE (MANDATORY): Create a general-audience fashion image. "
+        "Avoid suggestive context, avoid close-up framing, keep styling professional and modest. "
+        "If any garment appears revealing or semi-transparent, automatically add opaque lining/layering "
+        "and increase coverage while keeping the garment recognizable."
+    )
+    if strictness == "max":
+        guidance += (
+            " Prioritize compliance over fidelity: default to conservative studio portrait framing, "
+            "fully opaque fabrics, and layered styling when uncertain."
+        )
+
+    safe_prompt = sanitize_text(prompt) + guidance
+    return safe_meta, safe_prompt, f"heuristic_rewrite(strictness={strictness})"
+
+
+async def rewrite_for_modesty_openai(
+    metadata: Optional[Dict[str, Any]],
+    prompt: str,
+    last_failure: Dict[str, Any],
+    *,
+    strictness: str,
+) -> Tuple[Dict[str, Any], str, str]:
+    """
+    Uses OpenAI to rewrite prompt+metadata for compliance. Falls back to heuristic rewrite if
+    OPENAI_API_KEY is missing or OpenAI SDK isn't available.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or not OPENAI_AVAILABLE:
+        safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
+            metadata, prompt, strictness="max" if strictness == "max" else "moderate"
+        )
+        return safe_meta, safe_prompt, f"openai_unavailable_fallback:{summary}"
+
+    client = AsyncOpenAI(api_key=api_key)  # type: ignore
+
+    system = (
+        "You are a safety compliance editor for a fashion virtual try-on system. "
+        "Rewrite the provided METADATA and propose ADDITIONAL PROMPT DIRECTIVES to reduce content-filter blocks while keeping the outfit recognizable. "
+        "Keep all required wearing directives and positioning constraints (do not remove them). "
+        "Ensure the output is general-audience, professional, and modest. "
+        "Return ONLY valid JSON."
+    )
+    if strictness == "max":
+        system += (
+            " Apply MAXIMUM safety: prefer conservative studio framing, avoid close-ups, ensure opacity, and err on the side of coverage."
+        )
+
+    user = {
+        "instruction": "Rewrite the metadata and propose additional prompt directives to be more modest and less likely to trigger safety filters.",
+        "strictness": strictness,
+        "last_failure": last_failure,
+        "prompt_context": prompt,
+        "metadata": metadata or {},
+        "output_schema": {
+            "prompt_additions": "string (short block of directives to append to the base prompt)",
+            "metadata": "object (revised metadata, preserve keys if possible)",
+            "changes": "array of short strings describing what changed",
+        },
+    }
+
+    async def do_call():
+        resp = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0,
+            max_tokens=900,
+        )
+        return resp
+
+    try:
+        resp = await asyncio.wait_for(do_call(), timeout=12.0)
+        content = resp.choices[0].message.content
+        if not content:
+            raise ValueError("Empty OpenAI response")
+        data = json.loads(content)
+        prompt_additions = str(data.get("prompt_additions") or "")
+        new_meta_raw = data.get("metadata") or (metadata or {})
+        new_meta = new_meta_raw if isinstance(new_meta_raw, dict) else (metadata or {})
+        changes = data.get("changes") or []
+        if not isinstance(changes, list):
+            changes = []
+
+        # Final defensive sanitization layer.
+        # Final defensive sanitization layer on the prompt additions and metadata.
+        new_meta2, safe_additions, _ = rewrite_for_modesty_heuristic(
+            new_meta,
+            prompt_additions,
+            strictness="max" if strictness == "max" else "moderate",
+        )
+        summary = f"openai_rewrite(strictness={strictness}, changes={changes[:4]})"
+        return new_meta2, safe_additions, summary
+    except Exception as e:
+        logger.warning(f"OpenAI rewrite failed ({strictness}), falling back to heuristic: {e}")
+        safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
+            metadata, prompt, strictness="max" if strictness == "max" else "moderate"
+        )
+        return safe_meta, safe_prompt, f"openai_error_fallback:{summary}"
+
+
+async def _gemini_post_json(
+    client: httpx.AsyncClient,
+    *,
+    url: str,
+    headers: Dict[str, str],
+    payload: Dict[str, Any],
+) -> httpx.Response:
+    """
+    Thin wrapper for Gemini HTTP calls to make retry logic testable (can be monkeypatched).
+    """
+    return await client.post(url, headers=headers, json=payload)
 
 async def generate_try_on(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None, main_index=0, user_quality_flags=None):
     """
@@ -25,7 +271,7 @@ async def generate_try_on(user_image_files, garment_image_files, category="upper
         user_attributes: Optional dict of AI-extracted user attributes (body_type, etc.)
         
     Returns:
-        str: Base64 data URL of the generated image.
+        dict: {"image_url": "data:...base64,...", "retry_info": [...]} (retry_info may be empty)
     """
     # Normalize user images to list
     if not isinstance(user_image_files, list):
@@ -36,7 +282,15 @@ async def generate_try_on(user_image_files, garment_image_files, category="upper
         garment_image_files = [garment_image_files]
     
     # Use Gemini 3 Pro for image generation
-    return await _generate_with_gemini(user_image_files, garment_image_files, category, garment_metadata, user_attributes)
+    return await _generate_with_gemini(
+        user_image_files,
+        garment_image_files,
+        category,
+        garment_metadata,
+        user_attributes,
+        main_index=main_index,
+        user_quality_flags=user_quality_flags,
+    )
 
 
 async def _generate_with_gemini(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None, main_index=0, user_quality_flags=None):
@@ -62,7 +316,7 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
         garment_metadata: Optional styling instructions dict
         
     Returns:
-        str: Base64 data URL of the generated image (format: data:image/png;base64,...)
+        dict: {"image_url": "data:...base64,...", "retry_info": [...]} (retry_info may be empty)
     """
     # Get API key from environment (prefer GEMINI_API_KEY, fallback to GOOGLE_API_KEY)
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
@@ -263,206 +517,171 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
             return value
 
         # Build text prompt for Gemini 3 Pro Image
-        # Include safety instructions to avoid content filter blocks
-        
         user_img_count = len(limited_user_images)
         garment_img_count = len(limited_garments)
-        
         user_refs = "image" if user_img_count == 1 else f"first {user_img_count} images"
-        
-        base_text_prompt = (
-            "You are a fashion virtual try-on engine. "
-            f"Use the {user_refs} as the person reference. These images define the person's identity (face, hair, eyes), body shape, stature/height impression, and overall appearance. "
-            f"The FIRST user image (index {main_index + 1}) is the Main Reference Image for preserving any non-conflicting garments. "
-            f"Use the subsequent {garment_img_count} images as new garments that must be worn by that same person. "
-            "Generate one photorealistic image of the person wearing all provided NEW clothing items. "
-            "OUTFIT PRESERVATION: For any clothing or accessories NOT provided in the new garments list, faithfully reproduce them from the Main Reference Image. "
-            "Replace ONLY the garments that conflict with the new items (e.g., new top replaces the old top, but keep the original pants/shoes if not replaced; a dress replaces both top and bottom). "
-            "BACKGROUND & POSE: Do NOT reuse the original background. Use a clean, neutral, flattering background. Do NOT lock the exact pose/angle—allow natural variation that still fits the person. "
-            "IDENTITY FIDELITY: All user images must be used to perfectly maintain the same face, hair, eyes, skin tone, and body shape/height impression in the final image. "
-            "Every user-specified wearing style or positioning instruction is mandatory and overrides any defaults. "
-            "Do not ignore, soften, or reinterpret those directives under any circumstance.\n\n"
-        )
 
-        if user_quality_flags:
-            low_res_count = sum(1 for f in user_quality_flags if f.get("low_res"))
-            if low_res_count > 0:
-                base_text_prompt += (
-                    f"NOTE: Some user photos are lower resolution ({low_res_count}). "
-                    "Prioritize the sharpest, best-lit reference when ensuring identity fidelity.\n"
-                )
-        
-        # Sanitize metadata to remove sensitive terms before building prompts
-        if garment_metadata:
-            garment_metadata = _sanitize_metadata_value(garment_metadata)
+        def build_base_text_prompt(meta_for_prompt: Optional[Dict[str, Any]]) -> Tuple[str, Dict[str, Any]]:
+            """
+            Build the full base prompt (including metadata section) from the current metadata state.
+            Returns (prompt, sanitized_metadata_used).
+            """
+            local_meta: Dict[str, Any] = {}
+            if isinstance(meta_for_prompt, dict):
+                local_meta = _sanitize_metadata_value(meta_for_prompt)  # type: ignore
 
-        # Inject extracted user attributes to reinforce identity
-        if user_attributes:
-            base_text_prompt += "\nPHYSICAL ATTRIBUTES (Reinforce these features found in the user images):\n"
-            if user_attributes.get('body_type'):
-                base_text_prompt += f"- Body Type: {user_attributes['body_type']}\n"
-            if user_attributes.get('skin_tone'):
-                base_text_prompt += f"- Skin Tone: {user_attributes['skin_tone']}\n"
-            if user_attributes.get('hair_color'):
-                base_text_prompt += f"- Hair: {user_attributes['hair_color']}\n"
-            if user_attributes.get('gender'):
-                base_text_prompt += f"- Gender Presentation: {user_attributes['gender']}\n"
-            if user_attributes.get('age_range'):
-                base_text_prompt += f"- Age Group: {user_attributes['age_range']}\n"
-            base_text_prompt += "Ensure the generated person strictly adheres to these physical characteristics to maintain identity consistency.\n\n"
+            text_prompt = (
+                "You are a fashion virtual try-on engine. "
+                f"Use the {user_refs} as the person reference. These images define the person's identity (face, hair, eyes), body shape, stature/height impression, and overall appearance. "
+                f"The FIRST user image (index {main_index + 1}) is the Main Reference Image for preserving any non-conflicting garments. "
+                f"Use the subsequent {garment_img_count} images as new garments that must be worn by that same person. "
+                "Generate one photorealistic image of the person wearing all provided NEW clothing items. "
+                "OUTFIT PRESERVATION: For any clothing or accessories NOT provided in the new garments list, faithfully reproduce them from the Main Reference Image. "
+                "Replace ONLY the garments that conflict with the new items (e.g., new top replaces the old top, but keep the original pants/shoes if not replaced; a dress replaces both top and bottom). "
+                "BACKGROUND & POSE: Do NOT reuse the original background. Use a clean, neutral, flattering background. Do NOT lock the exact pose/angle—allow natural variation that still fits the person. "
+                "IDENTITY FIDELITY: All user images must be used to perfectly maintain the same face, hair, eyes, skin tone, and body shape/height impression in the final image. "
+                "Every user-specified wearing style or positioning instruction is mandatory and overrides any defaults. "
+                "Do not ignore, soften, or reinterpret those directives under any circumstance.\n\n"
+            )
 
-        base_text_prompt += (
-            "IMPORTANT SAFETY GUIDELINES: "
-            "Generate appropriate, tasteful fashion content only. "
-            "If any clothing appears potentially inappropriate, automatically modify it to be more modest and professional while maintaining the essential style and functionality. "
-            "Ensure all generated content complies with general audience standards. "
-            "Add subtle coverage or opacity as needed to maintain appropriateness without changing the garment's fundamental design."
-        )
-        
-        # Add wearing style instructions if provided
-        if garment_metadata:
-            def _normalize_instruction(value):
-                if isinstance(value, str):
-                    cleaned = value.strip()
-                    if cleaned:
-                        return cleaned
-                return None
-            
-            def _extract_descriptor(item_info, fallback_index):
-                descriptor = (
-                    item_info.get('descriptor')
-                    or item_info.get('item_type')
-                    or item_info.get('category')
-                    or f"item {fallback_index + 1}"
-                )
-                if isinstance(descriptor, str):
-                    descriptor = descriptor.strip()
-                return descriptor or f"item {fallback_index + 1}"
-            
-            # Extract wearing instructions if available
-            wearing_instructions = garment_metadata.get('wearing_instructions')
-            items_wearing_styles = garment_metadata.get('items_wearing_styles')
+            if user_quality_flags:
+                low_res_count = sum(1 for f in user_quality_flags if f.get("low_res"))
+                if low_res_count > 0:
+                    text_prompt += (
+                        f"NOTE: Some user photos are lower resolution ({low_res_count}). "
+                        "Prioritize the sharpest, best-lit reference when ensuring identity fidelity.\n"
+                    )
 
-            normalized_instructions = []
-            if isinstance(wearing_instructions, list):
-                for idx, instruction in enumerate(wearing_instructions):
-                    normalized = _normalize_instruction(instruction)
+            # Inject extracted user attributes to reinforce identity
+            if user_attributes:
+                text_prompt += "\nPHYSICAL ATTRIBUTES (Reinforce these features found in the user images):\n"
+                if user_attributes.get('body_type'):
+                    text_prompt += f"- Body Type: {user_attributes['body_type']}\n"
+                if user_attributes.get('skin_tone'):
+                    text_prompt += f"- Skin Tone: {user_attributes['skin_tone']}\n"
+                if user_attributes.get('hair_color'):
+                    text_prompt += f"- Hair: {user_attributes['hair_color']}\n"
+                if user_attributes.get('gender'):
+                    text_prompt += f"- Gender Presentation: {user_attributes['gender']}\n"
+                if user_attributes.get('age_range'):
+                    text_prompt += f"- Age Group: {user_attributes['age_range']}\n"
+                text_prompt += "Ensure the generated person strictly adheres to these physical characteristics to maintain identity consistency.\n\n"
+
+            text_prompt += (
+                "IMPORTANT SAFETY GUIDELINES: "
+                "Generate appropriate, tasteful fashion content only. "
+                "If any clothing appears potentially inappropriate, automatically modify it to be more modest and professional while maintaining the essential style and functionality. "
+                "Ensure all generated content complies with general audience standards. "
+                "Add subtle coverage or opacity as needed to maintain appropriateness without changing the garment's fundamental design."
+            )
+
+            # Add wearing style instructions if provided
+            if local_meta:
+                def _normalize_instruction(value):
+                    if isinstance(value, str):
+                        cleaned = value.strip()
+                        if cleaned:
+                            return cleaned
+                    return None
+
+                def _extract_descriptor(item_info, fallback_index):
+                    descriptor = (
+                        item_info.get('descriptor')
+                        or item_info.get('item_type')
+                        or item_info.get('category')
+                        or f"item {fallback_index + 1}"
+                    )
+                    if isinstance(descriptor, str):
+                        descriptor = descriptor.strip()
+                    return descriptor or f"item {fallback_index + 1}"
+
+                wearing_instructions = local_meta.get('wearing_instructions')
+                items_wearing_styles = local_meta.get('items_wearing_styles')
+
+                normalized_instructions = []
+                if isinstance(wearing_instructions, list):
+                    for idx, instruction in enumerate(wearing_instructions):
+                        normalized = _normalize_instruction(instruction)
+                        if normalized:
+                            sanitized = _sanitize_clothing_description(normalized)
+                            normalized_instructions.append(sanitized)
+                        else:
+                            logger.warning(f"Wearing instruction at index {idx} is invalid and will be ignored: {instruction!r}")
+                else:
+                    normalized = _normalize_instruction(wearing_instructions)
                     if normalized:
-                        # Sanitize the instruction to avoid content filter triggers
                         sanitized = _sanitize_clothing_description(normalized)
                         normalized_instructions.append(sanitized)
-                    else:
-                        logger.warning(f"Wearing instruction at index {idx} is invalid and will be ignored: {instruction!r}")
-            else:
-                normalized = _normalize_instruction(wearing_instructions)
-                if normalized:
-                    # Sanitize the instruction to avoid content filter triggers
-                    sanitized = _sanitize_clothing_description(normalized)
-                    normalized_instructions.append(sanitized)
-            
-            if normalized_instructions:
-                base_text_prompt += "\n\nMANDATORY wearing directives (never override these):\n"
-                for instruction in normalized_instructions:
-                    base_text_prompt += f"- {instruction}\n"
-                logger.info(f"Added {len(normalized_instructions)} wearing style instruction(s)")
-            
-            # Add per-item wearing styles if available (alternative format)
-            if items_wearing_styles and isinstance(items_wearing_styles, list) and len(items_wearing_styles) > 0:
-                base_text_prompt += "\n\nPer-item wearing instructions (non-negotiable):\n"
-                valid_item_styles = 0
-                for idx, item_info in enumerate(items_wearing_styles):
-                    if not isinstance(item_info, dict):
-                        logger.warning(f"Ignoring invalid item_wearing_styles entry at index {idx}: {item_info!r}")
-                        continue
-                    
-                    try:
-                        item_index = int(item_info.get('index', 0))
-                    except (TypeError, ValueError):
-                        item_index = 0
-                    
-                    descriptor = _extract_descriptor(item_info, item_index)
-                    wearing_style = item_info.get('wearing_style')
-                    prompt_text = item_info.get('prompt_text') or item_info.get('instruction')
-                    
-                    style_desc_source = prompt_text or wearing_style
-                    if not style_desc_source:
-                        logger.warning(f"No wearing_style or prompt_text for item {descriptor}, skipping")
-                        continue
-                    
-                    if not isinstance(style_desc_source, str):
-                        style_desc_source = str(style_desc_source)
-                    
-                    style_desc = style_desc_source.replace('_', ' ').strip()
-                    if not style_desc:
-                        logger.warning(f"Empty style description for item {descriptor}, skipping")
-                        continue
 
-                    # Sanitize the descriptor and style description
-                    safe_descriptor = _sanitize_clothing_description(descriptor)
-                    safe_style_desc = _sanitize_clothing_description(style_desc)
+                if normalized_instructions:
+                    text_prompt += "\n\nMANDATORY wearing directives (never override these):\n"
+                    for instruction in normalized_instructions:
+                        text_prompt += f"- {instruction}\n"
 
-                    # Calculate correct image reference index:
-                    # User images come first (1 to user_img_count), then clothing images
-                    # item_index is 0-based index into garment list
-                    # So image reference is user_img_count + item_index + 1
-                    image_reference = user_img_count + item_index + 1
-                    
-                    base_text_prompt += (
-                        f"- Image {image_reference}: Render the {safe_descriptor} {safe_style_desc}. "
-                        "This positioning is mandatory.\n"
+                if items_wearing_styles and isinstance(items_wearing_styles, list) and len(items_wearing_styles) > 0:
+                    text_prompt += "\n\nPer-item wearing instructions (non-negotiable):\n"
+                    for idx, item_info in enumerate(items_wearing_styles):
+                        if not isinstance(item_info, dict):
+                            logger.warning(f"Ignoring invalid item_wearing_styles entry at index {idx}: {item_info!r}")
+                            continue
+                        try:
+                            item_index = int(item_info.get('index', 0))
+                        except (TypeError, ValueError):
+                            item_index = 0
+                        descriptor = _extract_descriptor(item_info, item_index)
+                        prompt_text = item_info.get('prompt_text') or item_info.get('instruction') or item_info.get('wearing_style')
+                        if not prompt_text:
+                            continue
+                        if not isinstance(prompt_text, str):
+                            prompt_text = str(prompt_text)
+                        style_desc = prompt_text.replace('_', ' ').strip()
+                        if not style_desc:
+                            continue
+
+                        safe_descriptor = _sanitize_clothing_description(descriptor)
+                        safe_style_desc = _sanitize_clothing_description(style_desc)
+                        image_reference = user_img_count + item_index + 1
+                        text_prompt += (
+                            f"- Image {image_reference}: Render the {safe_descriptor} {safe_style_desc}. "
+                            "This positioning is mandatory.\n"
+                        )
+
+                if local_meta.get('strict_wearing_enforcement'):
+                    text_prompt += (
+                        "\n\nSTRICT COMPLIANCE: Adjust garment fit, tuck, tilt, or orientation until every "
+                        "wearing instruction is satisfied exactly. Never revert to default placements."
                     )
-                    valid_item_styles += 1
-                logger.info(f"Added {valid_item_styles} per-item wearing style(s)")
-            
-            if garment_metadata.get('strict_wearing_enforcement'):
-                base_text_prompt += (
-                    "\n\nSTRICT COMPLIANCE: Adjust garment fit, tuck, tilt, or orientation until every "
-                    "wearing instruction is satisfied exactly. Never revert to default placements."
-                )
-            
-            if garment_metadata.get('wearing_instruction_policy'):
-                policy = garment_metadata.get('wearing_instruction_policy')
-                base_text_prompt += f"\n\nWearing instruction policy: {policy}."
-            
-            if garment_metadata.get('wearing_instruction_summary'):
-                summary = garment_metadata.get('wearing_instruction_summary')
-                base_text_prompt += f"\n\nSummary of required styling outcomes: {summary}"
-            
-            # Add other metadata instructions (sanitize any clothing descriptions)
-            other_metadata = {k: v for k, v in garment_metadata.items()
-                            if k not in [
-                                'wearing_instructions',
-                                'items_wearing_styles',
-                                'strict_wearing_enforcement',
-                                'wearing_instruction_policy',
-                                'wearing_instruction_summary',
-                                'enforced_items_count'
-                            ]}
-            if other_metadata:
-                # Sanitize any string values that might contain clothing descriptions
-                sanitized_metadata = {}
-                for key, value in other_metadata.items():
-                    if isinstance(value, str):
-                        sanitized_metadata[key] = _sanitize_clothing_description(value)
-                    elif isinstance(value, dict):
-                        sanitized_metadata[key] = {k: _sanitize_clothing_description(v) if isinstance(v, str) else v
-                                                 for k, v in value.items()}
-                    else:
-                        sanitized_metadata[key] = value
+                if local_meta.get('wearing_instruction_policy'):
+                    policy = local_meta.get('wearing_instruction_policy')
+                    text_prompt += f"\n\nWearing instruction policy: {policy}."
+                if local_meta.get('wearing_instruction_summary'):
+                    summary = local_meta.get('wearing_instruction_summary')
+                    text_prompt += f"\n\nSummary of required styling outcomes: {summary}"
 
-                metadata_str = json.dumps(sanitized_metadata, indent=2, ensure_ascii=False)
-                base_text_prompt += f"\n\nAdditional styling instructions:\n{metadata_str}"
-            
-            logger.info(f"Using metadata: {list(garment_metadata.keys())}")
-        
-        # Add content filter avoidance instructions to the prompt
-        base_text_prompt += (
-            "\n\nCONTENT FILTER AVOIDANCE: "
-            "If this request involves any clothing that could be considered revealing or intimate, "
-            "automatically add subtle opacity, coverage, or conservative styling to ensure the generated image "
-            "meets general audience standards while preserving the garment's essential design and functionality. "
-            "Make tasteful modifications as needed without changing the fundamental garment type or purpose."
-        )
+                other_metadata = {
+                    k: v for k, v in local_meta.items()
+                    if k not in [
+                        'wearing_instructions',
+                        'items_wearing_styles',
+                        'strict_wearing_enforcement',
+                        'wearing_instruction_policy',
+                        'wearing_instruction_summary',
+                        'enforced_items_count'
+                    ]
+                }
+                if other_metadata:
+                    metadata_str = json.dumps(other_metadata, indent=2, ensure_ascii=False)
+                    text_prompt += f"\n\nAdditional styling instructions:\n{metadata_str}"
+
+            text_prompt += (
+                "\n\nCONTENT FILTER AVOIDANCE: "
+                "If this request involves any clothing that could be considered revealing or intimate, "
+                "automatically add subtle opacity, coverage, or conservative styling to ensure the generated image "
+                "meets general audience standards while preserving the garment's essential design and functionality. "
+                "Make tasteful modifications as needed without changing the fundamental garment type or purpose."
+            )
+
+            return text_prompt, local_meta
 
         def build_parts(text_prompt_value: str):
             """Construct request parts with a given text prompt."""
@@ -495,29 +714,32 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
         base_url = "https://generativelanguage.googleapis.com/v1beta/models"
         model_name = "gemini-3-pro-image-preview"
         
-        # First, verify the model is available
-        try:
-            list_endpoint = f"{base_url}?key={api_key}"
-            async with httpx.AsyncClient(timeout=10.0) as list_client:
-                list_response = await list_client.get(list_endpoint)
-                if list_response.is_success:
-                    list_data = list_response.json()
-                    available_models = [m.get("name", "").split("/")[-1] for m in list_data.get("models", [])]
-                    logger.info(f"Available models (sample): {', '.join(available_models[:20])}")
-                    
-                    # Check if our model is available
-                    if model_name not in available_models:
-                        # Try to find similar models
-                        image_models = [m for m in available_models if "gemini" in m.lower() and "image" in m.lower()]
-                        logger.warning(f"Model {model_name} not found. Available image models: {image_models}")
-                        if image_models:
-                            model_name = image_models[0]
-                            logger.info(f"Trying alternative model: {model_name}")
-        except Exception as e:
-            logger.warning(f"Could not verify model availability: {e}")
+        # Optional: verify the model is available (disabled by default to avoid extra network call)
+        if os.getenv("GEMINI_VERIFY_MODEL", "0") == "1":
+            try:
+                list_endpoint = f"{base_url}?key={api_key}"
+                async with httpx.AsyncClient(timeout=10.0) as list_client:
+                    list_response = await list_client.get(list_endpoint)
+                    if list_response.is_success:
+                        list_data = list_response.json()
+                        available_models = [m.get("name", "").split("/")[-1] for m in list_data.get("models", [])]
+                        logger.info(f"Available models (sample): {', '.join(available_models[:20])}")
+                        if model_name not in available_models:
+                            image_models = [m for m in available_models if "gemini" in m.lower() and "image" in m.lower()]
+                            logger.warning(f"Model {model_name} not found. Available image models: {image_models}")
+                            if image_models:
+                                model_name = image_models[0]
+                                logger.info(f"Trying alternative model: {model_name}")
+            except Exception as e:
+                logger.warning(f"Could not verify model availability: {e}")
         
         max_attempts = 4
-        last_failure_details = {}
+        last_failure_details: Dict[str, Any] = {}
+        retry_info: List[Dict[str, Any]] = []
+
+        current_metadata: Dict[str, Any] = copy.deepcopy(garment_metadata) if isinstance(garment_metadata, dict) else {}
+        base_prompt, _ = build_base_text_prompt(current_metadata)
+        current_prompt: str = base_prompt
 
         def summarize_candidate(candidate_obj):
             finish_reason_local = candidate_obj.get("finishReason") or candidate_obj.get("finish_reason")
@@ -531,61 +753,40 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
             for attempt in range(1, max_attempts + 1):
                 retry_suffix = ""
                 if attempt == 2:
-                    retry_suffix = (
-                        "\n\nRETRY 2: If any garment or pose seems revealing, automatically style it as a layered top with opaque lining, "
-                        "add coverage, and use a professional studio framing. Avoid any adult or unsafe context while keeping the garment recognizable."
-                    )
+                    retry_suffix = "\n\nRETRY: Keep output professional, conservative, and general-audience."
                 elif attempt == 3:
-                    retry_suffix = (
-                        "\n\nRETRY 3 (STRICT SAFETY): If deemed inappropriate for any reason, add or modify the garment as needed "
-                        "to make it acceptable: apply opaque lining, increase coverage, soften transparency, and adjust camera/framing to a neutral studio view. "
-                        "Prioritize modesty and compliance over fidelity while keeping the outfit coherent."
-                    )
+                    retry_suffix = "\n\nRETRY: Increase coverage and opacity; avoid close-ups; professional studio framing."
                 elif attempt == 4:
-                    retry_suffix = (
-                        "\n\nRETRY 4 (MAX SAFETY): Assume the outfit is highly sensitive. Convert any revealing areas into a modest layered look, "
-                        "default to a neutral studio portrait, avoid close-ups, and ensure all fabric is opaque. If unsure, err on the side of coverage."
-                    )
-                text_prompt = base_text_prompt + retry_suffix
+                    retry_suffix = "\n\nRETRY (MAX SAFETY): Default to conservative studio portrait; fully opaque fabrics; layered styling."
+
+                text_prompt = current_prompt + retry_suffix
                 parts = build_parts(text_prompt)
 
                 logger.info(f"Attempt {attempt}/{max_attempts} - calling Gemini 3 Pro Image: {model_name}")
                 try:
                     endpoint = f"{base_url}/{model_name}:generateContent"
-                    response = await client.post(
-                        f"{endpoint}?key={api_key}",
-                        headers={
-                            "Content-Type": "application/json",
+                    payload = {
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": parts,
+                            }
+                        ],
+                        "generationConfig": {
+                            "responseModalities": ["TEXT", "IMAGE"],
                         },
-                        json={
-                            "contents": [
-                                {
-                                    "role": "user",
-                                    "parts": parts,
-                                }
-                            ],
-                            "generationConfig": {
-                                "responseModalities": ["TEXT", "IMAGE"],  # Required for Gemini image models
-                            },
-                            "safetySettings": [
-                                {
-                                    "category": "HARM_CATEGORY_HARASSMENT",
-                                    "threshold": "BLOCK_NONE"
-                                },
-                                {
-                                    "category": "HARM_CATEGORY_HATE_SPEECH",
-                                    "threshold": "BLOCK_NONE"
-                                },
-                                {
-                                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                                    "threshold": "BLOCK_LOW_AND_ABOVE"
-                                },
-                                {
-                                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                                    "threshold": "BLOCK_NONE"
-                                }
-                            ]
-                        },
+                        "safetySettings": [
+                            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_LOW_AND_ABOVE"},
+                            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                        ],
+                    }
+                    response = await _gemini_post_json(
+                        client,
+                        url=f"{endpoint}?key={api_key}",
+                        headers={"Content-Type": "application/json"},
+                        payload=payload,
                     )
                     
                     if not response.is_success:
@@ -597,7 +798,68 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                         except: pass
                         # #endregion
                         logger.error(f"Gemini 3 Pro Image failed (attempt {attempt}): {response.status_code} - {error_text}")
-                        last_failure_details = {"status": response.status_code, "error": error_text[:500]}
+                        last_failure_details = {
+                            "reason": "http_error",
+                            "status": response.status_code,
+                            "error": error_text[:800],
+                            "attempt": attempt,
+                        }
+
+                        should_rewrite = is_content_rejection(
+                            http_status=response.status_code,
+                            error_text=error_text,
+                        )
+                        if should_rewrite and attempt < max_attempts:
+                            if attempt == 1:
+                                # Heuristic rewrite (first failure)
+                                safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
+                                    current_metadata,
+                                    build_base_text_prompt(current_metadata)[0],
+                                    strictness="moderate",
+                                )
+                                current_metadata = safe_meta
+                                current_prompt = safe_prompt
+                                retry_info.append({
+                                    "attempt": attempt + 1,
+                                    "strategy": "heuristic",
+                                    "reason": "content_rejection",
+                                    "modificationsSummary": summary,
+                                })
+                            elif attempt == 2:
+                                # OpenAI-assisted rewrite (second failure)
+                                new_meta, additions, summary = await rewrite_for_modesty_openai(
+                                    current_metadata,
+                                    current_prompt,
+                                    last_failure_details,
+                                    strictness="moderate",
+                                )
+                                current_metadata = new_meta
+                                rebuilt, _ = build_base_text_prompt(current_metadata)
+                                current_prompt = rebuilt + "\n\n" + additions
+                                retry_info.append({
+                                    "attempt": attempt + 1,
+                                    "strategy": "openai",
+                                    "reason": "content_rejection",
+                                    "modificationsSummary": summary,
+                                })
+                            elif attempt == 3:
+                                # OpenAI-assisted rewrite (third failure, max safety)
+                                new_meta, additions, summary = await rewrite_for_modesty_openai(
+                                    current_metadata,
+                                    current_prompt,
+                                    last_failure_details,
+                                    strictness="max",
+                                )
+                                current_metadata = new_meta
+                                rebuilt, _ = build_base_text_prompt(current_metadata)
+                                current_prompt = rebuilt + "\n\n" + additions
+                                retry_info.append({
+                                    "attempt": attempt + 1,
+                                    "strategy": "openai",
+                                    "reason": "content_rejection",
+                                    "modificationsSummary": summary,
+                                })
+
                         if attempt == max_attempts:
                             raise ValueError(f"Gemini API error after {max_attempts} attempts: {response.status_code} - {error_text}")
                         continue
@@ -615,6 +877,22 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                     if not candidates:
                         logger.error(f"No candidates in response (attempt {attempt}). Full response: {json.dumps(data, indent=2)[:1000]}")
                         last_failure_details = {"reason": "no_candidates", "response": str(data)[:500]}
+                        should_rewrite = is_content_rejection(error_text=str(data))
+                        if should_rewrite and attempt < max_attempts:
+                            # Treat as content rejection only if keywords suggest it; otherwise just retry.
+                            safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
+                                current_metadata,
+                                build_base_text_prompt(current_metadata)[0],
+                                strictness="moderate",
+                            )
+                            current_metadata = safe_meta
+                            current_prompt = safe_prompt
+                            retry_info.append({
+                                "attempt": attempt + 1,
+                                "strategy": "heuristic",
+                                "reason": "no_candidates",
+                                "modificationsSummary": summary,
+                            })
                         if attempt == max_attempts:
                             raise ValueError("No candidates returned from Gemini 3 Pro Image")
                         continue
@@ -656,7 +934,7 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                     
                     if image_part and finish_reason in (None, "STOP"):
                         image_base64 = image_part.get("data")
-                        mime_type = image_part.get("mime_type", "image/png")
+                        mime_type = image_part.get("mime_type") or image_part.get("mimeType") or "image/png"
                         
                         if not image_base64:
                             last_failure_details = {"reason": "empty_image_data", "finish_reason": finish_reason}
@@ -666,7 +944,10 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                         
                         logger.info(f"✅ Successfully generated image using Gemini 3 Pro Image on attempt {attempt}")
                         logger.info(f"   Image size: {len(image_base64)} characters (base64), MIME type: {mime_type}")
-                        return f"data:{mime_type};base64,{image_base64}"
+                        return {
+                            "image_url": f"data:{mime_type};base64,{image_base64}",
+                            "retry_info": retry_info,
+                        }
                     
                     # If we get here, we either have no image or a non-STOP finish reason
                     last_failure_details = {
@@ -675,6 +956,7 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                         "text": text_parts[:2] if text_parts else [],
                         "has_image": bool(image_part),
                         "attempt": attempt,
+                        "safety_ratings": safety_ratings,
                     }
                     logger.warning(f"No usable image on attempt {attempt}. Details: {last_failure_details}")
                     # #region agent log
@@ -684,13 +966,65 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                     except: pass
                     # #endregion
                     
+                    should_rewrite = is_content_rejection(
+                        finish_reason=finish_reason,
+                        error_text=(text_parts[0] if text_parts else ""),
+                        safety_ratings=safety_ratings,
+                    )
+                    if should_rewrite and attempt < max_attempts:
+                        if attempt == 1:
+                            safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
+                                current_metadata,
+                                build_base_text_prompt(current_metadata)[0],
+                                strictness="moderate",
+                            )
+                            current_metadata = safe_meta
+                            current_prompt = safe_prompt
+                            retry_info.append({
+                                "attempt": attempt + 1,
+                                "strategy": "heuristic",
+                                "reason": "content_rejection",
+                                "modificationsSummary": summary,
+                            })
+                        elif attempt == 2:
+                            new_meta, additions, summary = await rewrite_for_modesty_openai(
+                                current_metadata,
+                                current_prompt,
+                                last_failure_details,
+                                strictness="moderate",
+                            )
+                            current_metadata = new_meta
+                            rebuilt, _ = build_base_text_prompt(current_metadata)
+                            current_prompt = rebuilt + "\n\n" + additions
+                            retry_info.append({
+                                "attempt": attempt + 1,
+                                "strategy": "openai",
+                                "reason": "content_rejection",
+                                "modificationsSummary": summary,
+                            })
+                        elif attempt == 3:
+                            new_meta, additions, summary = await rewrite_for_modesty_openai(
+                                current_metadata,
+                                current_prompt,
+                                last_failure_details,
+                                strictness="max",
+                            )
+                            current_metadata = new_meta
+                            rebuilt, _ = build_base_text_prompt(current_metadata)
+                            current_prompt = rebuilt + "\n\n" + additions
+                            retry_info.append({
+                                "attempt": attempt + 1,
+                                "strategy": "openai",
+                                "reason": "content_rejection",
+                                "modificationsSummary": summary,
+                            })
+
                     if attempt == max_attempts:
                         readable_text = text_parts[0][:300] if text_parts else ""
                         safety_hint = ""
-                        if (finish_reason or "").upper() == "IMAGE_SAFETY":
+                        if (finish_reason or "").upper() == "IMAGE_SAFETY" or should_rewrite:
                             safety_hint = " The request was blocked by image safety filters. Please use a less revealing garment description or select a different item."
                         raise ValueError(f"No image generated after {max_attempts} attempts. Finish reason: {finish_reason or 'UNKNOWN'}. Model message: {readable_text}.{safety_hint}")
-                    # Otherwise retry with softer prompt
                     continue
 
                 except httpx.TimeoutException as e:

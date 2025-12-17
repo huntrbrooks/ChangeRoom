@@ -19,7 +19,8 @@ def test_root_endpoint(client: TestClient):
 def test_try_on_missing_user_image(client: TestClient):
     """Test try-on endpoint with missing user image"""
     response = client.post("/api/try-on")
-    assert response.status_code == 422  # Validation error
+    # Endpoint enforces at least one user image and returns a 400 HTTPException
+    assert response.status_code == 400
 
 
 def test_try_on_missing_clothing(client: TestClient, sample_image_bytes):

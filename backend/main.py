@@ -398,7 +398,7 @@ async def try_on(
                     f.write(json_lib.dumps({"location":"main.py:267","message":"Calling vton.generate_try_on","data":{"category":final_category,"clothingFilesCount":len(clothing_image_files),"hasMetadata":metadata is not None},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
             except: pass
             # #endregion
-            result_url = await vton.generate_try_on(
+            result = await vton.generate_try_on(
                 user_image_files, 
                 clothing_image_files, 
                 final_category,
@@ -407,6 +407,7 @@ async def try_on(
                 main_index=main_index if main_index is not None else 0,
                 user_quality_flags=user_quality_flags
             )
+            result_url = result.get("image_url") if isinstance(result, dict) else result
             # #region agent log
             try:
                 with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
@@ -423,7 +424,13 @@ async def try_on(
                 except Exception as e:
                     logger.warning(f"Error closing file handle: {e}")
         
-        return {"image_url": result_url}
+        # Backward-compatible response: always include image_url; optionally include retry_info
+        if isinstance(result, dict):
+            return {
+                "image_url": result.get("image_url"),
+                "retry_info": result.get("retry_info", []),
+            }
+        return {"image_url": result}
     except HTTPException:
         raise
     except Exception as e:
