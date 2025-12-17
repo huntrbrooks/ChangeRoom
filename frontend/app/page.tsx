@@ -97,6 +97,8 @@ function HomeContent() {
   const trialConsumedRef = useRef(false);
   const contentBlockWarnedRef = useRef(false);
   const virtualMirrorSectionRef = useRef<HTMLElement | null>(null);
+  const stickyHeaderRef = useRef<HTMLElement | null>(null);
+  const mobileActionBarRef = useRef<HTMLDivElement | null>(null);
 
   const withRetry = useCallback(
     async function withRetryFn<T>(fn: () => Promise<T>, retries = 2, delayMs = 1500): Promise<T> {
@@ -121,13 +123,25 @@ function HomeContent() {
     const el = virtualMirrorSectionRef.current;
     if (!el) return;
 
-    // If it fits in the viewport, center it; otherwise align its top so it becomes the focus.
-    const rect = el.getBoundingClientRect();
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-    const fitsInViewport = rect.height <= viewportHeight * 0.92;
-    const block: ScrollLogicalPosition = fitsInViewport ? 'center' : 'start';
+    const headerH = stickyHeaderRef.current?.getBoundingClientRect().height ?? 0;
+    const bottomBarH = mobileActionBarRef.current?.getBoundingClientRect().height ?? 0;
+    const viewportH = window.innerHeight || document.documentElement.clientHeight;
+    const availableH = Math.max(0, viewportH - headerH - bottomBarH);
 
-    el.scrollIntoView({ behavior: 'smooth', block, inline: 'nearest' });
+    const rect = el.getBoundingClientRect();
+    const elTopAbs = window.scrollY + rect.top;
+    const padding = 12; // small breathing room so it matches the "framed" look
+
+    // If the mirror card fits inside the available area (between header and bottom bar),
+    // center it within that area. Otherwise, align it just under the header.
+    const fits = rect.height <= Math.max(0, availableH - padding * 2);
+    const targetTop = fits
+      ? elTopAbs - headerH - (availableH - rect.height) / 2
+      : elTopAbs - headerH - padding;
+
+    const maxScroll = Math.max(0, document.documentElement.scrollHeight - viewportH);
+    const clamped = Math.min(maxScroll, Math.max(0, Math.round(targetTop)));
+    window.scrollTo({ top: clamped, behavior: 'smooth' });
   }, []);
 
   const handleLoaderStageChange = useCallback((stageId: number) => {
@@ -1338,7 +1352,10 @@ function HomeContent() {
   return (
     <main className="min-h-screen bg-white text-black font-sans">
       {/* Header */}
-      <header className="border-b border-white/10 sticky top-0 bg-[#2C2C2C]/95 backdrop-blur-md z-50 safe-area-inset text-white">
+      <header
+        ref={stickyHeaderRef}
+        className="border-b border-white/10 sticky top-0 bg-[#2C2C2C]/95 backdrop-blur-md z-50 safe-area-inset text-white"
+      >
         <div className="w-full px-3 sm:px-6 lg:px-10 py-2.5 sm:py-3 md:py-4 flex items-center justify-between gap-4">
           <div className="flex items-center flex-shrink-0">
             <Image 
@@ -1913,7 +1930,10 @@ function HomeContent() {
       )}
 
       {activeTab === 'try-on' && (
-        <div className="lg:hidden fixed inset-x-0 bottom-0 z-40 px-3 pb-[calc(14px+env(safe-area-inset-bottom))] pt-3 bg-white/95 backdrop-blur-md border-t border-black/10 shadow-[0_-8px_30px_rgba(0,0,0,0.12)]">
+        <div
+          ref={mobileActionBarRef}
+          className="lg:hidden fixed inset-x-0 bottom-0 z-40 px-3 pb-[calc(14px+env(safe-area-inset-bottom))] pt-3 bg-white/95 backdrop-blur-md border-t border-black/10 shadow-[0_-8px_30px_rgba(0,0,0,0.12)]"
+        >
           <div className="flex items-center gap-3">
             <div className="flex-1 min-w-0">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-black/70">Ready to try-on?</p>
