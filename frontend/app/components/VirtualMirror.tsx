@@ -191,10 +191,16 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
             }}
           />
           {isPreview && (
-            <div className="absolute inset-0 bg-gradient-to-br from-black/40 to-black/10 pointer-events-none flex items-center justify-center">
-              <div className="text-white text-lg sm:text-xl font-bold uppercase tracking-[0.3em] bg-black/40 px-4 py-2 rounded">
-                Watermarked Preview
-              </div>
+            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+              {/* Subtle darkening helps keep the watermark legible on very bright images */}
+              <div className="absolute inset-0 bg-black/10" aria-hidden="true" />
+              <img
+                src="/watermark.png"
+                alt="Watermark"
+                aria-hidden="true"
+                className="relative w-[70%] max-w-[420px] opacity-35 select-none"
+                draggable={false}
+              />
             </div>
           )}
           <div className="absolute bottom-2 sm:bottom-3 right-2 sm:right-3 flex flex-col sm:flex-row gap-2">

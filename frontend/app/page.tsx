@@ -96,6 +96,7 @@ function HomeContent() {
   const creditLoggedRef = useRef(false);
   const trialConsumedRef = useRef(false);
   const contentBlockWarnedRef = useRef(false);
+  const virtualMirrorSectionRef = useRef<HTMLElement | null>(null);
 
   const withRetry = useCallback(
     async function withRetryFn<T>(fn: () => Promise<T>, retries = 2, delayMs = 1500): Promise<T> {
@@ -115,6 +116,19 @@ function HomeContent() {
     },
     []
   );
+
+  const scrollToVirtualMirror = useCallback(() => {
+    const el = virtualMirrorSectionRef.current;
+    if (!el) return;
+
+    // If it fits in the viewport, center it; otherwise align its top so it becomes the focus.
+    const rect = el.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+    const fitsInViewport = rect.height <= viewportHeight * 0.92;
+    const block: ScrollLogicalPosition = fitsInViewport ? 'center' : 'start';
+
+    el.scrollIntoView({ behavior: 'smooth', block, inline: 'nearest' });
+  }, []);
 
   const handleLoaderStageChange = useCallback((stageId: number) => {
     console.info('try-on-stage', { stageId, ts: Date.now() });
@@ -1598,6 +1612,7 @@ function HomeContent() {
                     e.preventDefault();
                     e.stopPropagation();
                     console.log("Try-on button clicked");
+                    scrollToVirtualMirror();
                     if (!isAuthenticated) {
                       setError('Please sign in to try on.');
                       return;
@@ -1673,7 +1688,11 @@ function HomeContent() {
           {/* Right Column: Results */}
           <div className="lg:col-span-5 space-y-3 sm:space-y-4 md:space-y-6 lg:space-y-8">
             
-            <section className={`${cardClass} ${cardPadding} space-y-4`}>
+            <section
+              ref={virtualMirrorSectionRef}
+              id="virtual-mirror"
+              className={`${cardClass} ${cardPadding} space-y-4 scroll-mt-24`}
+            >
               <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
                 <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,0,0,0.5)]">3</span>
                 Virtual Mirror
@@ -1906,6 +1925,7 @@ function HomeContent() {
             </div>
             <button
               onClick={() => {
+                scrollToVirtualMirror();
                 if (!isAuthenticated) {
                   setError('Please sign in to try on.');
                   return;
