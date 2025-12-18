@@ -102,13 +102,19 @@ function BillingPageContent() {
     <div className="min-h-screen bg-[#FAF9F6]">
       {/* Header */}
       <header className="border-b border-gray-100 sticky top-0 bg-[#FAF9F6]/95 backdrop-blur-md z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 text-gray-600 hover:text-black transition-colors">
+        <div className="container mx-auto px-4 py-4 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
+          <Link
+            href="/"
+            aria-label="Back to Home"
+            className="flex items-center gap-2 text-gray-600 hover:text-black transition-colors whitespace-nowrap"
+          >
             <ArrowLeft size={20} />
-            <span>Back to Home</span>
+            <span className="hidden sm:inline">Back to Home</span>
           </Link>
-          <h1 className="text-xl font-bold">Billing & Subscription</h1>
-          <div className="w-20"></div> {/* Spacer for centering */}
+          <h1 className="min-w-0 text-center text-base sm:text-xl font-bold truncate">
+            Billing &amp; Subscription
+          </h1>
+          <div className="w-10 sm:w-24" aria-hidden /> {/* Spacer for centering */}
         </div>
       </header>
 

@@ -21,26 +21,29 @@ function PricingPageContent() {
   return (
     <div className="min-h-screen bg-[#FAF9F6] text-black">
       <header className="border-b border-[#8B5CF6]/20 sticky top-0 bg-[#FAF9F6]/95 backdrop-blur-md z-50">
-        <div className="container mx-auto px-4 py-4 grid grid-cols-[1fr_auto_1fr] items-center">
+        <div className="container mx-auto px-4 py-4 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
           <Link
             href="/"
-            className="flex items-center gap-2 text-[#8B5CF6] hover:text-[#8B5CF6]/80 transition-colors justify-self-start"
+            aria-label="Back to Home"
+            className="flex items-center gap-2 text-[#8B5CF6] hover:text-[#8B5CF6]/80 transition-colors whitespace-nowrap"
           >
             <ArrowLeft size={20} />
-            <span>Back to Home</span>
+            <span className="hidden sm:inline">Back to Home</span>
           </Link>
-          <div className="flex flex-col items-center justify-center">
-            <Image
-              src="/main logo Black.png"
-              alt="IGetDressed.Online logo"
-              width={240}
-              height={48}
-              priority
-              className="h-8 md:h-10 w-auto object-contain"
-            />
+          <div className="min-w-0 flex items-center justify-center">
+            <Link href="/" aria-label="Home" className="inline-flex min-w-0 items-center justify-center">
+              <Image
+                src="/main logo Black.png"
+                alt="IGetDressed.Online logo"
+                width={240}
+                height={48}
+                priority
+                className="h-8 sm:h-9 md:h-10 w-auto max-w-[160px] sm:max-w-[220px] md:max-w-[240px] object-contain"
+              />
+            </Link>
             <span className="sr-only">Pricing & Plans</span>
           </div>
-          <div className="justify-self-end" aria-hidden />
+          <div className="w-10 sm:w-24 justify-self-end" aria-hidden />
         </div>
       </header>
 

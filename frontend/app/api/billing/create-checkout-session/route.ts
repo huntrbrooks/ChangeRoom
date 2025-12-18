@@ -164,24 +164,44 @@ export async function POST(req: NextRequest) {
     // Determine credit amount for one-time payments
     const creditAmount = mode === "payment" ? creditAmountMap[priceId] || 0 : 0;
 
-    // Build subscription data for free trial (Stripe trial period)
-    // Note: Our app logic uses trial_used flag, but we can still offer Stripe trial period
+    const baseMetadata: Record<string, string> = {
+      clerkUserId: userId,
+      priceId,
+      mode,
+      ...(mode === "payment" && creditAmount > 0 && { creditAmount: creditAmount.toString() }),
+      ...(shouldStartTrial && { startTrial: "true" }),
+    };
+
+    // Build subscription data (metadata always, optional trial period)
     const subscriptionData: {
       subscription_data?: {
-        trial_period_days: number;
+        trial_period_days?: number;
         metadata: Record<string, string>;
       };
-    } = {};
-    if (shouldStartTrial) {
-      // Offer 7-day Stripe trial period for subscriptions
-      subscriptionData.subscription_data = {
-        trial_period_days: 7,
-        metadata: {
-          clerkUserId: userId,
-          isTrial: "true",
-        },
-      };
-    }
+    } = mode === "subscription"
+      ? {
+          subscription_data: {
+            ...(shouldStartTrial ? { trial_period_days: 7 } : {}),
+            metadata: {
+              ...baseMetadata,
+              ...(shouldStartTrial && { isTrial: "true" }),
+            },
+          },
+        }
+      : {};
+
+    // For one-time payments, also stamp metadata onto the PaymentIntent
+    // so payment_intent.succeeded can always resolve the user + credits.
+    const paymentIntentData: {
+      payment_intent_data?: { metadata: Record<string, string> };
+    } =
+      mode === "payment"
+        ? {
+            payment_intent_data: {
+              metadata: baseMetadata,
+            },
+          }
+        : {};
 
     // Create checkout session
     const session = await getStripe().checkout.sessions.create({
@@ -194,15 +214,10 @@ export async function POST(req: NextRequest) {
         },
       ],
       ...subscriptionData,
+      ...paymentIntentData,
       success_url: `${appConfig.appUrl}/?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appConfig.appUrl}/?canceled=true`,
-      metadata: {
-        clerkUserId: userId,
-        priceId,
-        mode,
-        ...(mode === "payment" && { creditAmount: creditAmount.toString() }),
-        ...(shouldStartTrial && { startTrial: "true" }),
-      },
+      metadata: baseMetadata,
     });
 
     if (!session.url) {

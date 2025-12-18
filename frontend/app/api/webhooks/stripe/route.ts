@@ -16,6 +16,14 @@ function getStripe() {
   });
 }
 
+function safeJsonParse(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * POST /api/webhooks/stripe
  * Handles Stripe webhook events for billing and subscriptions
@@ -24,7 +32,7 @@ function getStripe() {
  * - checkout.session.completed (for subscriptions and one-time payments)
  * - customer.subscription.created
  * - customer.subscription.updated
- * - payment_intent.succeeded (fallback for one-time payments)
+ * - payment_intent.succeeded (fallback for one-time payments; uses payment_intent id for idempotency)
  */
 export async function POST(req: NextRequest) {
   const body = await req.text();
@@ -99,6 +107,11 @@ export async function POST(req: NextRequest) {
           console.log(`Updated user ${clerkUserId} to plan ${plan}`);
         } else if (session.mode === "payment") {
           // Handle one-time credit pack purchase
+          // Idempotency key MUST be consistent across events: prefer payment_intent id
+          const paymentIntentId =
+            typeof session.payment_intent === "string" ? session.payment_intent : null;
+          const creditRequestId = paymentIntentId || session.id;
+
           const creditAmount =
             parseInt(session.metadata?.creditAmount || "0", 10) ||
             creditAmountMap[priceIdFromSession] ||
@@ -110,17 +123,19 @@ export async function POST(req: NextRequest) {
               reason: "credit_pack_purchase",
               price_id: priceIdFromSession,
               session_id: session.id,
+              payment_intent_id: paymentIntentId,
+              event_id: event.id,
               mode: session.mode,
             };
 
             // Get or create billing to ensure customer ID is set
             const billing = await getUserBillingByStripeCustomer(customerId);
             if (billing) {
-              await grantCredits(billing.user_id, creditAmount, creditMetadata, session.id);
+              await grantCredits(billing.user_id, creditAmount, creditMetadata, creditRequestId);
               console.log(`Added ${creditAmount} credits to user ${billing.user_id}`);
             } else {
               // Fallback: use clerkUserId from metadata
-              await grantCredits(clerkUserId, creditAmount, creditMetadata, session.id);
+              await grantCredits(clerkUserId, creditAmount, creditMetadata, creditRequestId);
               console.log(`Added ${creditAmount} credits to user ${clerkUserId}`);
             }
           }
@@ -144,6 +159,71 @@ export async function POST(req: NextRequest) {
           },
           clerkUserId || customerId
         );
+        break;
+      }
+
+      case "payment_intent.succeeded": {
+        const pi = event.data.object as Stripe.PaymentIntent;
+        const paymentIntentId = pi.id;
+
+        // Prefer metadata on the PaymentIntent (we'll ensure this is set at Checkout creation).
+        let clerkUserId = (pi.metadata?.clerkUserId as string | undefined) || undefined;
+        let priceId = (pi.metadata?.priceId as string | undefined) || undefined;
+        let creditAmountStr = (pi.metadata?.creditAmount as string | undefined) || undefined;
+        let sessionId: string | undefined = (pi.metadata?.sessionId as string | undefined) || undefined;
+        let customerId = typeof pi.customer === "string" ? pi.customer : undefined;
+
+        // Backward-compat: older payments may not have PI metadata.
+        // Resolve owning Checkout Session by payment_intent id.
+        if (!clerkUserId || !creditAmountStr || !priceId) {
+          const sessions = await getStripe().checkout.sessions.list({
+            payment_intent: paymentIntentId,
+            limit: 1,
+          });
+          const session = sessions.data[0];
+          if (session) {
+            clerkUserId = clerkUserId || session.metadata?.clerkUserId || undefined;
+            priceId = priceId || session.metadata?.priceId || undefined;
+            creditAmountStr = creditAmountStr || session.metadata?.creditAmount || undefined;
+            sessionId = sessionId || session.id;
+            customerId = customerId || (typeof session.customer === "string" ? session.customer : undefined);
+          }
+        }
+
+        if (!clerkUserId) {
+          console.error("payment_intent.succeeded: cannot resolve clerkUserId", {
+            payment_intent_id: paymentIntentId,
+            event_id: event.id,
+            parsed_body: safeJsonParse(body),
+          });
+          break;
+        }
+
+        const creditAmount = parseInt(creditAmountStr || "0", 10);
+        if (!Number.isFinite(creditAmount) || creditAmount <= 0) {
+          // Not a credit-pack purchase, or missing metadata. Ignore.
+          break;
+        }
+
+        const creditMetadata = {
+          source: "stripe",
+          reason: "credit_pack_purchase",
+          price_id: priceId,
+          session_id: sessionId,
+          payment_intent_id: paymentIntentId,
+          event_id: event.id,
+          mode: "payment_intent",
+        };
+
+        // Idempotency: always use payment_intent id
+        if (customerId) {
+          const billing = await getUserBillingByStripeCustomer(customerId);
+          if (billing) {
+            await grantCredits(billing.user_id, creditAmount, creditMetadata, paymentIntentId);
+            break;
+          }
+        }
+        await grantCredits(clerkUserId, creditAmount, creditMetadata, paymentIntentId);
         break;
       }
 
@@ -218,12 +298,12 @@ export async function POST(req: NextRequest) {
         console.log(`Unhandled event type: ${event.type}`);
     }
 
-    return NextResponse.json({ received: true });
+    return NextResponse.json({ received: true, eventId: event.id });
   } catch (err: unknown) {
     console.error("Webhook handler error:", err);
     const error = err instanceof Error ? err : new Error(String(err));
     return NextResponse.json(
-      { error: "Webhook handler failed", details: error.message },
+      { error: "Webhook handler failed", details: error.message, eventId: event.id },
       { status: 500 }
     );
   }

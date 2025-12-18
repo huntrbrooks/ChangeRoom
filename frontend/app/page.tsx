@@ -200,12 +200,22 @@ function HomeContent() {
       const params = new URLSearchParams(window.location.search);
       const sessionId = params.get('session_id');
       if (sessionId) {
-        // Refresh billing after successful checkout
-        setTimeout(() => {
-          fetchBilling();
-          // Clean up URL
-          window.history.replaceState({}, '', window.location.pathname);
-        }, 1000);
+        // Verify paid checkout server-side (idempotent) then refresh billing
+        (async () => {
+          try {
+            await axios.post('/api/billing/verify-checkout-session', { sessionId });
+          } catch (error) {
+            // Verification is a best-effort fallback (webhook is primary)
+            // eslint-disable-next-line no-console
+            console.warn('verify-checkout-session failed', error);
+          } finally {
+            // Always refresh billing and clean URL
+            setTimeout(() => {
+              fetchBilling();
+              window.history.replaceState({}, '', window.location.pathname);
+            }, 500);
+          }
+        })();
       }
     }
   }, [isLoaded, user]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1406,14 +1416,16 @@ function HomeContent() {
         <div className="text-center mb-6 sm:mb-8">
           <h1 className="sr-only">Virtual Try-On & Shopping</h1>
           <div className="flex justify-center mb-3 sm:mb-4">
-            <Image 
-              src="/main logo Black.png" 
-              alt="IGetDressed.Online" 
-              width={5065}
-              height={1042}
-              priority
-              className="h-10 sm:h-12 md:h-14 w-auto object-contain"
-            />
+            <Link href="/" aria-label="Home" className="inline-flex items-center justify-center">
+              <Image
+                src="/main logo Black.png"
+                alt="IGetDressed.Online"
+                width={5065}
+                height={1042}
+                priority
+                className="h-10 sm:h-12 md:h-14 w-auto object-contain"
+              />
+            </Link>
           </div>
           <p className="text-sm sm:text-base text-gray-600 mb-4">
             Try on clothes virtually and discover similar products to shop

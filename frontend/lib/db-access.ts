@@ -671,36 +671,84 @@ export async function grantCredits(
   await ensureUsersBillingTable();
   await ensureCreditTables();
   return runTransaction(async (tx) => {
+    // Ensure billing exists and lock row for safe concurrent updates
+    await ensureUserBillingWithLock(tx, userId);
+
+    // Idempotency gate: if requestId is provided, insert the ledger row first.
+    // Only if the insert succeeds do we mutate the user's balance.
+    let insertedLedgerId: string | null = null;
+    if (requestId && requestId.trim()) {
+      const inserted = await tx`
+        INSERT INTO credit_ledger_entries (
+          id,
+          user_id,
+          request_id,
+          entry_type,
+          credits_change,
+          balance_after,
+          metadata
+        )
+        VALUES (
+          ${generateUuid()},
+          ${userId},
+          ${requestId},
+          'grant',
+          ${amount},
+          NULL,
+          ${JSON.stringify(metadata)}
+        )
+        ON CONFLICT (request_id, entry_type) DO NOTHING
+        RETURNING id
+      `;
+      if (inserted.rows.length === 0) {
+        // Already granted for this requestId
+        const existing = await tx`
+          SELECT * FROM users_billing WHERE user_id = ${userId} FOR UPDATE
+        `;
+        return existing.rows[0] as UserBilling;
+      }
+      insertedLedgerId = inserted.rows[0].id as string;
+    }
+
     const updated = await tx`
       UPDATE users_billing
-      SET 
+      SET
         credits_available = credits_available + ${amount},
         updated_at = now()
       WHERE user_id = ${userId}
       RETURNING *
     `;
 
-    await tx`
-      INSERT INTO credit_ledger_entries (
-        id,
-        user_id,
-        request_id,
-        entry_type,
-        credits_change,
-        balance_after,
-        metadata
-      )
-      VALUES (
-        ${generateUuid()},
-        ${userId},
-        ${requestId || null},
-        'grant',
-        ${amount},
-        ${updated.rows[0].credits_available},
-        ${JSON.stringify(metadata)}
-      )
-      ON CONFLICT (request_id, entry_type) DO NOTHING
-    `;
+    // If requestId wasn't provided, we still write an audit ledger row (non-idempotent by design).
+    if (!requestId || !requestId.trim()) {
+      await tx`
+        INSERT INTO credit_ledger_entries (
+          id,
+          user_id,
+          request_id,
+          entry_type,
+          credits_change,
+          balance_after,
+          metadata
+        )
+        VALUES (
+          ${generateUuid()},
+          ${userId},
+          NULL,
+          'grant',
+          ${amount},
+          ${updated.rows[0].credits_available},
+          ${JSON.stringify(metadata)}
+        )
+      `;
+    } else if (insertedLedgerId) {
+      // Fill in balance_after for the inserted ledger row
+      await tx`
+        UPDATE credit_ledger_entries
+        SET balance_after = ${updated.rows[0].credits_available}
+        WHERE id = ${insertedLedgerId}
+      `;
+    }
 
     return updated.rows[0] as UserBilling;
   });

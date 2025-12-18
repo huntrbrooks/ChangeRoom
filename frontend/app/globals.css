@@ -82,6 +82,8 @@ body {
   /* Prevent text size adjustment on iOS */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /* Avoid accidental horizontal scrolling on small screens */
+  overflow-x: clip;
 }
 
 /* Streetwear Typography Styles */
