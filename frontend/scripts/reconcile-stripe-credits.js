@@ -39,6 +39,10 @@ function toUnixSeconds(dateStr) {
   return Math.floor(d.getTime() / 1000);
 }
 
+function isNonEmptyString(x) {
+  return typeof x === "string" && x.trim().length > 0;
+}
+
 async function ensureTables() {
   // Minimal safety: ensure the tables we touch exist.
   await sql`
@@ -174,6 +178,16 @@ async function main() {
     apiVersion: "2025-03-31.basil",
   });
 
+  // Cache Stripe Customer -> clerkUserId lookups (small memory, big API savings)
+  const customerToClerkUserId = new Map();
+
+  const creditAmountMap = {
+    [process.env.STRIPE_STARTER_PRICE_ID || ""]: 10,
+    [process.env.STRIPE_STARTER_XMAS_PRICE_ID || ""]: 20,
+    [process.env.STRIPE_VALUE_PRICE_ID || ""]: 30,
+    [process.env.STRIPE_PRO_PRICE_ID || ""]: 100,
+  };
+
   const summary = {
     dryRun,
     scanned: 0,
@@ -181,6 +195,7 @@ async function main() {
     alreadyCredited: 0,
     skipped: 0,
     errors: 0,
+    skippedReasons: {},
     samples: [],
   };
 
@@ -198,45 +213,114 @@ async function main() {
       try {
         if (session.mode !== "payment") {
           summary.skipped += 1;
+          summary.skippedReasons.not_payment_mode =
+            (summary.skippedReasons.not_payment_mode || 0) + 1;
           continue;
         }
         if (session.payment_status !== "paid") {
           summary.skipped += 1;
+          summary.skippedReasons.not_paid =
+            (summary.skippedReasons.not_paid || 0) + 1;
           continue;
         }
 
-        const clerkUserId = session.metadata && session.metadata.clerkUserId;
-        const priceId = (session.metadata && session.metadata.priceId) || null;
-        const creditAmountStr = (session.metadata && session.metadata.creditAmount) || null;
-        const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : null;
+        // Always re-fetch a fully expanded session so we can recover missing metadata/line items.
+        const full = await stripe.checkout.sessions.retrieve(session.id, {
+          expand: ["line_items.data.price", "payment_intent", "customer"],
+        });
 
-        if (!clerkUserId || !paymentIntentId) {
+        const paymentIntentId =
+          typeof full.payment_intent === "string"
+            ? full.payment_intent
+            : full.payment_intent && full.payment_intent.id
+              ? full.payment_intent.id
+              : null;
+
+        // Resolve clerkUserId: prefer session.metadata, then payment_intent.metadata, then customer.metadata
+        let clerkUserId =
+          (full.metadata && full.metadata.clerkUserId) ||
+          (full.payment_intent &&
+          typeof full.payment_intent !== "string" &&
+          full.payment_intent.metadata
+            ? full.payment_intent.metadata.clerkUserId
+            : null) ||
+          null;
+
+        const customerId =
+          typeof full.customer === "string"
+            ? full.customer
+            : full.customer && full.customer.id
+              ? full.customer.id
+              : null;
+
+        if (!isNonEmptyString(clerkUserId) && isNonEmptyString(customerId)) {
+          if (customerToClerkUserId.has(customerId)) {
+            clerkUserId = customerToClerkUserId.get(customerId);
+          } else {
+            try {
+              const customer =
+                typeof full.customer === "string"
+                  ? await stripe.customers.retrieve(customerId)
+                  : full.customer;
+              const meta =
+                customer && customer.metadata ? customer.metadata : {};
+              const fromCustomer = meta && meta.clerkUserId ? meta.clerkUserId : null;
+              customerToClerkUserId.set(customerId, fromCustomer);
+              clerkUserId = clerkUserId || fromCustomer;
+            } catch {
+              customerToClerkUserId.set(customerId, null);
+            }
+          }
+        }
+
+        const priceIdFromSession =
+          (full.metadata && full.metadata.priceId) ||
+          (full.line_items &&
+          full.line_items.data &&
+          full.line_items.data[0] &&
+          full.line_items.data[0].price &&
+          full.line_items.data[0].price.id
+            ? full.line_items.data[0].price.id
+            : null);
+
+        const creditAmountStr =
+          (full.metadata && full.metadata.creditAmount) ||
+          (full.payment_intent &&
+          typeof full.payment_intent !== "string" &&
+          full.payment_intent.metadata
+            ? full.payment_intent.metadata.creditAmount
+            : null) ||
+          null;
+
+        if (!isNonEmptyString(paymentIntentId)) {
           summary.skipped += 1;
+          summary.skippedReasons.missing_payment_intent =
+            (summary.skippedReasons.missing_payment_intent || 0) + 1;
           continue;
         }
-
-        // Fallback mapping (keep aligned with app’s pricing)
-        const creditAmountMap = {
-          [process.env.STRIPE_STARTER_PRICE_ID || ""]: 10,
-          [process.env.STRIPE_STARTER_XMAS_PRICE_ID || ""]: 20,
-          [process.env.STRIPE_VALUE_PRICE_ID || ""]: 30,
-          [process.env.STRIPE_PRO_PRICE_ID || ""]: 100,
-        };
+        if (!isNonEmptyString(clerkUserId)) {
+          summary.skipped += 1;
+          summary.skippedReasons.missing_user_mapping =
+            (summary.skippedReasons.missing_user_mapping || 0) + 1;
+          continue;
+        }
 
         const creditAmount =
           parseInt(creditAmountStr || "0", 10) ||
-          (priceId ? creditAmountMap[priceId] || 0 : 0);
+          (priceIdFromSession ? creditAmountMap[priceIdFromSession] || 0 : 0);
 
         if (!creditAmount || creditAmount <= 0) {
           summary.skipped += 1;
+          summary.skippedReasons.missing_credit_amount =
+            (summary.skippedReasons.missing_credit_amount || 0) + 1;
           continue;
         }
 
         const metadata = {
           source: "stripe",
           reason: "credit_pack_purchase",
-          price_id: priceId,
-          session_id: session.id,
+          price_id: priceIdFromSession,
+          session_id: full.id,
           payment_intent_id: paymentIntentId,
           reconciled: true,
         };
@@ -256,7 +340,7 @@ async function main() {
 
         if (summary.samples.length < 25) {
           summary.samples.push({
-            sessionId: session.id,
+            sessionId: full.id,
             paymentIntentId,
             userId: clerkUserId,
             credits: creditAmount,
