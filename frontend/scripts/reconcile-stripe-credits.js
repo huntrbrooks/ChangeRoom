@@ -254,12 +254,26 @@ async function main() {
             : null) ||
           null;
 
-        const customerId =
+        let customerId =
           typeof full.customer === "string"
             ? full.customer
             : full.customer && full.customer.id
               ? full.customer.id
               : null;
+
+        // Some older sessions may not have `customer` populated on the session itself.
+        // Recover from the expanded payment_intent if available.
+        if (!isNonEmptyString(customerId)) {
+          const piObj =
+            full.payment_intent && typeof full.payment_intent !== "string"
+              ? full.payment_intent
+              : null;
+          const piCustomer =
+            piObj && typeof piObj.customer === "string" ? piObj.customer : null;
+          if (isNonEmptyString(piCustomer)) {
+            customerId = piCustomer;
+          }
+        }
 
         if (!isNonEmptyString(clerkUserId) && isNonEmptyString(customerId)) {
           if (customerToClerkUserId.has(customerId)) {
