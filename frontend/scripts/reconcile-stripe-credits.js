@@ -168,8 +168,16 @@ async function main() {
   if (!process.env.STRIPE_SECRET_KEY) {
     throw new Error("Missing STRIPE_SECRET_KEY");
   }
-  if (!process.env.DATABASE_URL) {
-    throw new Error("Missing DATABASE_URL");
+  // @vercel/postgres uses POSTGRES_URL (or POSTGRES_URL_NON_POOLING) by default.
+  // Our app config uses DATABASE_URL, so bridge it here for local scripts.
+  if (!process.env.POSTGRES_URL && process.env.DATABASE_URL) {
+    process.env.POSTGRES_URL = process.env.DATABASE_URL;
+  }
+  if (!process.env.POSTGRES_URL && process.env.POSTGRES_URL_NON_POOLING) {
+    process.env.POSTGRES_URL = process.env.POSTGRES_URL_NON_POOLING;
+  }
+  if (!process.env.POSTGRES_URL) {
+    throw new Error("Missing POSTGRES_URL (or DATABASE_URL)");
   }
 
   await ensureTables();
