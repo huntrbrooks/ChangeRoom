@@ -281,6 +281,23 @@ async function main() {
           }
         }
 
+        // Last-resort user mapping: look up by Stripe customer id in our DB
+        if (!isNonEmptyString(clerkUserId) && isNonEmptyString(customerId)) {
+          try {
+            const mapped = await sql`
+              SELECT user_id
+              FROM users_billing
+              WHERE stripe_customer_id = ${customerId}
+              LIMIT 1
+            `;
+            if (mapped.rows.length > 0 && isNonEmptyString(mapped.rows[0].user_id)) {
+              clerkUserId = mapped.rows[0].user_id;
+            }
+          } catch {
+            // ignore; we'll count missing mapping below
+          }
+        }
+
         const priceIdFromSession =
           (full.metadata && full.metadata.priceId) ||
           (full.line_items &&
@@ -304,12 +321,37 @@ async function main() {
           summary.skipped += 1;
           summary.skippedReasons.missing_payment_intent =
             (summary.skippedReasons.missing_payment_intent || 0) + 1;
+          if (summary.samples.length < 25) {
+            summary.samples.push({
+              sessionId: full.id,
+              status: "skipped",
+              reason: "missing_payment_intent",
+              customerId,
+            });
+          }
           continue;
         }
         if (!isNonEmptyString(clerkUserId)) {
           summary.skipped += 1;
           summary.skippedReasons.missing_user_mapping =
             (summary.skippedReasons.missing_user_mapping || 0) + 1;
+          if (summary.samples.length < 25) {
+            summary.samples.push({
+              sessionId: full.id,
+              paymentIntentId,
+              status: "skipped",
+              reason: "missing_user_mapping",
+              customerId,
+              hasSessionMetadataUser: Boolean(full.metadata && full.metadata.clerkUserId),
+              hasPaymentIntentMetadataUser:
+                Boolean(
+                  full.payment_intent &&
+                    typeof full.payment_intent !== "string" &&
+                    full.payment_intent.metadata &&
+                    full.payment_intent.metadata.clerkUserId
+                ),
+            });
+          }
           continue;
         }
 
@@ -321,6 +363,16 @@ async function main() {
           summary.skipped += 1;
           summary.skippedReasons.missing_credit_amount =
             (summary.skippedReasons.missing_credit_amount || 0) + 1;
+          if (summary.samples.length < 25) {
+            summary.samples.push({
+              sessionId: full.id,
+              paymentIntentId,
+              userId: clerkUserId,
+              status: "skipped",
+              reason: "missing_credit_amount",
+              priceId: priceIdFromSession,
+            });
+          }
           continue;
         }
 
