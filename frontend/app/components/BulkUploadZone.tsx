@@ -665,7 +665,8 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             const isAnalyzing = item?.status === 'analyzing';
             
             // Compute wearing style options outside of JSX to avoid hydration issues
-            const category = item?.analysis?.category || item?.analysis?.body_region || '';
+            const rawCategory = item?.analysis?.category || item?.analysis?.body_region || '';
+            const category = normalizeCategory(rawCategory);
             const itemType = item?.analysis?.item_type || '';
             // Also check description and tags for better matching (e.g., "cargo pants", "baseball cap", "hooded sweatshirt")
             const description = (item?.analysis?.description || item?.analysis?.detailed_description || '').toLowerCase();
@@ -700,7 +701,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             
             // Debug logging
             if (isSuccess && item?.analysis) {
-              console.log(`[WearingStyle] Item ${idx}: category="${category}", itemType="${itemType}", hasOptions=${hasWearingOptions}, styleOptions=${styleOptions.length}, defaultStyle="${defaultWearingStyle}"`);
+              console.log(`[WearingStyle] Item ${idx}: category="${category}" (raw="${rawCategory}"), itemType="${itemType}", hasOptions=${hasWearingOptions}, styleOptions=${styleOptions.length}, defaultStyle="${defaultWearingStyle}"`);
             }
             
             return (

@@ -301,8 +301,29 @@ export function getWearingStyleOptions(
   if (!category) return [];
 
   // Normalize inputs
-  const normalizedCategory = category.toLowerCase().trim();
+  let normalizedCategory = category.toLowerCase().trim();
   const normalizedItemType = itemType?.toLowerCase().trim();
+
+  // Category aliasing:
+  // The backend currently returns high-level body regions like "upper_body", but we still want
+  // outerwear-specific options for items like jackets/coats/blazers/cardigans.
+  if (normalizedCategory === "upper_body" && normalizedItemType) {
+    const outerwearKeywords = [
+      "jacket",
+      "coat",
+      "blazer",
+      "cardigan",
+      "overcoat",
+      "windbreaker",
+      "parka",
+      "anorak",
+      "raincoat",
+      "trench",
+    ];
+    if (outerwearKeywords.some((kw) => normalizedItemType.includes(kw))) {
+      normalizedCategory = "outerwear";
+    }
+  }
 
   // Find matching config
   const config = WEARING_STYLE_CONFIGS.find((cfg) => {
