@@ -2,8 +2,9 @@ Flask==3.0.2
 flask-cors==6.0.2
 Pillow==10.3.0
 ultralytics==8.2.0
-torch==2.9.1
-torchvision==0.24.1
+# NOTE: Torch is intentionally NOT pinned here.
+# In CI + Docker we install CPU-only torch/torchvision explicitly to avoid pulling massive CUDA wheels
+# that can exceed GitHub Actions disk limits.
 gunicorn==22.0.0
 python-dotenv==1.0.1
 pytest==8.2.0
