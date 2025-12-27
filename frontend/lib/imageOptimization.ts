@@ -64,14 +64,117 @@ const readFileAsDataURL = (file: File): Promise<string> => {
   });
 };
 
-const loadImage = (src: string): Promise<HTMLImageElement> => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('Could not load image for optimization.'));
-    img.src = src;
+function isAbortError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "name" in err &&
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (err as any).name === "AbortError"
+  );
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withRetries<T>(
+  fn: (attempt: number) => Promise<T>,
+  options: { retries: number; baseDelayMs: number; label: string }
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= options.retries; attempt++) {
+    try {
+      return await fn(attempt);
+    } catch (err) {
+      lastError = err;
+      // Abort should not retry.
+      if (isAbortError(err)) {
+        throw err;
+      }
+      if (attempt >= options.retries) {
+        break;
+      }
+      const delay = options.baseDelayMs * Math.pow(2, attempt);
+      // eslint-disable-next-line no-console
+      console.warn(`[imageOptimization] ${options.label} failed (attempt ${attempt + 1}/${options.retries + 1})`, err);
+      await sleep(delay);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+async function loadHtmlImageFromUrl(
+  url: string,
+  options: { timeoutMs: number }
+): Promise<HTMLImageElement> {
+  const img = new Image();
+  img.decoding = "async";
+
+  // Some browsers resolve decode() only after src is set.
+  img.src = url;
+
+  // Prefer decode() when available (more reliable than onload for async pipelines)
+  const decodePromise =
+    typeof img.decode === "function"
+      ? img.decode().then(() => img)
+      : new Promise<HTMLImageElement>((resolve, reject) => {
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error("Could not decode image."));
+        });
+
+  const timeoutPromise = new Promise<HTMLImageElement>((_, reject) => {
+    const t = setTimeout(() => {
+      clearTimeout(t);
+      reject(new Error("Timed out while decoding image."));
+    }, options.timeoutMs);
   });
-};
+
+  return Promise.race([decodePromise, timeoutPromise]);
+}
+
+async function decodeToDrawable(
+  file: File
+): Promise<{ drawable: CanvasImageSource; width: number; height: number; cleanup?: () => void }> {
+  // Try ImageBitmap first (best for large files, avoids massive data URLs).
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bmp = await createImageBitmap(file);
+      return {
+        drawable: bmp,
+        width: bmp.width,
+        height: bmp.height,
+        cleanup: () => {
+          try {
+            bmp.close();
+          } catch {
+            // ignore
+          }
+        },
+      };
+    } catch (err) {
+      // Some formats (e.g. HEIC on Chrome) aren't supported by createImageBitmap
+      // eslint-disable-next-line no-console
+      console.info("[imageOptimization] createImageBitmap failed; falling back to HTMLImageElement decode.", err);
+    }
+  }
+
+  // Fallback: objectURL + HTMLImageElement decode
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadHtmlImageFromUrl(url, { timeoutMs: 12_000 });
+    // HTMLImageElement is also a CanvasImageSource
+    return {
+      drawable: img,
+      width: img.naturalWidth || img.width,
+      height: img.naturalHeight || img.height,
+      cleanup: () => URL.revokeObjectURL(url),
+    };
+  } catch (err) {
+    URL.revokeObjectURL(url);
+    throw err;
+  }
+}
 
 const canvasToBlob = (
   canvas: HTMLCanvasElement,
@@ -146,12 +249,18 @@ export const optimizeImageFile = async (
     };
   }
 
-  const dataUrl = await readFileAsDataURL(file);
-  const image = await loadImage(dataUrl);
+  // Decode the image explicitly before optimization.
+  // This avoids flaky Image.onload behavior and prevents failures when Data URLs are too large.
+  const decoded = await withRetries(
+    async () => decodeToDrawable(file),
+    { retries: 2, baseDelayMs: 250, label: "decode" }
+  );
+  const image = decoded.drawable;
 
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   if (!ctx) {
+    if (decoded.cleanup) decoded.cleanup();
     throw new Error('Canvas not supported in this browser.');
   }
 
@@ -162,14 +271,21 @@ export const optimizeImageFile = async (
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
   };
 
-  const originalLongestSide = Math.max(image.width, image.height);
+  const srcW =
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (image as any).width || decoded.width || 1;
+  const srcH =
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (image as any).height || decoded.height || 1;
+
+  const originalLongestSide = Math.max(srcW, srcH);
   const scale =
     originalLongestSide > maxDimension
       ? maxDimension / originalLongestSide
       : 1;
 
-  let workingWidth = image.width * scale;
-  let workingHeight = image.height * scale;
+  let workingWidth = srcW * scale;
+  let workingHeight = srcH * scale;
   drawScaledImage(workingWidth, workingHeight);
 
   let currentQuality = initialQuality;
@@ -203,6 +319,7 @@ export const optimizeImageFile = async (
   }
 
   if (blob.size > maxBytes) {
+    if (decoded.cleanup) decoded.cleanup();
     throw new Error(
       'We could not shrink this photo below the 10MB limit. Please choose a smaller image.'
     );
@@ -213,6 +330,7 @@ export const optimizeImageFile = async (
     lastModified: Date.now(),
   });
 
+  if (decoded.cleanup) decoded.cleanup();
   return {
     file: optimizedFile,
     didOptimize: true,

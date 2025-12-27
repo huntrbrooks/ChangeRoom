@@ -131,12 +131,25 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         return filesToProcess;
       }
       setAnalysisProgress("Converting images to optimal format...");
-      const converted = await Promise.all(
+      // Process each file independently so one failure doesn't kill the whole batch
+      const results = await Promise.allSettled(
         filesToProcess.map(async (f) => {
           if (!needsConversionToOptimal(f)) return f;
+          // convertToOptimalImageFile never throws (has final fallback to original file)
           return await convertToOptimalImageFile(f);
         })
       );
+      
+      // Extract successful conversions; use original file if conversion failed
+      const converted = results.map((result, idx) => {
+        if (result.status === "fulfilled") {
+          return result.value;
+        } else {
+          console.warn(`[BulkUploadZone] Conversion failed for ${filesToProcess[idx]?.name || "unknown"}; using original file.`, result.reason);
+          return filesToProcess[idx]; // Fallback to original
+        }
+      });
+      
       return converted;
     },
     [confirmConvertToOptimal]

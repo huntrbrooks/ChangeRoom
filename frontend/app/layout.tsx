@@ -13,6 +13,7 @@ import { Footer } from "./components/Footer";
 import PwaRegister from "./components/PwaRegister";
 import { PostHogClientProvider } from "./providers/PostHogProvider";
 import { AnalyticsUserSync } from "./components/AnalyticsUserSync";
+import { GlobalErrorGuards } from "./components/GlobalErrorGuards";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -104,6 +105,7 @@ export default function RootLayout({
       <html lang="en">
         <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-black flex flex-col min-h-screen`}>
           <PwaRegister />
+          <GlobalErrorGuards />
           <PostHogClientProvider>
             {statusMessage && (
               <div className="w-full bg-yellow-300 text-black text-center py-2 text-sm font-semibold border-b border-yellow-700">
@@ -137,6 +139,7 @@ export default function RootLayout({
           className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#FAF9F6] text-black flex flex-col min-h-screen`}
         >
           <PwaRegister />
+          <GlobalErrorGuards />
           <PostHogClientProvider>
             <AnalyticsUserSync />
             {statusMessage && (

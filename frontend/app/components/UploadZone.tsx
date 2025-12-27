@@ -4,7 +4,11 @@ import {
   optimizeImageFile,
   type OptimizeImageOptions,
 } from '@/lib/imageOptimization';
-import { isLikelyImageFile, needsConversionToOptimal } from '@/lib/imageConversion';
+import {
+  convertToOptimalImageFile,
+  isLikelyImageFile,
+  needsConversionToOptimal,
+} from '@/lib/imageConversion';
 import { detectFacesBestEffort } from '@/lib/faceDetection';
 /* eslint-disable react-hooks/exhaustive-deps */
 
@@ -228,12 +232,15 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
     }
 
     const requiresConversion = newFiles.some((f) => needsConversionToOptimal(f));
-    if (requiresConversion) {
+    const shouldConvert = (() => {
+      if (!requiresConversion) return false;
       const msg =
         "Convert to optimal file type?\n\n" +
         "Generation will most likley fail if conversion is not processed.";
-      const yes = window.confirm(msg);
-      if (!yes) {
+      return window.confirm(msg);
+    })();
+    if (requiresConversion) {
+      if (!shouldConvert) {
         cleanupMessages();
         if (multiple && onFilesSelect) {
           const combined = [...files, ...newFiles].slice(0, maxFiles);
@@ -262,11 +269,33 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       setIsOptimizing(true);
       cleanupMessages();
 
-      const optimizedResults = await Promise.all(
-        newFiles.map(file => optimizeImageFile(file, optimizationOptions))
+      // Process each file independently so one failure doesn't kill the whole batch.
+      const results = await Promise.allSettled(
+        newFiles.map(async (file) => {
+          // If user opted into conversion, run the conversion pipeline (it includes optimization).
+          if (shouldConvert && needsConversionToOptimal(file)) {
+            return await convertToOptimalImageFile(file);
+          }
+          // Otherwise do the standard optimization pass.
+          const r = await optimizeImageFile(file, optimizationOptions);
+          return r.file;
+        })
       );
-      
-      const optimizedFiles = optimizedResults.map(r => r.file);
+
+      const optimizedFiles: File[] = [];
+      const failures: Array<{ name: string; reason: string }> = [];
+      results.forEach((r, idx) => {
+        const original = newFiles[idx];
+        if (r.status === 'fulfilled') {
+          optimizedFiles.push(r.value);
+        } else {
+          const reason =
+            r.reason instanceof Error ? r.reason.message : String(r.reason);
+          failures.push({ name: original?.name || `file_${idx + 1}`, reason });
+          // Fallback: keep the original file so the user isn't blocked.
+          optimizedFiles.push(original);
+        }
+      });
 
       if (multiple && onFilesSelect) {
          const combined = [...files, ...optimizedFiles].slice(0, maxFiles);
@@ -276,11 +305,20 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       }
 
       // Construct optimization message
-      const optimizationCount = optimizedResults.filter(r => r.didOptimize || r.mimeTypeChanged).length;
-      if (optimizationCount > 0) {
+      const optimizationCount = shouldConvert
+        ? newFiles.filter((f) => needsConversionToOptimal(f)).length
+        : 0;
+      if (shouldConvert && optimizationCount > 0) {
         setOptimizationMessage(
-          `Optimized ${optimizationCount} image${optimizationCount !== 1 ? 's' : ''} to fit limits.`
+          `Converted ${optimizationCount} image${optimizationCount !== 1 ? 's' : ''} to a compatible format.`
         );
+      } else {
+        // We don't have per-file didOptimize flags anymore; keep the message generic.
+        setOptimizationMessage(`Prepared ${optimizedFiles.length} image${optimizedFiles.length !== 1 ? 's' : ''} for upload.`);
+      }
+
+      if (failures.length > 0) {
+        console.warn('[UploadZone] Some files could not be optimized/converted; using originals.', failures);
       }
       
       // Perform quality checks (resolution, framing, brightness, sharpness)
@@ -386,7 +424,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       console.error('Image optimization failed', error);
       setIsMainFaceCheckRunning(false);
       const message =
-        error instanceof Error ? error.message : 'Could not optimize images.';
+        error instanceof Error ? error.message : 'Could not prepare images.';
       setOptimizationError(message);
     } finally {
       setIsOptimizing(false);

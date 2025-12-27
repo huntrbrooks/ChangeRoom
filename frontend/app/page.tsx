@@ -96,6 +96,7 @@ function HomeContent() {
   const creditLoggedRef = useRef(false);
   const trialConsumedRef = useRef(false);
   const contentBlockWarnedRef = useRef(false);
+  const creditHoldAppliedRef = useRef(false);
   const virtualMirrorSectionRef = useRef<HTMLElement | null>(null);
   const stickyHeaderRef = useRef<HTMLElement | null>(null);
   const mobileActionBarRef = useRef<HTMLDivElement | null>(null);
@@ -767,6 +768,7 @@ function HomeContent() {
     // Reset state for new generation
     creditLoggedRef.current = false;
     trialConsumedRef.current = false;
+    creditHoldAppliedRef.current = false;
     if (resultImageLoadTimerRef.current) {
       clearTimeout(resultImageLoadTimerRef.current);
       resultImageLoadTimerRef.current = null;
@@ -871,6 +873,39 @@ function HomeContent() {
 
         tryOnFormData.append('requestId', requestId);
         tryOnFormData.append('quality', 'standard');
+
+        // Step 1a: Place a credit hold (Next.js API) before the long-running Render request.
+        // This ensures credits decrement immediately and are recorded server-side.
+        try {
+          const holdRes = await httpClient.post(
+            '/api/try-on/hold',
+            { requestId, quality: 'standard' },
+            { headers: { ...(requestId ? { 'X-Request-Id': requestId } : {}) } }
+          );
+          creditHoldAppliedRef.current = true;
+          const creditsAvailable = holdRes?.data?.creditsAvailable;
+          const usedFreeTrial = Boolean(holdRes?.data?.usedFreeTrial);
+          setIsPreviewResult(usedFreeTrial);
+          if (typeof creditsAvailable === 'number') {
+            setBilling((prev) => (prev ? { ...prev, creditsAvailable } : prev));
+          }
+          if (usedFreeTrial) {
+            setBilling((prev) => (prev ? { ...prev, trialUsed: true } : prev));
+          }
+        } catch (holdErr: unknown) {
+          // If user has no credits, this endpoint returns 402 + { error: 'no_credits' }
+          const h = holdErr as {
+            response?: { status?: number; data?: { error?: string; creditsAvailable?: number } };
+          };
+          if (h.response?.status === 402 || h.response?.data?.error === 'no_credits') {
+            redirectToPricing();
+            setIsTryOnLoading(false);
+            setIsGenerating(false);
+            console.error = originalError;
+            return;
+          }
+          throw holdErr;
+        }
         
         // Build metadata with per-item wearing styles
         const metadata: Record<string, unknown> = {
@@ -1039,7 +1074,9 @@ function HomeContent() {
         logIngest({location:'page.tsx:646',message:'Frontend try-on request succeeded',data:{status:tryOnRes?.status,hasImageUrl:!!tryOnRes?.data?.image_url},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'});
         // #endregion
 
-        setIsPreviewResult(Boolean(tryOnRes?.data?.usedFreeTrial));
+        // Render stack does not manage billing; keep preview state from the hold call above.
+        // (If Render happens to return usedFreeTrial, we still respect it.)
+        setIsPreviewResult(Boolean(tryOnRes?.data?.usedFreeTrial) || isPreviewResult);
 
         if (tryOnRes.data.image_url) {
           // Reset content-block warning state after a successful generation
@@ -1070,7 +1107,12 @@ function HomeContent() {
           }
           
           // Force state update by setting to null first, then to new URL
-          noteCreditUse();
+          // Finalize the hold for audit purposes (idempotent; does not change visible balance).
+          if (creditHoldAppliedRef.current && requestId) {
+            httpClient
+              .post('/api/try-on/finalize', { requestId })
+              .catch((e) => console.warn('Failed to finalize credit hold', e));
+          }
           if (resultImageLoadTimerRef.current) {
             clearTimeout(resultImageLoadTimerRef.current);
             resultImageLoadTimerRef.current = null;
@@ -1133,6 +1175,15 @@ function HomeContent() {
           setIsGenerating(false);
           console.error = originalError;
           return;
+        }
+
+        // On non-cancel failure, release the hold so the user gets credits back.
+        if (creditHoldAppliedRef.current && requestId) {
+          try {
+            await httpClient.post('/api/try-on/cancel', { requestId });
+          } catch (releaseErr) {
+            console.warn('Failed to release credit hold after try-on failure', releaseErr);
+          }
         }
 
         const detail = error.response?.data?.detail || error.response?.data?.error || '';
