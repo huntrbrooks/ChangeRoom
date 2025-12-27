@@ -134,7 +134,7 @@ async function grantCreditsIdempotent({ userId, amount, requestId, metadata, dry
         NULL,
         ${JSON.stringify(metadata)}::jsonb
       )
-      ON CONFLICT (request_id, entry_type) DO NOTHING
+      ON CONFLICT (request_id, entry_type) WHERE request_id IS NOT NULL DO NOTHING
       RETURNING id
     `;
 
