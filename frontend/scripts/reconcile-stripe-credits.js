@@ -43,6 +43,25 @@ function isNonEmptyString(x) {
   return typeof x === "string" && x.trim().length > 0;
 }
 
+function generateUuid() {
+  // Node 16+ supports crypto.randomUUID in most environments
+  try {
+    // eslint-disable-next-line no-undef
+    if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+      // eslint-disable-next-line no-undef
+      return globalThis.crypto.randomUUID();
+    }
+  } catch {
+    // ignore
+  }
+  // Fallback (RFC4122 v4-ish)
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 async function ensureTables() {
   // Minimal safety: ensure the tables we touch exist.
   await sql`
@@ -119,6 +138,7 @@ async function grantCreditsIdempotent({ userId, amount, requestId, metadata, dry
     // Insert ledger row as the idempotency gate
     const inserted = await client.sql`
       INSERT INTO credit_ledger_entries (
+        id,
         user_id,
         request_id,
         entry_type,
@@ -127,6 +147,7 @@ async function grantCreditsIdempotent({ userId, amount, requestId, metadata, dry
         metadata
       )
       VALUES (
+        ${generateUuid()},
         ${userId},
         ${requestId},
         'grant',
