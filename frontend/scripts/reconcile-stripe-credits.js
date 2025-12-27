@@ -99,24 +99,25 @@ async function grantCreditsIdempotent({ userId, amount, requestId, metadata, dry
     return { status: "would_credit" };
   }
 
-  const client = sql;
-  const begin = client.begin ? client.begin.bind(client) : null;
-  if (!begin) {
-    throw new Error("Database client does not support transactions (sql.begin missing).");
-  }
+  // Use a dedicated client connection and run an explicit transaction.
+  // This works in local Node runs where sql.begin is not available.
+  const client = await sql.connect();
+  try {
+    await client.sql`BEGIN`;
 
-  return begin(async (tx) => {
     // Ensure billing row exists and is locked
-    await tx`
+    await client.sql`
       INSERT INTO users_billing (user_id, plan, credits_available, trial_used, is_frozen)
       VALUES (${userId}, 'free', 0, false, false)
       ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
     `;
-    const locked = await tx`SELECT * FROM users_billing WHERE user_id = ${userId} FOR UPDATE`;
+    const locked = await client.sql`
+      SELECT * FROM users_billing WHERE user_id = ${userId} FOR UPDATE
+    `;
     const before = locked.rows[0].credits_available || 0;
 
     // Insert ledger row as the idempotency gate
-    const inserted = await tx`
+    const inserted = await client.sql`
       INSERT INTO credit_ledger_entries (
         user_id,
         request_id,
@@ -138,10 +139,11 @@ async function grantCreditsIdempotent({ userId, amount, requestId, metadata, dry
     `;
 
     if (inserted.rows.length === 0) {
+      await client.sql`COMMIT`;
       return { status: "already_credited" };
     }
 
-    const updated = await tx`
+    const updated = await client.sql`
       UPDATE users_billing
       SET credits_available = credits_available + ${amount}, updated_at = now()
       WHERE user_id = ${userId}
@@ -149,14 +151,24 @@ async function grantCreditsIdempotent({ userId, amount, requestId, metadata, dry
     `;
     const after = updated.rows[0].credits_available;
 
-    await tx`
+    await client.sql`
       UPDATE credit_ledger_entries
       SET balance_after = ${after}
       WHERE id = ${inserted.rows[0].id}
     `;
 
+    await client.sql`COMMIT`;
     return { status: "credited", before, after };
-  });
+  } catch (err) {
+    try {
+      await client.sql`ROLLBACK`;
+    } catch {
+      // ignore rollback failure
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function main() {
