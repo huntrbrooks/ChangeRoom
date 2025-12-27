@@ -164,6 +164,12 @@ async function main() {
   const dryRun = Boolean(args["dry-run"] || args.dryRun);
   const limit = args.limit ? parseInt(args.limit, 10) : 100;
   const from = toUnixSeconds(args.from);
+  const oneSessionId = args.session || args.sessionId;
+  const onePaymentIntentId = args["payment-intent"] || args.paymentIntent || args.payment_intent;
+  const overrideUserId = args["user-id"] || args.userId || args.user_id;
+  const overrideCreditsRaw = args.credits || args.creditAmount || args.credit_amount;
+  const overrideCredits =
+    overrideCreditsRaw !== undefined ? parseInt(String(overrideCreditsRaw), 10) : null;
 
   if (!process.env.STRIPE_SECRET_KEY) {
     throw new Error("Missing STRIPE_SECRET_KEY");
@@ -195,6 +201,168 @@ async function main() {
     [process.env.STRIPE_VALUE_PRICE_ID || ""]: 30,
     [process.env.STRIPE_PRO_PRICE_ID || ""]: 100,
   };
+
+  async function reconcileSingleCheckoutSession(sessionId) {
+    const full = await stripe.checkout.sessions.retrieve(sessionId, {
+      expand: ["line_items.data.price", "payment_intent", "customer"],
+    });
+
+    if (full.mode !== "payment") {
+      return { status: "skipped", reason: "not_payment_mode", sessionId: full.id };
+    }
+    if (full.payment_status !== "paid") {
+      return {
+        status: "skipped",
+        reason: "not_paid",
+        sessionId: full.id,
+        paymentStatus: full.payment_status,
+      };
+    }
+
+    const paymentIntentId =
+      typeof full.payment_intent === "string"
+        ? full.payment_intent
+        : full.payment_intent && full.payment_intent.id
+          ? full.payment_intent.id
+          : null;
+    if (!isNonEmptyString(paymentIntentId)) {
+      return { status: "skipped", reason: "missing_payment_intent", sessionId: full.id };
+    }
+
+    let clerkUserId =
+      (full.metadata && full.metadata.clerkUserId) ||
+      (full.payment_intent &&
+      typeof full.payment_intent !== "string" &&
+      full.payment_intent.metadata
+        ? full.payment_intent.metadata.clerkUserId
+        : null) ||
+      null;
+
+    if (isNonEmptyString(overrideUserId)) {
+      clerkUserId = overrideUserId;
+    }
+
+    let customerId =
+      typeof full.customer === "string"
+        ? full.customer
+        : full.customer && full.customer.id
+          ? full.customer.id
+          : null;
+
+    if (!isNonEmptyString(customerId)) {
+      const piObj =
+        full.payment_intent && typeof full.payment_intent !== "string" ? full.payment_intent : null;
+      const piCustomer = piObj && typeof piObj.customer === "string" ? piObj.customer : null;
+      if (isNonEmptyString(piCustomer)) customerId = piCustomer;
+    }
+
+    if (!isNonEmptyString(clerkUserId) && isNonEmptyString(customerId)) {
+      const mapped = await sql`
+        SELECT user_id
+        FROM users_billing
+        WHERE stripe_customer_id = ${customerId}
+        LIMIT 1
+      `;
+      if (mapped.rows.length > 0 && isNonEmptyString(mapped.rows[0].user_id)) {
+        clerkUserId = mapped.rows[0].user_id;
+      }
+    }
+
+    if (!isNonEmptyString(clerkUserId)) {
+      return {
+        status: "skipped",
+        reason: "missing_user_mapping",
+        sessionId: full.id,
+        paymentIntentId,
+        customerId: customerId || null,
+      };
+    }
+
+    const priceIdFromSession =
+      (full.metadata && full.metadata.priceId) ||
+      (full.line_items &&
+      full.line_items.data &&
+      full.line_items.data[0] &&
+      full.line_items.data[0].price &&
+      full.line_items.data[0].price.id
+        ? full.line_items.data[0].price.id
+        : null);
+
+    const creditAmountStr =
+      (full.metadata && full.metadata.creditAmount) ||
+      (full.payment_intent &&
+      typeof full.payment_intent !== "string" &&
+      full.payment_intent.metadata
+        ? full.payment_intent.metadata.creditAmount
+        : null) ||
+      null;
+
+    const computedCredits =
+      parseInt(creditAmountStr || "0", 10) ||
+      (priceIdFromSession ? creditAmountMap[priceIdFromSession] || 0 : 0);
+
+    const creditsToGrant =
+      typeof overrideCredits === "number" && Number.isFinite(overrideCredits) && overrideCredits > 0
+        ? overrideCredits
+        : computedCredits;
+
+    if (!creditsToGrant || creditsToGrant <= 0) {
+      return {
+        status: "skipped",
+        reason: "missing_credit_amount",
+        sessionId: full.id,
+        paymentIntentId,
+        userId: clerkUserId,
+        priceId: priceIdFromSession,
+      };
+    }
+
+    const metadata = {
+      source: "stripe",
+      reason: "credit_pack_purchase",
+      price_id: priceIdFromSession,
+      session_id: full.id,
+      payment_intent_id: paymentIntentId,
+      reconciled: true,
+      manual: Boolean(overrideUserId || overrideCredits),
+    };
+
+    const result = await grantCreditsIdempotent({
+      userId: clerkUserId,
+      amount: creditsToGrant,
+      requestId: paymentIntentId,
+      metadata,
+      dryRun,
+    });
+
+    return {
+      status: result.status,
+      sessionId: full.id,
+      paymentIntentId,
+      customerId: customerId || null,
+      userId: clerkUserId,
+      credits: creditsToGrant,
+      dryRun,
+    };
+  }
+
+  // Manual / single-item mode
+  if (isNonEmptyString(oneSessionId) || isNonEmptyString(onePaymentIntentId)) {
+    let sessionId = oneSessionId;
+    if (!isNonEmptyString(sessionId) && isNonEmptyString(onePaymentIntentId)) {
+      const sessions = await stripe.checkout.sessions.list({
+        payment_intent: onePaymentIntentId,
+        limit: 1,
+      });
+      sessionId = sessions.data[0] ? sessions.data[0].id : null;
+    }
+    if (!isNonEmptyString(sessionId)) {
+      throw new Error("Could not resolve Checkout Session. Provide --session=cs_... or a valid --payment-intent=pi_...");
+    }
+    const single = await reconcileSingleCheckoutSession(sessionId);
+    console.log(JSON.stringify({ mode: "single", ...single }, null, 2));
+    return;
+  }
 
   const summary = {
     dryRun,
