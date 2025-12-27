@@ -445,6 +445,28 @@ async function main() {
               ? full.payment_intent.id
               : null;
 
+        // If we've already granted for this payment_intent, count it as alreadyCredited
+        // even if we can't resolve the user mapping from Stripe metadata/customer.
+        if (isNonEmptyString(paymentIntentId)) {
+          const existingGrant = await sql`
+            SELECT 1
+            FROM credit_ledger_entries
+            WHERE request_id = ${paymentIntentId} AND entry_type = 'grant'
+            LIMIT 1
+          `;
+          if (existingGrant.rows.length > 0) {
+            summary.alreadyCredited += 1;
+            if (summary.samples.length < 25) {
+              summary.samples.push({
+                sessionId: full.id,
+                paymentIntentId,
+                status: "already_credited",
+              });
+            }
+            continue;
+          }
+        }
+
         // Resolve clerkUserId: prefer session.metadata, then payment_intent.metadata, then customer.metadata
         let clerkUserId =
           (full.metadata && full.metadata.clerkUserId) ||
