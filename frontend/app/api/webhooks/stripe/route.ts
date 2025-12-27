@@ -66,14 +66,24 @@ export async function POST(req: NextRequest) {
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
-        const clerkUserId = session.metadata?.clerkUserId;
+        const customerId = typeof session.customer === "string" ? session.customer : "";
+        const clerkUserIdFromMetadata = session.metadata?.clerkUserId;
+        const clerkUserId =
+          clerkUserIdFromMetadata ||
+          // If metadata is missing, recover via DB mapping from customer id (if present)
+          (customerId ? (await getUserBillingByStripeCustomer(customerId))?.user_id : undefined);
 
         if (!clerkUserId) {
-          console.error("No clerkUserId in checkout session metadata");
+          console.error("checkout.session.completed: cannot resolve user", {
+            session_id: session.id,
+            customer_id: customerId || null,
+            has_metadata_user: Boolean(clerkUserIdFromMetadata),
+            mode: session.mode,
+            payment_status: (session as { payment_status?: unknown }).payment_status,
+            event_id: event.id,
+          });
           break;
         }
-
-        const customerId = session.customer as string;
 
         const priceIdFromSession = session.metadata?.priceId || session.line_items?.data?.[0]?.price?.id || "";
         const creditAmountMap: Record<string, number> = {
@@ -112,6 +122,20 @@ export async function POST(req: NextRequest) {
             typeof session.payment_intent === "string" ? session.payment_intent : null;
           const creditRequestId = paymentIntentId || session.id;
 
+          // IMPORTANT: checkout.session.completed can fire before funds are captured
+          // for async payment methods. Only grant on "paid"; otherwise PI handler will grant later.
+          const paymentStatus =
+            (session as unknown as { payment_status?: string }).payment_status || "unknown";
+          if (paymentStatus !== "paid") {
+            console.log("checkout.session.completed: not paid yet, skipping credit grant", {
+              session_id: session.id,
+              payment_intent_id: paymentIntentId,
+              payment_status: paymentStatus,
+              event_id: event.id,
+            });
+            break;
+          }
+
           const creditAmount =
             parseInt(session.metadata?.creditAmount || "0", 10) ||
             creditAmountMap[priceIdFromSession] ||
@@ -126,18 +150,13 @@ export async function POST(req: NextRequest) {
               payment_intent_id: paymentIntentId,
               event_id: event.id,
               mode: session.mode,
+              currency: session.currency,
+              amount_total: typeof session.amount_total === "number" ? session.amount_total : null,
             };
 
             // Get or create billing to ensure customer ID is set
-            const billing = await getUserBillingByStripeCustomer(customerId);
-            if (billing) {
-              await grantCredits(billing.user_id, creditAmount, creditMetadata, creditRequestId);
-              console.log(`Added ${creditAmount} credits to user ${billing.user_id}`);
-            } else {
-              // Fallback: use clerkUserId from metadata
-              await grantCredits(clerkUserId, creditAmount, creditMetadata, creditRequestId);
-              console.log(`Added ${creditAmount} credits to user ${clerkUserId}`);
-            }
+            await grantCredits(clerkUserId, creditAmount, creditMetadata, creditRequestId);
+            console.log(`Added ${creditAmount} credits to user ${clerkUserId}`);
           }
         }
         await captureServerEvent(
@@ -213,6 +232,8 @@ export async function POST(req: NextRequest) {
           payment_intent_id: paymentIntentId,
           event_id: event.id,
           mode: "payment_intent",
+          currency: pi.currency,
+          amount_received: typeof pi.amount_received === "number" ? pi.amount_received : null,
         };
 
         // Idempotency: always use payment_intent id

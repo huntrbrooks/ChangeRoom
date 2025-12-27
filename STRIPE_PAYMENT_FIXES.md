@@ -53,10 +53,13 @@ Production site: https://igetdressed.online
 
 #### Client-Side (NEXT_PUBLIC_* - exposed to browser):
 ```bash
-NEXT_PUBLIC_STRIPE_STANDARD_PRICE_ID=price_xxxxx
+# Used by client UI to start checkout via /api/billing/create-checkout-session
+NEXT_PUBLIC_STRIPE_STARTER_PRICE_ID=price_xxxxx
+NEXT_PUBLIC_STRIPE_STARTER_XMAS_PRICE_ID=price_xxxxx
+NEXT_PUBLIC_STRIPE_VALUE_PRICE_ID=price_xxxxx
 NEXT_PUBLIC_STRIPE_PRO_PRICE_ID=price_xxxxx
-NEXT_PUBLIC_STRIPE_CREDIT_PACK_SMALL_PRICE_ID=price_xxxxx
-NEXT_PUBLIC_STRIPE_CREDIT_PACK_LARGE_PRICE_ID=price_xxxxx
+NEXT_PUBLIC_STRIPE_CREATOR_PRICE_ID=price_xxxxx
+NEXT_PUBLIC_STRIPE_POWER_PRICE_ID=price_xxxxx
 NEXT_PUBLIC_APP_URL=https://igetdressed.online
 ```
 
@@ -64,6 +67,7 @@ NEXT_PUBLIC_APP_URL=https://igetdressed.online
 ```bash
 STRIPE_SECRET_KEY=sk_live_xxxxx  # Must be LIVE mode key, not test
 STRIPE_WEBHOOK_SECRET=whsec_xxxxx
+DATABASE_URL=postgres://...       # Production database
 ```
 
 ### Important Notes:
@@ -71,6 +75,16 @@ STRIPE_WEBHOOK_SECRET=whsec_xxxxx
 2. **Use LIVE mode keys** in production (not test keys)
 3. **Price IDs** must be from LIVE mode products in Stripe Dashboard
 4. **Webhook secret** must match the webhook endpoint in Stripe Dashboard
+
+## Canonical Purchase Flow (do not bypass)
+
+To ensure purchases always map to a Clerk user and are idempotently recorded in the ledger:
+
+- The UI must start checkout via **`POST /api/billing/create-checkout-session`**
+- Stripe must deliver events to **`POST /api/webhooks/stripe`**
+- Credit grants are idempotent by **`payment_intent` id** (stored as `credit_ledger_entries.request_id`)
+
+**Do not use** direct Stripe Payment Links (`buy.stripe.com/...`) for credit packs or subscriptions; they can create paid sessions with missing metadata/customer and are not reliably attributable to a Clerk user.
 
 ## Stripe Dashboard Configuration Checklist
 
@@ -87,16 +101,20 @@ STRIPE_WEBHOOK_SECRET=whsec_xxxxx
 
 ### 2. Products & Prices
 - [ ] Verify all products exist in **Live mode**:
-  - Standard Plan (monthly subscription)
-  - Pro Plan (monthly subscription)
-  - Small Credit Pack (one-time payment)
-  - Large Credit Pack (one-time payment)
+  - Starter Pack (one-time)
+  - Starter Xmas Pack (one-time)
+  - Value Pack (one-time)
+  - Pro Pack (one-time)
+  - Creator Subscription (subscription)
+  - Power Subscription (subscription)
 - [ ] Copy each Price ID
 - [ ] Verify Price IDs match environment variables:
-  - `NEXT_PUBLIC_STRIPE_STANDARD_PRICE_ID`
+  - `NEXT_PUBLIC_STRIPE_STARTER_PRICE_ID`
+  - `NEXT_PUBLIC_STRIPE_STARTER_XMAS_PRICE_ID`
+  - `NEXT_PUBLIC_STRIPE_VALUE_PRICE_ID`
   - `NEXT_PUBLIC_STRIPE_PRO_PRICE_ID`
-  - `NEXT_PUBLIC_STRIPE_CREDIT_PACK_SMALL_PRICE_ID`
-  - `NEXT_PUBLIC_STRIPE_CREDIT_PACK_LARGE_PRICE_ID`
+  - `NEXT_PUBLIC_STRIPE_CREATOR_PRICE_ID`
+  - `NEXT_PUBLIC_STRIPE_POWER_PRICE_ID`
 
 ### 3. API Keys
 - [ ] Go to Stripe Dashboard → Developers → API keys
@@ -159,6 +177,11 @@ After deploying fixes and verifying environment variables:
 - Check application logs for webhook processing errors
 - Test webhook locally using Stripe CLI: `stripe listen --forward-to localhost:3000/api/webhooks/stripe`
 
+### Issue: Credits not granted immediately after checkout
+For async payment methods (Klarna/Zip/etc), Stripe may complete the session before it is **paid**.
+The webhook intentionally **does not grant credits** on `checkout.session.completed` unless `payment_status === "paid"`.
+Credits will be granted on `payment_intent.succeeded` instead, and the UI also calls `/api/billing/verify-checkout-session` after redirect as a fallback.
+
 ### Issue: "Invalid price configuration"
 **Possible Causes**:
 1. Price ID doesn't exist in Stripe
@@ -213,6 +236,11 @@ If issues persist after applying these fixes:
 3. Verify Stripe Dashboard for payment status
 4. Test webhook endpoint manually using Stripe CLI
 5. Verify all environment variables are set correctly
+
+
+
+
+
 
 
 

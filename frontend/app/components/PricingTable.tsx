@@ -7,15 +7,7 @@ import { getAllProducts, ProductFeatures, PlanType } from '@/lib/products';
 import { useUser } from '@clerk/nextjs';
 import { trackProductView, trackFeatureClick, trackCheckoutInitiated } from '@/lib/clerk-tracking';
 import { ANALYTICS_EVENTS, captureEvent } from '@/lib/analytics';
-
-const checkoutLinks = {
-  starter: 'https://buy.stripe.com/dRmbJ15uoevr14AbLhbMQ07',
-  starterXmas: 'https://buy.stripe.com/4gM5kDbSMgDzeVq2aHbMQ06',
-  value: 'https://buy.stripe.com/7sY8wP1e80EBeVqbLhbMQ05',
-  proPack: 'https://buy.stripe.com/bJebJ1e0UcnjfZu8z5bMQ04',
-  creatorSubscription: 'https://buy.stripe.com/cNiaEX6ys2MJaFa16DbMQ03',
-  powerSubscription: 'https://buy.stripe.com/fZu8wPe0U2MJcNi7v1bMQ02',
-} as const;
+import { stripePublicConfig } from '@/lib/config';
 
 interface PricingTableProps {
   currentPlan?: PlanType;
@@ -33,6 +25,54 @@ export function PricingTable({
   const { user } = useUser();
   const [loading, setLoading] = React.useState<string | null>(null);
   const products = getAllProducts().filter(p => p.plan !== 'free' || !compact);
+
+  const redirectToSignIn = () => {
+    if (typeof window === 'undefined') return;
+    const returnTo = `${window.location.pathname}${window.location.search}`;
+    window.location.href = `/sign-in?redirect_url=${encodeURIComponent(returnTo)}`;
+  };
+
+  const startCheckout = async (params: {
+    priceId: string;
+    mode: 'payment' | 'subscription';
+    source: string;
+  }) => {
+    if (!user) {
+      redirectToSignIn();
+      return;
+    }
+
+    if (!params.priceId || !params.priceId.startsWith('price_')) {
+      console.error('Missing/invalid Stripe priceId', params);
+      alert('Payment configuration error. Please contact support.');
+      return;
+    }
+
+    captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
+      mode: params.mode,
+      source: params.source,
+      user_id: user.id,
+      price_id: params.priceId,
+    });
+
+    // Track checkout initiation (without leaking any secret Stripe URLs)
+    await trackCheckoutInitiated(user, 'credit-pack', `price:${params.priceId}`);
+
+    const response = await fetch('/api/billing/create-checkout-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        priceId: params.priceId,
+        mode: params.mode,
+      }),
+    });
+    const data = (await response.json()) as { url?: string; error?: string; details?: string };
+    if (!response.ok || !data.url) {
+      const message = data?.error || data?.details || 'Failed to start checkout';
+      throw new Error(message);
+    }
+    window.location.href = data.url;
+  };
 
   React.useEffect(() => {
     // Track pricing table view
@@ -57,33 +97,19 @@ export function PricingTable({
     // Default: initiate checkout
     setLoading(product.plan);
     try {
-      const url =
+      // Product table plans here are one-time credit packs (not subscriptions)
+      const priceId =
         product.plan === 'standard'
-          ? checkoutLinks.starterXmas || checkoutLinks.starter
+          ? (stripePublicConfig.starterXmasPriceId || stripePublicConfig.starterPriceId)
           : product.plan === 'pro'
-            ? checkoutLinks.proPack
+            ? stripePublicConfig.proPriceId
             : '';
 
-      if (!url) {
-        console.error('Missing checkout URL for plan:', product.plan);
-        alert('Payment configuration error. Please contact support.');
-        setLoading(null);
-        return;
-      }
-
-      // Track checkout initiation
-      if (user) {
-        await trackCheckoutInitiated(user, product.plan, url);
-      }
-      captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
-        plan: product.plan,
-        checkout_url: url,
+      await startCheckout({
+        priceId,
         mode: 'payment',
-        source: 'pricing_table',
-        user_id: user?.id,
+        source: 'pricing_table_main',
       });
-
-      window.location.href = url;
     } catch (error: any) {
       console.error('Checkout error:', error);
       const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
@@ -352,27 +378,12 @@ export function PricingTable({
               <button
                 onClick={async () => {
                   setLoading('small-pack');
-                  const url = checkoutLinks.starter;
-
-                  if (!url) {
-                    console.error('Missing checkout URL for small credit pack');
-                    alert('Payment configuration error. Please contact support.');
-                    setLoading(null);
-                    return;
-                  }
-
-                  if (user) {
-                    await trackCheckoutInitiated(user, 'credit-pack', url);
-                  }
-                  captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
-                    plan: 'credit-pack',
-                    checkout_url: url,
-                    mode: 'payment',
-                    source: 'pricing_table_small_pack',
-                    user_id: user?.id,
-                  });
                   try {
-                    window.location.href = url;
+                    await startCheckout({
+                      priceId: stripePublicConfig.starterPriceId,
+                      mode: 'payment',
+                      source: 'pricing_table_small_pack',
+                    });
                   } catch (error: any) {
                     console.error('Checkout error:', error);
                     const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
@@ -399,27 +410,12 @@ export function PricingTable({
               <button
                 onClick={async () => {
                   setLoading('value-pack');
-                  const url = checkoutLinks.value;
-
-                  if (!url) {
-                    console.error('Missing checkout URL for value credit pack');
-                    alert('Payment configuration error. Please contact support.');
-                    setLoading(null);
-                    return;
-                  }
-
-                  if (user) {
-                    await trackCheckoutInitiated(user, 'credit-pack', url);
-                  }
-                  captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
-                    plan: 'credit-pack',
-                    checkout_url: url,
-                    mode: 'payment',
-                    source: 'pricing_table_value_pack',
-                    user_id: user?.id,
-                  });
                   try {
-                    window.location.href = url;
+                    await startCheckout({
+                      priceId: stripePublicConfig.valuePriceId,
+                      mode: 'payment',
+                      source: 'pricing_table_value_pack',
+                    });
                   } catch (error: any) {
                     console.error('Checkout error:', error);
                     const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
@@ -446,27 +442,12 @@ export function PricingTable({
               <button
                 onClick={async () => {
                   setLoading('large-pack');
-                  const url = checkoutLinks.proPack;
-
-                  if (!url) {
-                    console.error('Missing checkout URL for large credit pack');
-                    alert('Payment configuration error. Please contact support.');
-                    setLoading(null);
-                    return;
-                  }
-
-                  if (user) {
-                    await trackCheckoutInitiated(user, 'credit-pack', url);
-                  }
-                  captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
-                    plan: 'credit-pack',
-                    checkout_url: url,
-                    mode: 'payment',
-                    source: 'pricing_table_large_pack',
-                    user_id: user?.id,
-                  });
                   try {
-                    window.location.href = url;
+                    await startCheckout({
+                      priceId: stripePublicConfig.proPriceId,
+                      mode: 'payment',
+                      source: 'pricing_table_large_pack',
+                    });
                   } catch (error: any) {
                     console.error('Checkout error:', error);
                     const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
@@ -500,27 +481,12 @@ export function PricingTable({
             <button
               onClick={async () => {
                 setLoading('creator-sub');
-                const url = checkoutLinks.creatorSubscription;
-
-                if (!url) {
-                  console.error('Missing checkout URL for creator subscription');
-                  alert('Payment configuration error. Please contact support.');
-                  setLoading(null);
-                  return;
-                }
-
-                if (user) {
-                  await trackCheckoutInitiated(user, 'standard', url);
-                }
-                captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
-                  plan: 'creator-subscription',
-                  checkout_url: url,
-                  mode: 'subscription',
-                  source: 'pricing_table_creator_subscription',
-                  user_id: user?.id,
-                });
                 try {
-                  window.location.href = url;
+                  await startCheckout({
+                    priceId: stripePublicConfig.creatorPriceId,
+                    mode: 'subscription',
+                    source: 'pricing_table_creator_subscription',
+                  });
                 } catch (error: any) {
                   console.error('Checkout error:', error);
                   const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
@@ -547,27 +513,12 @@ export function PricingTable({
             <button
               onClick={async () => {
                 setLoading('power-sub');
-                const url = checkoutLinks.powerSubscription;
-
-                if (!url) {
-                  console.error('Missing checkout URL for power subscription');
-                  alert('Payment configuration error. Please contact support.');
-                  setLoading(null);
-                  return;
-                }
-
-                if (user) {
-                  await trackCheckoutInitiated(user, 'pro', url);
-                }
-                captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
-                  plan: 'power-subscription',
-                  checkout_url: url,
-                  mode: 'subscription',
-                  source: 'pricing_table_power_subscription',
-                  user_id: user?.id,
-                });
                 try {
-                  window.location.href = url;
+                  await startCheckout({
+                    priceId: stripePublicConfig.powerPriceId,
+                    mode: 'subscription',
+                    source: 'pricing_table_power_subscription',
+                  });
                 } catch (error: any) {
                   console.error('Checkout error:', error);
                   const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';

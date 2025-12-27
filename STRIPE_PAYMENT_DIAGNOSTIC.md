@@ -34,10 +34,12 @@ The following environment variables MUST be set in production (Vercel/Next.js):
 #### Required Stripe Variables:
 - `STRIPE_SECRET_KEY` - Stripe secret key (server-side only)
 - `STRIPE_WEBHOOK_SECRET` - Webhook signing secret (server-side only)
-- `NEXT_PUBLIC_STRIPE_STANDARD_PRICE_ID` - Standard plan price ID (client-accessible)
-- `NEXT_PUBLIC_STRIPE_PRO_PRICE_ID` - Pro plan price ID (client-accessible)
-- `NEXT_PUBLIC_STRIPE_CREDIT_PACK_SMALL_PRICE_ID` - Small credit pack price ID (client-accessible)
-- `NEXT_PUBLIC_STRIPE_CREDIT_PACK_LARGE_PRICE_ID` - Large credit pack price ID (client-accessible)
+- `NEXT_PUBLIC_STRIPE_STARTER_PRICE_ID` - Starter credit pack price ID (client-accessible)
+- `NEXT_PUBLIC_STRIPE_STARTER_XMAS_PRICE_ID` - Starter Xmas credit pack price ID (client-accessible)
+- `NEXT_PUBLIC_STRIPE_VALUE_PRICE_ID` - Value credit pack price ID (client-accessible)
+- `NEXT_PUBLIC_STRIPE_PRO_PRICE_ID` - Pro credit pack price ID (client-accessible)
+- `NEXT_PUBLIC_STRIPE_CREATOR_PRICE_ID` - Creator subscription price ID (client-accessible)
+- `NEXT_PUBLIC_STRIPE_POWER_PRICE_ID` - Power subscription price ID (client-accessible)
 - `NEXT_PUBLIC_APP_URL` - Production app URL (should be `https://igetdressed.online`)
 
 #### Important Notes:
@@ -94,6 +96,11 @@ Ensure webhook endpoint is properly configured in Stripe Dashboard for productio
 3. Verify environment variables in production
 4. Test end-to-end payment flow
 5. Monitor Stripe Dashboard for webhook events
+
+
+
+
+
 
 
 
