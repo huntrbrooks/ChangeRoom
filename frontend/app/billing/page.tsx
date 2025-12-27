@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
 import { CreditCard, Zap, Crown, Sparkles, Settings, ArrowLeft, Check } from 'lucide-react';
 import Link from 'next/link';
-import axios from 'axios';
+import { httpClient } from '@/lib/httpClient';
 import { appConfig } from '@/lib/config';
 import { getProductFeatures } from '@/lib/products';
 import { PaywallModal } from '../components/PaywallModal';
@@ -36,7 +36,7 @@ function BillingPageContent() {
 
   const fetchBilling = async () => {
     try {
-      const response = await axios.get('/api/my/billing');
+      const response = await httpClient.get('/api/my/billing');
       setBilling(response.data);
     } catch (error) {
       console.error('Error fetching billing:', error);
@@ -48,7 +48,7 @@ function BillingPageContent() {
   const handleManageSubscription = async () => {
     setPortalLoading(true);
     try {
-      const response = await axios.post('/api/billing/portal');
+      const response = await httpClient.post('/api/billing/portal');
       if (response.data.url) {
         window.location.href = response.data.url;
       }

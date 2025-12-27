@@ -73,21 +73,44 @@ export async function POST(req: NextRequest) {
 
   for (const f of files) {
     const mimeType = typeof f?.mimeType === "string" ? f.mimeType : "";
-    if (
-      mimeType !== "image/jpeg" &&
-      mimeType !== "image/jpg" &&
-      mimeType !== "image/png" &&
-      mimeType !== "image/webp"
-    ) {
-      return NextResponse.json(
-        { error: "Unsupported mimeType" },
-        { status: 400 }
-      );
+    // We accept a wider set of inputs but *store* only web-friendly formats.
+    // If the client submits a non-optimal format (e.g. HEIC), it should convert first.
+    const allowed = new Set([
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/webp",
+      // Allow these only if the client explicitly requests them (not recommended)
+      "image/gif",
+      "image/bmp",
+      "image/tiff",
+      "image/heic",
+      "image/heif",
+      "image/avif",
+    ]);
+    if (!allowed.has(mimeType)) {
+      return NextResponse.json({ error: "Unsupported mimeType" }, { status: 400 });
     }
 
     const ext =
       f.extension ||
-      (mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "jpg");
+      (mimeType === "image/png"
+        ? "png"
+        : mimeType === "image/webp"
+          ? "webp"
+          : mimeType === "image/gif"
+            ? "gif"
+            : mimeType === "image/bmp"
+              ? "bmp"
+              : mimeType === "image/tiff"
+                ? "tiff"
+                : mimeType === "image/heic"
+                  ? "heic"
+                  : mimeType === "image/heif"
+                    ? "heif"
+                    : mimeType === "image/avif"
+                      ? "avif"
+                      : "jpg");
 
     const id = randomUUID();
     const key = `${kind}/user_${userId}/${id}.${ext}`;

@@ -35,10 +35,18 @@ export async function POST(req: NextRequest) {
   const { userId } = await auth();
 
   if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const res = NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
+    const rid = req.headers.get("x-request-id") || req.headers.get("x-changeroom-request-id");
+    if (rid) {
+      res.headers.set("X-Request-Id", rid);
+      res.headers.set("X-ChangeRoom-Request-Id", rid);
+    }
+    return res;
   }
 
   try {
+    const rid = req.headers.get("x-request-id") || req.headers.get("x-changeroom-request-id");
     // Best-effort per-instance rate limiting
     const ip =
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
@@ -221,16 +229,29 @@ Return JSON only, matching the schema, one item per input image, with index matc
 
     const saved = await insertClothingItems(userId, itemsToInsert);
 
-    return NextResponse.json({ items: saved });
+    const res = NextResponse.json({ items: saved });
+    res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
+    if (rid) {
+      res.headers.set("X-Request-Id", rid);
+      res.headers.set("X-ChangeRoom-Request-Id", rid);
+    }
+    return res;
   } catch (err: unknown) {
     console.error("preprocess-clothing error:", err);
     // Don't expose internal error details in production
-    return NextResponse.json(
+    const res = NextResponse.json(
       {
         error: "Failed to preprocess clothing images",
       },
       { status: 500 }
     );
+    res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
+    const rid = req.headers.get("x-request-id") || req.headers.get("x-changeroom-request-id");
+    if (rid) {
+      res.headers.set("X-Request-Id", rid);
+      res.headers.set("X-ChangeRoom-Request-Id", rid);
+    }
+    return res;
   }
 }
 

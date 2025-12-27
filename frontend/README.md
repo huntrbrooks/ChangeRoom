@@ -1,5 +1,15 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Deployment context
+
+- **Frontend**: Vercel (this `frontend/` app)
+- **Backend**: Render (FastAPI)
+
+Start here:
+- `../DEPLOYMENT.md`
+- `../ENVIRONMENT_VARIABLES.md`
+- `../ONBOARDING.md`
+
 ## Getting Started
 
 First, run the development server:

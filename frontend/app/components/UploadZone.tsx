@@ -4,6 +4,8 @@ import {
   optimizeImageFile,
   type OptimizeImageOptions,
 } from '@/lib/imageOptimization';
+import { isLikelyImageFile, needsConversionToOptimal } from '@/lib/imageConversion';
+import { detectFacesBestEffort } from '@/lib/faceDetection';
 /* eslint-disable react-hooks/exhaustive-deps */
 
 interface UploadZoneProps {
@@ -73,8 +75,9 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
   const [qualityWarnings, setQualityWarnings] = useState<string[]>([]);
   const [qualityByName, setQualityByName] = useState<Record<string, 'good' | 'fair' | 'poor'>>({});
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [isMainFaceCheckRunning, setIsMainFaceCheckRunning] = useState(false);
 
-  const analyzeImageQuality = useCallback(async (file: File) => {
+  const analyzeImageQuality = useCallback(async (file: File, opts?: { detectFace?: boolean }) => {
     try {
       const bmp = await createImageBitmap(file);
       const minDim = Math.min(bmp.width, bmp.height);
@@ -89,11 +92,17 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) {
         bmp.close();
-        return { minDim, aspect, brightness: null, sharpness: null };
+        return {
+          minDim,
+          aspect,
+          brightness: null,
+          sharpness: null,
+          faceCount: null,
+          faceAreaRatio: null,
+        };
       }
       ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
       const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      bmp.close();
 
       // Compute average luminance and gradient-based sharpness
       let lumSum = 0;
@@ -122,9 +131,31 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       const avgLum = samples ? lumSum / samples : null;
       const avgGrad = samples ? gradSum / samples : null;
 
-      return { minDim, aspect, brightness: avgLum, sharpness: avgGrad };
+      // Best-effort face detection (advisory only). Lazy loads MediaPipe on browsers without FaceDetector.
+      let faceCount: number | null = null;
+      let faceAreaRatio: number | null = null;
+      try {
+        if (opts?.detectFace) {
+          const r = await detectFacesBestEffort(bmp);
+          faceCount = typeof r.faceCount === 'number' ? r.faceCount : null;
+          faceAreaRatio = typeof r.faceAreaRatio === 'number' ? r.faceAreaRatio : null;
+        }
+      } catch {
+        // ignore face detection failures
+      } finally {
+        bmp.close();
+      }
+
+      return { minDim, aspect, brightness: avgLum, sharpness: avgGrad, faceCount, faceAreaRatio };
     } catch {
-      return { minDim: null, aspect: null, brightness: null, sharpness: null };
+      return {
+        minDim: null,
+        aspect: null,
+        brightness: null,
+        sharpness: null,
+        faceCount: null,
+        faceAreaRatio: null,
+      };
     }
   }, []);
   
@@ -196,6 +227,24 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       return;
     }
 
+    const requiresConversion = newFiles.some((f) => needsConversionToOptimal(f));
+    if (requiresConversion) {
+      const msg =
+        "Convert to optimal file type?\n\n" +
+        "Generation will most likley fail if conversion is not processed.";
+      const yes = window.confirm(msg);
+      if (!yes) {
+        cleanupMessages();
+        if (multiple && onFilesSelect) {
+          const combined = [...files, ...newFiles].slice(0, maxFiles);
+          onFilesSelect(combined);
+        } else if (onFileSelect) {
+          onFileSelect(newFiles[0]);
+        }
+        return;
+      }
+    }
+
     if (!optimizationEnabled || !optimizeConfig) {
       cleanupMessages();
       if (multiple && onFilesSelect) {
@@ -235,12 +284,30 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       }
       
       // Perform quality checks (resolution, framing, brightness, sharpness)
-      const qualityResults = await Promise.all(
-        optimizedFiles.map(async (f) => {
-          const q = await analyzeImageQuality(f);
-          return { name: f.name, ...q };
-        })
-      );
+      const shouldCheckMainFace = Boolean(highlightMainReference && multiple && optimizedFiles.length > 0);
+      setIsMainFaceCheckRunning(shouldCheckMainFace);
+      let qualityResults: Array<{
+        name: string;
+        minDim: number | null;
+        aspect: number | null;
+        brightness: number | null;
+        sharpness: number | null;
+        faceCount: number | null;
+        faceAreaRatio: number | null;
+      }>;
+      try {
+        qualityResults = await Promise.all(
+          optimizedFiles.map(async (f, idx) => {
+            const q = await analyzeImageQuality(f, {
+              // Only check face on the *main* reference photo to keep things fast.
+              detectFace: Boolean(shouldCheckMainFace && idx === 0),
+            });
+            return { name: f.name, ...q };
+          })
+        );
+      } finally {
+        setIsMainFaceCheckRunning(false);
+      }
       
       const warnings: string[] = [];
       const lowResNames = qualityResults.filter(f => f.minDim !== null && f.minDim < 900).map(f => f.name);
@@ -263,6 +330,35 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       }
       if (blurry.length > 0) {
         warnings.push(`Possible blur in ${blurry.length} photo(s). Ensure focus and steady camera.`);
+      }
+
+      // Main reference guidance: best-effort face/shot checks for the *first* photo.
+      if (highlightMainReference && multiple && qualityResults.length > 0) {
+        const main = qualityResults[0];
+        const faceCount = typeof main.faceCount === 'number' ? main.faceCount : null;
+        const faceAreaRatio =
+          typeof main.faceAreaRatio === 'number' ? main.faceAreaRatio : null;
+
+        // If we can detect faces, require at least one for best identity fidelity.
+        if (faceCount === 0) {
+          warnings.push(
+            'Main reference: no face detected. Use a clear photo with your face visible for better identity consistency.'
+          );
+        }
+
+        // Heuristic: too close-up → face area is huge; likely not full-body.
+        if (faceAreaRatio !== null && faceAreaRatio > 0.25) {
+          warnings.push(
+            'Main reference: this looks like a close-up. For best try-on, use a full-body shot (head-to-toe) with your face visible.'
+          );
+        }
+
+        // Heuristic: landscape shots often crop body; not a hard rule, just guidance.
+        if (typeof main.aspect === 'number' && main.aspect > 1.3) {
+          warnings.push(
+            'Main reference: landscape framing detected. For best results, use a vertical full-body photo (portrait) so your full outfit stays in frame.'
+          );
+        }
       }
 
       // Build per-file quality status
@@ -288,6 +384,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
 
     } catch (error) {
       console.error('Image optimization failed', error);
+      setIsMainFaceCheckRunning(false);
       const message =
         error instanceof Error ? error.message : 'Could not optimize images.';
       setOptimizationError(message);
@@ -306,7 +403,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       return;
     }
     
-    const droppedFiles = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+    const droppedFiles = Array.from(e.dataTransfer.files).filter(isLikelyImageFile);
     
     if (droppedFiles.length > 0) {
        if (!multiple) {
@@ -477,11 +574,16 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
                 setDragIndex(null);
               }}
             >
-              <img
-                src={previewUrls[0]}
-                alt="Main reference"
-                className={`w-full h-56 sm:h-72 object-cover rounded border ${highlightMainReference ? 'border-amber-400 ring-2 ring-amber-200' : 'border-black/10'}`}
-              />
+              <div
+                className={`w-full rounded border bg-black/5 overflow-hidden flex items-center justify-center ${highlightMainReference ? 'border-amber-400 ring-2 ring-amber-200' : 'border-black/10'}`}
+                aria-label="Main reference preview"
+              >
+                <img
+                  src={previewUrls[0]}
+                  alt="Main reference"
+                  className="block max-w-full max-h-[60vh] sm:max-h-[70vh] h-auto w-auto"
+                />
+              </div>
               {getQualityBadge(files[0].name)}
               <div className="absolute top-2 right-2 flex flex-col gap-1">
                 <button
@@ -538,11 +640,13 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
                       setDragIndex(null);
                     }}
                   >
-                    <img
-                      src={previewUrls[trueIndex]}
-                      alt={`Preview ${trueIndex + 1}`}
-                      className="w-full h-28 sm:h-32 object-cover rounded border border-black/10"
-                    />
+                    <div className="w-full h-28 sm:h-32 rounded border border-black/10 bg-black/5 overflow-hidden flex items-center justify-center">
+                      <img
+                        src={previewUrls[trueIndex]}
+                        alt={`Preview ${trueIndex + 1}`}
+                        className="block max-w-full max-h-full h-auto w-auto"
+                      />
+                    </div>
                     {getQualityBadge(file.name)}
                     <div className="absolute top-1 right-1 flex flex-col gap-1">
                       <button
@@ -591,7 +695,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
                   <input
                     type="file"
                     className="hidden"
-                    accept="image/*"
+                    accept="image/*,.heic,.heif,.avif,.tif,.tiff,.bmp,.gif,.jpg,.jpeg,.png,.webp"
                     multiple
                     onChange={handleChange}
                     aria-label={label || 'Add more files'}
@@ -649,7 +753,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
               <input
                 type="file"
                 className="hidden"
-                accept="image/*"
+                accept="image/*,.heic,.heif,.avif,.tif,.tiff,.bmp,.gif,.jpg,.jpeg,.png,.webp"
                 multiple={multiple}
                 onChange={handleChange}
                 aria-label={label || 'Upload files'}
@@ -669,6 +773,12 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       )}
       {optimizationError && (
         <p className="mt-2 text-xs sm:text-sm text-red-600">{optimizationError}</p>
+      )}
+      {isMainFaceCheckRunning && (
+        <p className="mt-2 text-xs sm:text-sm text-black/70 inline-flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Analyzing main photo…
+        </p>
       )}
       {qualityWarnings.length > 0 && (
         <div className="mt-2 p-2 rounded border border-amber-200 bg-amber-50 text-amber-800 text-xs flex items-start gap-2">

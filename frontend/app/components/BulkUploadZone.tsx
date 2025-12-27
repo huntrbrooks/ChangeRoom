@@ -6,6 +6,12 @@ import {
   getDefaultWearingStyle,
   hasWearingStyleOptions,
 } from '@/lib/wearingStyles';
+import {
+  convertToOptimalImageFile,
+  isLikelyImageFile,
+  needsConversionToOptimal,
+} from '@/lib/imageConversion';
+import { fetchWithRequestId } from '@/lib/fetchWithRequestId';
 
 interface FileWithMetadata extends File {
   metadata?: Record<string, unknown>;
@@ -93,6 +99,36 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
     return false;
   }, [blockedMessage, isAuthenticated, onAuthRequired]);
 
+  const confirmConvertToOptimal = useCallback((filesToCheck: File[]) => {
+    const needs = filesToCheck.filter((f) => needsConversionToOptimal(f));
+    if (needs.length === 0) {
+      return "skip" as const;
+    }
+    const msg =
+      "Convert to optimal file type?\n\n" +
+      "Generation will most likley fail if conversion is not processed.";
+    const yes = window.confirm(msg);
+    return yes ? ("convert" as const) : ("skip" as const);
+  }, []);
+
+  const maybeConvertFiles = useCallback(
+    async (filesToProcess: File[]) => {
+      const decision = confirmConvertToOptimal(filesToProcess);
+      if (decision !== "convert") {
+        return filesToProcess;
+      }
+      setAnalysisProgress("Converting images to optimal format...");
+      const converted = await Promise.all(
+        filesToProcess.map(async (f) => {
+          if (!needsConversionToOptimal(f)) return f;
+          return await convertToOptimalImageFile(f);
+        })
+      );
+      return converted;
+    },
+    [confirmConvertToOptimal]
+  );
+
   // Sync with parent state when props change
   useEffect(() => {
     setUploadedFiles(existingImages);
@@ -151,23 +187,23 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
 
     try {
       const API_URL_FETCH = API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      
+      const effectiveFiles = await maybeConvertFiles(filesToAnalyze);
       // Update progress to reflect upload step
       setProgressPercent(10);
       setAnalysisProgress('Sending images to backend for OpenAI analysis...');
       
       // Create FormData with files to analyze
       const formData = new FormData();
-      filesToAnalyze.forEach((file) => {
+      effectiveFiles.forEach((file) => {
         formData.append('clothing_images', file);
       });
 
       // Call the new batch preprocessing endpoint
-      const response = await fetch(`${API_URL_FETCH}/api/preprocess-clothing`, {
+      const response = await fetchWithRequestId(`${API_URL_FETCH}/api/preprocess-clothing`, {
         method: 'POST',
         body: formData,
         // Don't set Content-Type header, let browser set it with boundary
-      });
+      }, { prefix: 'preprocess', force: true });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: response.statusText }));
@@ -217,7 +253,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
         const originalFilename = item.original_filename || 
           (metadata && 'original_filename' in metadata ? String(metadata.original_filename) : undefined) ||
-          filesToAnalyze[idx]?.name || 
+          effectiveFiles[idx]?.name || 
           `item_${startIndex + idx}`;
         const brand =
           item.analysis?.brand ||
@@ -271,7 +307,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
           const itemType = item.analysis.item_type || '';
           if (hasWearingStyleOptions(category, itemType)) {
             // Check if file already has a wearing style
-            const existingFile = filesToAnalyze[idx];
+            const existingFile = effectiveFiles[idx];
             const existingStyle = existingFile ? (existingFile as FileWithMetadata).wearing_style : null;
             
             // Use existing style if valid, otherwise use default
@@ -302,8 +338,8 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
       const processedFiles: File[] = [];
       const API_URL_PROCESS = API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       
-      for (let idx = 0; idx < filesToAnalyze.length; idx++) {
-        const file = filesToAnalyze[idx];
+      for (let idx = 0; idx < effectiveFiles.length; idx++) {
+        const file = effectiveFiles[idx];
         const item = allAnalyses[idx];
         const processedItem = processedItems[idx];
         const actualIdx = startIndex + idx;
@@ -413,7 +449,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
     } finally {
       setIsAnalyzing(false);
     }
-  }, [API_URL, requireAuth]);
+  }, [API_URL, maybeConvertFiles, requireAuth]);
 
   const handleBulkUpload = useCallback(async (files: File[], shouldReplace: boolean = false) => {
     if (files.length === 0) return;
@@ -474,7 +510,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
 
   const handleBulkDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
-    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+    const files = Array.from(e.dataTransfer.files).filter(isLikelyImageFile);
     await handleBulkUpload(files, false);
   }, [handleBulkUpload]);
 
@@ -587,7 +623,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             <input
               type="file"
               className="hidden"
-              accept="image/*"
+              accept="image/*,.heic,.heif,.avif,.tif,.tiff,.bmp,.gif,.jpg,.jpeg,.png,.webp"
               multiple
               onChange={handleFileInput}
               disabled={uploadsBlocked}
@@ -676,7 +712,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                       onClick={() => {
                         const input = document.createElement('input');
                         input.type = 'file';
-                        input.accept = 'image/*';
+                        input.accept = 'image/*,.heic,.heif,.avif,.tif,.tiff,.bmp,.gif,.jpg,.jpeg,.png,.webp';
                         input.onchange = (e) => {
                           const selectedFile = (e.target as HTMLInputElement).files?.[0];
                           if (selectedFile) {
@@ -690,24 +726,26 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                     >
                       <RefreshCw size={14} className="sm:w-3 sm:h-3" />
                     </button>
-                    <img
-                      src={
-                        item?.file_url 
-                          ? (item.file_url.startsWith('http') 
-                              ? item.file_url 
-                              : `${API_URL}${item.file_url}`)
-                          : objectUrls.get(idx) || ''
-                      }
-                      alt={item?.saved_filename || item?.analysis?.suggested_filename || item?.original_filename || file.name}
-                      className="w-full h-24 sm:h-32 object-cover rounded"
-                      onError={(e) => {
-                        // Fallback to object URL if saved URL fails
-                        const fallbackUrl = objectUrls.get(idx);
-                        if (fallbackUrl) {
-                          (e.target as HTMLImageElement).src = fallbackUrl;
+                    <div className="w-full h-24 sm:h-32 rounded bg-black/5 overflow-hidden flex items-center justify-center">
+                      <img
+                        src={
+                          item?.file_url 
+                            ? (item.file_url.startsWith('http') 
+                                ? item.file_url 
+                                : `${API_URL}${item.file_url}`)
+                            : objectUrls.get(idx) || ''
                         }
-                      }}
-                    />
+                        alt={item?.saved_filename || item?.analysis?.suggested_filename || item?.original_filename || file.name}
+                        className="block max-w-full max-h-full h-auto w-auto rounded"
+                        onError={(e) => {
+                          // Fallback to object URL if saved URL fails
+                          const fallbackUrl = objectUrls.get(idx);
+                          if (fallbackUrl) {
+                            (e.target as HTMLImageElement).src = fallbackUrl;
+                          }
+                        }}
+                      />
+                    </div>
                     <div className="text-xs">
                       <p className="font-medium text-black truncate mb-0.5 sm:mb-1 text-[10px] sm:text-xs" title={item?.saved_filename || item?.analysis?.suggested_filename || item?.original_filename || file.name}>
                         {item?.saved_filename || item?.analysis?.suggested_filename || item?.original_filename || file.name}

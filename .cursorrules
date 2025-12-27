@@ -1,0 +1,27 @@
+This repository has a split deployment and *two parallel API stacks*. Read `DEPLOYMENT.md` and `AGENT_CONTEXT.md` first.
+
+## Deployment
+- Backend: Render (FastAPI) — `backend/main.py`, configured by `render.yaml`
+- Frontend: Vercel (Next.js) — `frontend/`
+
+## Canonical flows (important)
+- The main UI (`frontend/app/page.tsx`) currently calls the **Render backend directly** for:
+  - `POST ${NEXT_PUBLIC_API_URL}/api/try-on` (multipart/form-data)
+  - `POST ${NEXT_PUBLIC_API_URL}/api/preprocess-clothing` (multipart/form-data)
+- Separately, there is a **Next.js API route** `POST /api/try-on` that uses R2 + DB + billing holds.
+  - Do not assume it is used by the homepage unless you verify call sites.
+
+## Key env var linkage
+- Frontend (Vercel): `NEXT_PUBLIC_API_URL` must point to the Render backend base URL.
+- Backend (Render): `ALLOWED_ORIGINS` must include Vercel domains to avoid CORS failures.
+
+## Images (iPhone)
+- iPhone uploads may be HEIC/HEIF. Frontend prompts conversion; backend also normalizes to JPEG/PNG.
+
+## Working style for agents
+- When debugging, first identify which stack is actually called (FastAPI vs Next API routes) before editing.
+- Prefer small, safe changes plus documentation updates when behavior differs between dev and prod.
+
+
+
+

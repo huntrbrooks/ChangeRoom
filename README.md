@@ -2,6 +2,15 @@
 
 Try on clothes & Save from the comfort of your own home
 
+## Deployment context (read this first)
+
+- **Backend** is deployed on **Render**
+- **Frontend** is deployed on **Vercel**
+
+Start here:
+- `DEPLOYMENT.md` (source of truth)
+- `ENVIRONMENT_VARIABLES.md` (all env vars + where they live)
+
 ## Setup
 
 ### Prerequisites

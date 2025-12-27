@@ -28,6 +28,9 @@ import io
 from PIL import Image
 from datetime import datetime
 
+# Shared normalization (handles HEIC/HEIF when pillow-heif is installed)
+from .image_normalize import normalize_image_bytes, normalize_image_bytes_with_budget
+
 # OpenAI SDK for structured outputs
 try:
     from openai import OpenAI, AsyncOpenAI
@@ -37,6 +40,7 @@ except ImportError:
 
 # Storage backend
 from .storage import get_storage_backend
+from .image_normalize import normalize_image_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -138,21 +142,31 @@ async def analyze_single_clothing_image(
     """
     client = AsyncOpenAI(api_key=api_key)
     
-    # Detect image format
+    # Normalize + budget guard to reduce OpenAI vision payload size on huge iPhone uploads.
+    # Default budget is conservative but can be increased if needed.
+    max_bytes = int(os.getenv("OPENAI_VISION_MAX_IMAGE_BYTES", 4 * 1024 * 1024))  # 4MB
     try:
-        image = Image.open(io.BytesIO(image_bytes))
-        format_map = {
-            'JPEG': 'image/jpeg',
-            'PNG': 'image/png',
-            'WEBP': 'image/webp',
-            'GIF': 'image/gif'
-        }
-        mime_type = format_map.get(image.format, 'image/jpeg')
+        normalized_bytes, mime_type, _w, _h = normalize_image_bytes_with_budget(
+            image_bytes,
+            max_bytes=max_bytes,
+            max_dimension=2200,
+            min_dimension=900,
+            prefer_mime="image/jpeg",
+            jpeg_quality=88,
+            min_jpeg_quality=70,
+            allow_png_alpha=False,
+        )
     except Exception:
-        mime_type = 'image/jpeg'
-    
+        normalized_bytes, mime_type, _w, _h = normalize_image_bytes(
+            image_bytes,
+            max_dimension=2200,
+            prefer_mime="image/jpeg",
+            jpeg_quality=85,
+            allow_png_alpha=False,
+        )
+
     # Convert to base64
-    image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+    image_base64 = base64.b64encode(normalized_bytes).decode('utf-8')
     
     # Improved system prompt with explicit definitions
     system_prompt = """You are a fashion classifier for a virtual try on app.
@@ -318,9 +332,19 @@ async def preprocess_clothing_batch(
         Process a single image: analyze, save, and return metadata.
         """
         try:
+            # Normalize bytes to a predictable format and ensure the saved filename extension matches the bytes.
+            # This prevents e.g. JPEG bytes being saved as ".png" just because the user uploaded a PNG.
+            try:
+                normalized_bytes, normalized_mime, _w, _h = normalize_image_bytes(
+                    image_bytes, max_dimension=2200, prefer_mime="image/jpeg"
+                )
+            except Exception:
+                normalized_bytes = image_bytes
+                normalized_mime = "image/jpeg"
+
             # Analyze image individually
             analysis = await analyze_single_clothing_image(
-                image_bytes,
+                normalized_bytes,
                 api_key,
                 original_name
             )
@@ -348,11 +372,14 @@ async def preprocess_clothing_batch(
                 base_name = os.path.splitext(original_name)[0]
                 base_name = re.sub(r'[^a-z0-9_]+', '_', base_name.lower())
             
-            # Get file extension from original or default to jpg
-            ext = os.path.splitext(original_name)[1] or ".jpg"
-            if ext.lower() not in ['.jpg', '.jpeg', '.png', '.webp']:
-                ext = ".jpg"
-            ext = ext.lower()
+            # Choose extension based on the normalized bytes/mime (more reliable than trusting the original filename)
+            mime_to_ext = {
+                "image/jpeg": ".jpg",
+                "image/jpg": ".jpg",
+                "image/png": ".png",
+                "image/webp": ".webp",
+            }
+            ext = mime_to_ext.get(normalized_mime, ".jpg")
             
             # Create unique filename: body_region_base_name_uniqueid.ext
             # Example: shoes_brown_leather_boots_abc12345.jpg or upper_body_hoodie_def67890.jpg
@@ -381,18 +408,8 @@ async def preprocess_clothing_batch(
             timestamp = datetime.now().strftime("%Y-%m-%d")
             storage_path = f"{CLOTHING_UPLOAD_SUBDIR}/{timestamp}/{saved_filename}"
             
-            # Detect content type
-            try:
-                image = Image.open(io.BytesIO(image_bytes))
-                format_map = {
-                    'JPEG': 'image/jpeg',
-                    'PNG': 'image/png',
-                    'WEBP': 'image/webp',
-                    'GIF': 'image/gif'
-                }
-                content_type = format_map.get(image.format, 'image/jpeg')
-            except Exception:
-                content_type = 'image/jpeg'
+            # Detect content type from normalized bytes (preferred), fallback to mime guessed above.
+            content_type = normalized_mime or "image/jpeg"
             
             # Handle filename conflicts
             counter = 1
@@ -408,7 +425,7 @@ async def preprocess_clothing_batch(
                     break
             
             # Save file
-            public_url = await storage.save_file(image_bytes, storage_path, content_type)
+            public_url = await storage.save_file(normalized_bytes, storage_path, content_type)
             logger.info(f"Saved image {index} to: {storage_path} -> {public_url}")
             
             # Build metadata dict for response

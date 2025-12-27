@@ -83,6 +83,7 @@ export async function POST(req: NextRequest) {
   let holdShouldRelease = false;
 
   try {
+    const reqHeaderId = req.headers.get("x-request-id") || req.headers.get("x-changeroom-request-id");
     const body = await req.json();
     const { personImageId, clothingItemIds, requestId, quality } = body as {
       personImageId: string;
@@ -94,6 +95,7 @@ export async function POST(req: NextRequest) {
     // Require an idempotency key; fall back to generated if not provided
     currentRequestId =
       requestId ||
+      reqHeaderId ||
       (body.idempotencyKey as string | undefined) ||
       (body.request_id as string | undefined) ||
       randomUUID();
@@ -266,7 +268,7 @@ export async function POST(req: NextRequest) {
       holdShouldRelease = false;
     }
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       imageBase64: base64Data,
       mimeType: fullMimeType,
       publicUrl: resultPublicUrl,
@@ -274,6 +276,10 @@ export async function POST(req: NextRequest) {
       usedFreeTrial,
       creditsAvailable: billing.credits_available,
     });
+    res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
+    res.headers.set("X-Request-Id", currentRequestId);
+    res.headers.set("X-ChangeRoom-Request-Id", currentRequestId);
+    return res;
   } catch (err: unknown) {
     console.error("try-on error:", err);
     const error = err instanceof Error ? err : new Error(String(err));
@@ -299,12 +305,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json(
+    const res = NextResponse.json(
       {
         error: "Try on failed",
         details: error.message,
       },
       { status: 500 }
     );
+    res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
+    if (currentRequestId) {
+      res.headers.set("X-Request-Id", currentRequestId);
+      res.headers.set("X-ChangeRoom-Request-Id", currentRequestId);
+    }
+    return res;
   }
 }

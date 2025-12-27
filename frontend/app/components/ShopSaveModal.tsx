@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { ShopSaveSelector } from './ShopSaveSelector';
 import { ensureAbsoluteUrl } from '@/lib/url';
+import { httpClient } from '@/lib/httpClient';
 
 export interface ShopSaveClothingItem {
   id: string;
@@ -150,7 +151,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
     setLoadingItems(true);
     setItemsError(null);
     try {
-      const response = await axios.get("/api/my/clothing-items", {
+      const response = await httpClient.get("/api/my/clothing-items", {
         params: { limit: 50, sinceHours: 24, includeSaved: true },
       });
       mergeRecentItems(response.data?.clothingItems || []);
@@ -178,7 +179,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
 
   const fetchSavedItems = useCallback(async () => {
     try {
-      const response = await axios.get("/api/my/saved-clothing-items", {
+      const response = await httpClient.get("/api/my/saved-clothing-items", {
         params: { limit: 100 },
       });
       const items = Array.isArray(response.data?.clothingItems)
@@ -239,7 +240,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
 
   const notifySelection = useCallback(async (item: ShopSaveClothingItem) => {
     try {
-      await axios.post('/api/shop/selection', {
+      await httpClient.post('/api/shop/selection', {
         clothingItemId: item.id,
         metadata: {
           category: item.category,
@@ -283,7 +284,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
       try {
         setSavingItemId(item.id);
         if (shouldSave) {
-          await axios.post("/api/my/saved-clothing-items", {
+          await httpClient.post("/api/my/saved-clothing-items", {
             clothingItemId: item.id,
           });
           setSavedIds((prev) => Array.from(new Set([...prev, item.id])));
@@ -299,7 +300,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
             );
           });
         } else {
-          await axios.delete("/api/my/saved-clothing-items", {
+          await httpClient.delete("/api/my/saved-clothing-items", {
             data: { clothingItemId: item.id },
           });
           setSavedIds((prev) => prev.filter((id) => id !== item.id));
@@ -341,7 +342,7 @@ export const ShopSaveModal: React.FC<ShopSaveModalProps> = ({
           tags: item.tags,
         }));
 
-      const response = await axios.post('/api/shop-search', {
+      const response = await httpClient.post('/api/shop-search', {
         clothingItemIds: selectedIds,
         itemMetadata: selectedMetadata,
       });

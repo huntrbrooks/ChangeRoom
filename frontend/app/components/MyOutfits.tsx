@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
 import { Download, Share2, Trash2, Image as ImageIcon, Loader2 } from 'lucide-react';
-import axios from 'axios';
+import { httpClient } from '@/lib/httpClient';
 
 interface ClothingItem {
   filename: string;
@@ -52,7 +52,7 @@ export const MyOutfits: React.FC<MyOutfitsProps> = ({ onSelectOutfit }) => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await axios.get('/api/my/outfits');
+      const response = await httpClient.get('/api/my/outfits');
       // Outfits are already sorted by created_at DESC from the API
       setOutfits(response.data || []);
     } catch (error: any) {
@@ -70,7 +70,7 @@ export const MyOutfits: React.FC<MyOutfitsProps> = ({ onSelectOutfit }) => {
   const handleDelete = async (outfitId: string) => {
     if (window.confirm('Are you sure you want to delete this outfit?')) {
       try {
-        await axios.delete(`/api/my/outfits/${outfitId}`);
+        await httpClient.delete(`/api/my/outfits/${outfitId}`);
         // Remove from local state
         const updated = outfits.filter(o => o.id !== outfitId);
         setOutfits(updated);

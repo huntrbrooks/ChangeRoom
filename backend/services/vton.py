@@ -7,22 +7,13 @@ import json
 import re
 import copy
 from typing import Any, Dict, List, Optional, Tuple, Union
-from PIL import Image
+from PIL import Image, ImageOps
 import httpx
 
 logger = logging.getLogger(__name__)
 
 # This module uses direct REST API calls to Gemini API with API key authentication.
 # No SDKs or OAuth2 are required - just set GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable.
-
-# OpenAI SDK is optional at runtime; used for safety/prompt rewrites on retries.
-try:
-    from openai import AsyncOpenAI  # type: ignore
-    OPENAI_AVAILABLE = True
-except Exception:
-    AsyncOpenAI = None  # type: ignore
-    OPENAI_AVAILABLE = False
-
 
 CONTENT_REJECTION_FINISH_REASONS = {"IMAGE_SAFETY", "SAFETY", "CONTENT_FILTER", "PROHIBITED_CONTENT"}
 CONTENT_REJECTION_KEYWORDS = [
@@ -39,6 +30,24 @@ CONTENT_REJECTION_KEYWORDS = [
     "nsfw",
     "nudity",
     "explicit",
+]
+
+INTIMATE_KEYWORDS = [
+    "lingerie",
+    "underwear",
+    "panties",
+    "thong",
+    "bra",
+    "bralette",
+    "bustier",
+    "corset",
+    "nude",
+    "nudity",
+    "sheer",
+    "see-through",
+    "see through",
+    "transparent",
+    "fishnet",
 ]
 
 
@@ -158,94 +167,6 @@ def rewrite_for_modesty_heuristic(
     return safe_meta, safe_prompt, f"heuristic_rewrite(strictness={strictness})"
 
 
-async def rewrite_for_modesty_openai(
-    metadata: Optional[Dict[str, Any]],
-    prompt: str,
-    last_failure: Dict[str, Any],
-    *,
-    strictness: str,
-) -> Tuple[Dict[str, Any], str, str]:
-    """
-    Uses OpenAI to rewrite prompt+metadata for compliance. Falls back to heuristic rewrite if
-    OPENAI_API_KEY is missing or OpenAI SDK isn't available.
-    """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key or not OPENAI_AVAILABLE:
-        safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
-            metadata, prompt, strictness="max" if strictness == "max" else "moderate"
-        )
-        return safe_meta, safe_prompt, f"openai_unavailable_fallback:{summary}"
-
-    client = AsyncOpenAI(api_key=api_key)  # type: ignore
-
-    system = (
-        "You are a safety compliance editor for a fashion virtual try-on system. "
-        "Rewrite the provided METADATA and propose ADDITIONAL PROMPT DIRECTIVES to reduce content-filter blocks while keeping the outfit recognizable. "
-        "Keep all required wearing directives and positioning constraints (do not remove them). "
-        "Ensure the output is general-audience, professional, and modest. "
-        "Return ONLY valid JSON."
-    )
-    if strictness == "max":
-        system += (
-            " Apply MAXIMUM safety: prefer conservative studio framing, avoid close-ups, ensure opacity, and err on the side of coverage."
-        )
-
-    user = {
-        "instruction": "Rewrite the metadata and propose additional prompt directives to be more modest and less likely to trigger safety filters.",
-        "strictness": strictness,
-        "last_failure": last_failure,
-        "prompt_context": prompt,
-        "metadata": metadata or {},
-        "output_schema": {
-            "prompt_additions": "string (short block of directives to append to the base prompt)",
-            "metadata": "object (revised metadata, preserve keys if possible)",
-            "changes": "array of short strings describing what changed",
-        },
-    }
-
-    async def do_call():
-        resp = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.0,
-            max_tokens=900,
-        )
-        return resp
-
-    try:
-        resp = await asyncio.wait_for(do_call(), timeout=12.0)
-        content = resp.choices[0].message.content
-        if not content:
-            raise ValueError("Empty OpenAI response")
-        data = json.loads(content)
-        prompt_additions = str(data.get("prompt_additions") or "")
-        new_meta_raw = data.get("metadata") or (metadata or {})
-        new_meta = new_meta_raw if isinstance(new_meta_raw, dict) else (metadata or {})
-        changes = data.get("changes") or []
-        if not isinstance(changes, list):
-            changes = []
-
-        # Final defensive sanitization layer.
-        # Final defensive sanitization layer on the prompt additions and metadata.
-        new_meta2, safe_additions, _ = rewrite_for_modesty_heuristic(
-            new_meta,
-            prompt_additions,
-            strictness="max" if strictness == "max" else "moderate",
-        )
-        summary = f"openai_rewrite(strictness={strictness}, changes={changes[:4]})"
-        return new_meta2, safe_additions, summary
-    except Exception as e:
-        logger.warning(f"OpenAI rewrite failed ({strictness}), falling back to heuristic: {e}")
-        safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
-            metadata, prompt, strictness="max" if strictness == "max" else "moderate"
-        )
-        return safe_meta, safe_prompt, f"openai_error_fallback:{summary}"
-
-
 async def _gemini_post_json(
     client: httpx.AsyncClient,
     *,
@@ -257,6 +178,128 @@ async def _gemini_post_json(
     Thin wrapper for Gemini HTTP calls to make retry logic testable (can be monkeypatched).
     """
     return await client.post(url, headers=headers, json=payload)
+
+
+async def rewrite_for_modesty_gemini(
+    client: httpx.AsyncClient,
+    *,
+    api_key: str,
+    metadata: Optional[Dict[str, Any]],
+    prompt: str,
+    last_failure: Dict[str, Any],
+    strictness: str,
+) -> Tuple[Dict[str, Any], str, str]:
+    """
+    Gemini-only rewrite step (text-only) to reduce IMAGE_SAFETY/IMAGE_OTHER blocks.
+
+    Returns:
+      (new_metadata, prompt_additions, summary)
+
+    Hardening:
+    - Strict JSON-only output request (best-effort; we still defensively parse)
+    - Short timeout; falls back to caller's heuristic logic on failure
+    - Caller should still apply a heuristic sanitization layer to the output
+    """
+    if os.getenv("GEMINI_REWRITE_ENABLED", "1") != "1":
+        raise RuntimeError("gemini_rewrite_disabled")
+
+    model_name = os.getenv("GEMINI_REWRITE_MODEL", "gemini-1.5-flash")
+    base_url = "https://generativelanguage.googleapis.com/v1beta/models"
+    endpoint = f"{base_url}/{model_name}:generateContent"
+
+    system = (
+        "You are a safety compliance editor for a fashion virtual try-on system. "
+        "Your job is to rewrite METADATA and propose PROMPT_ADDITIONS to reduce image safety blocks "
+        "while keeping the outfit recognizable and professional. "
+        "Do NOT remove or weaken mandatory wearing directives. "
+        "Keep the output general-audience and modest. "
+        "Return ONLY valid JSON matching the schema."
+    )
+    if strictness == "max":
+        system += (
+            " Apply MAXIMUM safety: conservative studio framing, avoid close-ups, ensure opacity/coverage, "
+            "and err on the side of layered styling."
+        )
+
+    schema = {
+        "prompt_additions": "string (short block of directives to append to the base prompt)",
+        "metadata": "object (revised metadata, preserve keys if possible)",
+        "changes": "array of short strings describing what changed",
+    }
+
+    user_payload = {
+        "instruction": "Rewrite the metadata and propose additional prompt directives to be more modest and less likely to trigger safety filters.",
+        "strictness": strictness,
+        "last_failure": last_failure,
+        "prompt_context": prompt,
+        "metadata": metadata or {},
+        "output_schema": schema,
+    }
+
+    text = (
+        system
+        + "\n\nINPUT_JSON:\n"
+        + json.dumps(user_payload, ensure_ascii=False)
+        + "\n\nOUTPUT: JSON ONLY. No markdown. No code fences."
+    )
+
+    req = {
+        "contents": [{"role": "user", "parts": [{"text": text}]}],
+        "generationConfig": {
+            "temperature": 0.0,
+            "maxOutputTokens": 900,
+            # Best-effort; some Gemini models honor this and will return raw JSON text.
+            "responseMimeType": "application/json",
+        },
+    }
+
+    async def do_call() -> httpx.Response:
+        return await _gemini_post_json(
+            client,
+            url=f"{endpoint}?key={api_key}",
+            headers={"Content-Type": "application/json"},
+            payload=req,
+        )
+
+    timeout_s = float(os.getenv("GEMINI_REWRITE_TIMEOUT_S", "12"))
+    resp = await asyncio.wait_for(do_call(), timeout=timeout_s)
+    if not resp.is_success:
+        raise RuntimeError(f"gemini_rewrite_http_error:{resp.status_code}:{resp.text[:300]}")
+
+    data = resp.json() if hasattr(resp, "json") else {}
+    candidates = (data or {}).get("candidates") or []
+    if not candidates:
+        raise RuntimeError("gemini_rewrite_no_candidates")
+
+    cand0 = candidates[0] or {}
+    content = cand0.get("content") or {}
+    parts = content.get("parts") or []
+    out_text = ""
+    for p in parts:
+        if isinstance(p, dict) and p.get("text"):
+            out_text = str(p.get("text") or "").strip()
+            break
+    if not out_text:
+        raise RuntimeError("gemini_rewrite_empty_text")
+
+    # Defensive: strip code fences if the model ignores the instruction.
+    if out_text.startswith("```"):
+        out_text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", out_text).strip()
+        out_text = re.sub(r"\s*```$", "", out_text).strip()
+
+    parsed = json.loads(out_text)
+    if not isinstance(parsed, dict):
+        raise RuntimeError("gemini_rewrite_non_object_json")
+
+    prompt_additions = str(parsed.get("prompt_additions") or "")
+    new_meta_raw = parsed.get("metadata") or (metadata or {})
+    new_meta = new_meta_raw if isinstance(new_meta_raw, dict) else (metadata or {})
+    changes = parsed.get("changes") or []
+    if not isinstance(changes, list):
+        changes = []
+
+    summary = f"gemini_rewrite(strictness={strictness}, model={model_name}, changes={changes[:4]})"
+    return new_meta, prompt_additions, summary
 
 async def generate_try_on(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None, main_index=0, user_quality_flags=None):
     """
@@ -371,48 +414,175 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
         
         # Convert images to base64 for API request
         # Gemini API requires images as base64-encoded inline_data
-        def image_to_base64(image_bytes):
+        def image_to_base64(image_bytes, *, max_dim: int, jpeg_quality: int):
             """
             Convert image bytes to base64 string for Gemini API.
-            Detects image format and converts to PNG for consistency.
+            Detects image format and converts to a size-efficient format:
+            - JPEG for non-alpha images (smaller payload, better for mobile photos/screenshots)
+            - PNG only when alpha/transparency is present
             """
             try:
                 img = Image.open(io.BytesIO(image_bytes))
-                format_map = {
-                    'JPEG': 'image/jpeg',
-                    'PNG': 'image/png',
-                    'WEBP': 'image/webp'
-                }
-                mime_type = format_map.get(img.format, 'image/png')
-                # Convert to PNG for consistency (Gemini handles PNG well)
+                img = ImageOps.exif_transpose(img)
+
+                # Downscale large images to keep request payloads reasonable
+                try:
+                    w, h = img.size
+                    longest = max(w, h)
+                    if longest > max_dim:
+                        scale = max_dim / float(longest)
+                        new_w = max(1, int(round(w * scale)))
+                        new_h = max(1, int(round(h * scale)))
+                        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                except Exception:
+                    pass
+
+                has_alpha = img.mode in ("RGBA", "LA") or (
+                    img.mode == "P" and "transparency" in (img.info or {})
+                )
+
                 buffer = io.BytesIO()
-                img.save(buffer, format='PNG')
-                return base64.b64encode(buffer.getvalue()).decode('utf-8'), 'image/png'
+                if has_alpha:
+                    img.save(buffer, format="PNG", optimize=True)
+                    out_mime = "image/png"
+                else:
+                    img.convert("RGB").save(
+                        buffer, format="JPEG", quality=jpeg_quality, optimize=True, progressive=True
+                    )
+                    out_mime = "image/jpeg"
+
+                return base64.b64encode(buffer.getvalue()).decode("utf-8"), out_mime
             except Exception as e:
                 logger.warning(f"Could not detect image format, using raw bytes: {e}")
                 return base64.b64encode(image_bytes).decode('utf-8'), 'image/jpeg'
         
-        # Process user images
-        user_data = []
-        for idx, user_bytes in enumerate(limited_user_images):
-            user_base64, user_mime = image_to_base64(user_bytes)
-            user_data.append({
-                'base64': user_base64,
-                'mimeType': user_mime,
-                'id': f'user_{idx + 1}',
-            })
+        # Model-call payload budget guard:
+        # keep the total encoded image bytes under a conservative limit to reduce timeouts/failures.
+        max_total_image_bytes = int(os.getenv("VTON_MAX_TOTAL_IMAGE_BYTES", 12 * 1024 * 1024))  # ~12MB
+        # Main user ref guard: avoid shrinking the primary reference too far, to preserve face/body fidelity.
+        min_main_user_dim = int(os.getenv("VTON_MIN_MAIN_USER_DIM", 1600))
+        min_main_user_jpeg_quality = int(os.getenv("VTON_MIN_MAIN_USER_JPEG_QUALITY", 82))
 
-        # Process garment images
-        garment_data = []
-        for idx, garment_bytes in enumerate(limited_garments):
-            garment_base64, garment_mime = image_to_base64(garment_bytes)
-            garment_data.append({
-                'base64': garment_base64,
-                'mimeType': garment_mime,
-                'id': f'item_{idx + 1}',
-                'slot': category if idx == 0 else 'accessory',
-                'layer_order': idx,
-            })
+        def estimate_b64_bytes(b64_str: str) -> int:
+            # Base64 chars ≈ 4/3 of bytes. Ignore padding for simplicity.
+            return int(len(b64_str) * 3 / 4)
+
+        def build_encoded_images(
+            *,
+            main_user_dim: int,
+            other_user_dim: int,
+            main_user_q: int,
+            other_user_q: int,
+            first_garment_dim: int,
+            other_garment_dim: int,
+            first_garment_q: int,
+            other_garment_q: int,
+        ):
+            user_data_local = []
+            for idx, user_bytes in enumerate(limited_user_images):
+                is_main = (idx == int(main_index or 0))
+                user_base64, user_mime = image_to_base64(
+                    user_bytes,
+                    max_dim=main_user_dim if is_main else other_user_dim,
+                    jpeg_quality=main_user_q if is_main else other_user_q,
+                )
+                user_data_local.append(
+                    {
+                        "base64": user_base64,
+                        "mimeType": user_mime,
+                        "id": f"user_{idx + 1}",
+                    }
+                )
+
+            garment_data_local = []
+            for idx, garment_bytes in enumerate(limited_garments):
+                garment_base64, garment_mime = image_to_base64(
+                    garment_bytes,
+                    max_dim=first_garment_dim if idx == 0 else other_garment_dim,
+                    jpeg_quality=first_garment_q if idx == 0 else other_garment_q,
+                )
+                garment_data_local.append(
+                    {
+                        "base64": garment_base64,
+                        "mimeType": garment_mime,
+                        "id": f"item_{idx + 1}",
+                        "slot": category if idx == 0 else "accessory",
+                        "layer_order": idx,
+                    }
+                )
+            total_bytes = sum(estimate_b64_bytes(u["base64"]) for u in user_data_local) + sum(
+                estimate_b64_bytes(g["base64"]) for g in garment_data_local
+            )
+            return user_data_local, garment_data_local, total_bytes
+
+        # Initial quality/dimension targets
+        main_user_dim = 2200
+        other_user_dim = 1600
+        first_garment_dim = 1800
+        other_garment_dim = 1400
+        main_user_q = 90
+        other_user_q = 82
+        first_garment_q = 86
+        other_garment_q = 80
+
+        # Iteratively shrink until under budget, prioritizing secondary refs.
+        max_iters = 6
+        user_data, garment_data, total_image_bytes = build_encoded_images(
+            main_user_dim=main_user_dim,
+            other_user_dim=other_user_dim,
+            main_user_q=main_user_q,
+            other_user_q=other_user_q,
+            first_garment_dim=first_garment_dim,
+            other_garment_dim=other_garment_dim,
+            first_garment_q=first_garment_q,
+            other_garment_q=other_garment_q,
+        )
+
+        if total_image_bytes > max_total_image_bytes:
+            logger.warning(
+                f"VTON payload over budget: {total_image_bytes}B > {max_total_image_bytes}B. "
+                "Auto-downscaling secondary references."
+            )
+
+        for _i in range(max_iters):
+            if total_image_bytes <= max_total_image_bytes:
+                break
+
+            # Priority 1: shrink secondary user refs + accessory garments
+            other_user_dim = max(900, int(other_user_dim * 0.85))
+            other_garment_dim = max(850, int(other_garment_dim * 0.85))
+            other_user_q = max(70, other_user_q - 4)
+            other_garment_q = max(68, other_garment_q - 4)
+
+            # Priority 2: shrink primary garment
+            first_garment_dim = max(1000, int(first_garment_dim * 0.9))
+            first_garment_q = max(72, first_garment_q - 3)
+
+            # Priority 3: as last resort, shrink main user ref slightly
+            main_user_dim = max(min_main_user_dim, int(main_user_dim * 0.92))
+            main_user_q = max(min_main_user_jpeg_quality, main_user_q - 2)
+
+            user_data, garment_data, total_image_bytes = build_encoded_images(
+                main_user_dim=main_user_dim,
+                other_user_dim=other_user_dim,
+                main_user_q=main_user_q,
+                other_user_q=other_user_q,
+                first_garment_dim=first_garment_dim,
+                other_garment_dim=other_garment_dim,
+                first_garment_q=first_garment_q,
+                other_garment_q=other_garment_q,
+            )
+
+        if total_image_bytes > max_total_image_bytes:
+            logger.warning(
+                f"VTON payload still over budget after downscaling: {total_image_bytes}B > {max_total_image_bytes}B. "
+                "Continuing anyway (best-effort)."
+            )
+        else:
+            logger.info(
+                f"VTON payload within budget: {total_image_bytes}B <= {max_total_image_bytes}B "
+                f"(dims user main/other={main_user_dim}/{other_user_dim}, garments first/other={first_garment_dim}/{other_garment_dim})."
+            )
         
         logger.info(f"Generating image with {len(limited_user_images)} user images and {len(limited_garments)} clothing item(s)...")
         
@@ -741,6 +911,28 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
         base_prompt, _ = build_base_text_prompt(current_metadata)
         current_prompt: str = base_prompt
 
+        # Hardening: if metadata clearly describes intimate / revealing garments, pre-sanitize the prompt/metadata
+        # BEFORE the first Gemini call. This reduces the chance of immediate IMAGE_SAFETY blocks.
+        try:
+            scan_text = json.dumps(current_metadata, ensure_ascii=False).lower() if current_metadata else ""
+            if any(k in scan_text for k in INTIMATE_KEYWORDS):
+                safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
+                    current_metadata,
+                    current_prompt,
+                    strictness="moderate",
+                )
+                current_metadata = safe_meta
+                current_prompt = safe_prompt
+                retry_info.append({
+                    "attempt": 1,
+                    "strategy": "preflight_heuristic",
+                    "reason": "intimate_keywords_detected",
+                    "modificationsSummary": summary,
+                })
+        except Exception:
+            # Never block try-on due to preflight heuristics.
+            pass
+
         def summarize_candidate(candidate_obj):
             finish_reason_local = candidate_obj.get("finishReason") or candidate_obj.get("finish_reason")
             safety_ratings = candidate_obj.get("safetyRatings") or []
@@ -826,39 +1018,85 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                                     "modificationsSummary": summary,
                                 })
                             elif attempt == 2:
-                                # OpenAI-assisted rewrite (second failure)
-                                new_meta, additions, summary = await rewrite_for_modesty_openai(
-                                    current_metadata,
-                                    current_prompt,
-                                    last_failure_details,
-                                    strictness="moderate",
-                                )
-                                current_metadata = new_meta
-                                rebuilt, _ = build_base_text_prompt(current_metadata)
-                                current_prompt = rebuilt + "\n\n" + additions
-                                retry_info.append({
-                                    "attempt": attempt + 1,
-                                    "strategy": "openai",
-                                    "reason": "content_rejection",
-                                    "modificationsSummary": summary,
-                                })
+                                # Gemini text-only rewrite (second failure) with heuristic sanitization layer.
+                                try:
+                                    new_meta, additions, gem_summary = await rewrite_for_modesty_gemini(
+                                        client,
+                                        api_key=api_key,
+                                        metadata=current_metadata,
+                                        prompt=current_prompt,
+                                        last_failure=last_failure_details,
+                                        strictness="moderate",
+                                    )
+                                    sanitized_meta, safe_additions, heur_summary = rewrite_for_modesty_heuristic(
+                                        new_meta,
+                                        additions,
+                                        strictness="moderate",
+                                    )
+                                    current_metadata = sanitized_meta
+                                    rebuilt, _ = build_base_text_prompt(current_metadata)
+                                    current_prompt = rebuilt + "\n\n" + safe_additions
+                                    retry_info.append({
+                                        "attempt": attempt + 1,
+                                        "strategy": "gemini_rewrite",
+                                        "reason": "content_rejection",
+                                        "modificationsSummary": f"{gem_summary};{heur_summary}",
+                                    })
+                                except Exception as e:
+                                    # Fall back to heuristic-only if Gemini rewrite fails.
+                                    safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
+                                        current_metadata,
+                                        current_prompt,
+                                        strictness="moderate",
+                                    )
+                                    current_metadata = safe_meta
+                                    current_prompt = safe_prompt
+                                    retry_info.append({
+                                        "attempt": attempt + 1,
+                                        "strategy": "heuristic",
+                                        "reason": "gemini_rewrite_failed_fallback",
+                                        "modificationsSummary": f"{summary};err={str(e)[:120]}",
+                                    })
                             elif attempt == 3:
-                                # OpenAI-assisted rewrite (third failure, max safety)
-                                new_meta, additions, summary = await rewrite_for_modesty_openai(
-                                    current_metadata,
-                                    current_prompt,
-                                    last_failure_details,
-                                    strictness="max",
-                                )
-                                current_metadata = new_meta
-                                rebuilt, _ = build_base_text_prompt(current_metadata)
-                                current_prompt = rebuilt + "\n\n" + additions
-                                retry_info.append({
-                                    "attempt": attempt + 1,
-                                    "strategy": "openai",
-                                    "reason": "content_rejection",
-                                    "modificationsSummary": summary,
-                                })
+                                # Gemini text-only rewrite (third failure) with heuristic sanitization layer.
+                                try:
+                                    new_meta, additions, gem_summary = await rewrite_for_modesty_gemini(
+                                        client,
+                                        api_key=api_key,
+                                        metadata=current_metadata,
+                                        prompt=current_prompt,
+                                        last_failure=last_failure_details,
+                                        strictness="max",
+                                    )
+                                    sanitized_meta, safe_additions, heur_summary = rewrite_for_modesty_heuristic(
+                                        new_meta,
+                                        additions,
+                                        strictness="max",
+                                    )
+                                    current_metadata = sanitized_meta
+                                    rebuilt, _ = build_base_text_prompt(current_metadata)
+                                    current_prompt = rebuilt + "\n\n" + safe_additions
+                                    retry_info.append({
+                                        "attempt": attempt + 1,
+                                        "strategy": "gemini_rewrite",
+                                        "reason": "content_rejection",
+                                        "modificationsSummary": f"{gem_summary};{heur_summary}",
+                                    })
+                                except Exception as e:
+                                    # Fall back to heuristic-only if Gemini rewrite fails.
+                                    safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
+                                        current_metadata,
+                                        current_prompt,
+                                        strictness="max",
+                                    )
+                                    current_metadata = safe_meta
+                                    current_prompt = safe_prompt
+                                    retry_info.append({
+                                        "attempt": attempt + 1,
+                                        "strategy": "heuristic",
+                                        "reason": "gemini_rewrite_failed_fallback",
+                                        "modificationsSummary": f"{summary};err={str(e)[:120]}",
+                                    })
 
                         if attempt == max_attempts:
                             raise ValueError(f"Gemini API error after {max_attempts} attempts: {response.status_code} - {error_text}")
@@ -987,37 +1225,81 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                                 "modificationsSummary": summary,
                             })
                         elif attempt == 2:
-                            new_meta, additions, summary = await rewrite_for_modesty_openai(
-                                current_metadata,
-                                current_prompt,
-                                last_failure_details,
-                                strictness="moderate",
-                            )
-                            current_metadata = new_meta
-                            rebuilt, _ = build_base_text_prompt(current_metadata)
-                            current_prompt = rebuilt + "\n\n" + additions
-                            retry_info.append({
-                                "attempt": attempt + 1,
-                                "strategy": "openai",
-                                "reason": "content_rejection",
-                                "modificationsSummary": summary,
-                            })
+                            try:
+                                new_meta, additions, gem_summary = await rewrite_for_modesty_gemini(
+                                    client,
+                                    api_key=api_key,
+                                    metadata=current_metadata,
+                                    prompt=current_prompt,
+                                    last_failure=last_failure_details,
+                                    strictness="moderate",
+                                )
+                                sanitized_meta, safe_additions, heur_summary = rewrite_for_modesty_heuristic(
+                                    new_meta,
+                                    additions,
+                                    strictness="moderate",
+                                )
+                                current_metadata = sanitized_meta
+                                rebuilt, _ = build_base_text_prompt(current_metadata)
+                                current_prompt = rebuilt + "\n\n" + safe_additions
+                                retry_info.append({
+                                    "attempt": attempt + 1,
+                                    "strategy": "gemini_rewrite",
+                                    "reason": "content_rejection",
+                                    "modificationsSummary": f"{gem_summary};{heur_summary}",
+                                })
+                            except Exception as e:
+                                safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
+                                    current_metadata,
+                                    current_prompt,
+                                    strictness="moderate",
+                                )
+                                current_metadata = safe_meta
+                                current_prompt = safe_prompt
+                                retry_info.append({
+                                    "attempt": attempt + 1,
+                                    "strategy": "heuristic",
+                                    "reason": "gemini_rewrite_failed_fallback",
+                                    "modificationsSummary": f"{summary};err={str(e)[:120]}",
+                                })
                         elif attempt == 3:
-                            new_meta, additions, summary = await rewrite_for_modesty_openai(
-                                current_metadata,
-                                current_prompt,
-                                last_failure_details,
-                                strictness="max",
-                            )
-                            current_metadata = new_meta
-                            rebuilt, _ = build_base_text_prompt(current_metadata)
-                            current_prompt = rebuilt + "\n\n" + additions
-                            retry_info.append({
-                                "attempt": attempt + 1,
-                                "strategy": "openai",
-                                "reason": "content_rejection",
-                                "modificationsSummary": summary,
-                            })
+                            try:
+                                new_meta, additions, gem_summary = await rewrite_for_modesty_gemini(
+                                    client,
+                                    api_key=api_key,
+                                    metadata=current_metadata,
+                                    prompt=current_prompt,
+                                    last_failure=last_failure_details,
+                                    strictness="max",
+                                )
+                                sanitized_meta, safe_additions, heur_summary = rewrite_for_modesty_heuristic(
+                                    new_meta,
+                                    additions,
+                                    strictness="max",
+                                )
+                                current_metadata = sanitized_meta
+                                rebuilt, _ = build_base_text_prompt(current_metadata)
+                                current_prompt = rebuilt + "\n\n" + safe_additions
+                                retry_info.append({
+                                    "attempt": attempt + 1,
+                                    "strategy": "gemini_rewrite",
+                                    "reason": "content_rejection",
+                                    "modificationsSummary": f"{gem_summary};{heur_summary}",
+                                })
+                            except Exception as e:
+                                safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
+                                    current_metadata,
+                                    current_prompt,
+                                    strictness="max",
+                                )
+                                current_metadata = safe_meta
+                                current_prompt = safe_prompt
+                                retry_info.append({
+                                    "attempt": attempt + 1,
+                                    "strategy": "heuristic",
+                                    "reason": "gemini_rewrite_failed_fallback",
+                                    "modificationsSummary": f"{summary};err={str(e)[:120]}",
+                                })
 
                     if attempt == max_attempts:
                         readable_text = text_parts[0][:300] if text_parts else ""

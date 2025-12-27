@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { UploadZone } from './UploadZone';
 import { Upload, Loader2 } from 'lucide-react';
-import axios from 'axios';
+import { httpClient } from '@/lib/httpClient';
 
 interface FileWithMetadata extends File {
   metadata?: Record<string, unknown>;
@@ -62,7 +62,7 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
       });
 
       // Send to analysis endpoint
-      const response = await axios.post(`${API_URL}/api/analyze-clothing`, formData, {
+      const response = await httpClient.post(`${API_URL}/api/analyze-clothing`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 300000, // 5 minutes for analysis
       });

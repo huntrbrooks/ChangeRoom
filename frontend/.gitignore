@@ -8,3 +8,4 @@ dist/
 build/
 *.pyc
 frontend/tsconfig.tsbuildinfo
+.vercel

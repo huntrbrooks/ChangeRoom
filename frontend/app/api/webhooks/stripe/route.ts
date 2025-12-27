@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
+import { clerkClient } from "@clerk/nextjs/server";
 import { stripeConfig } from "@/lib/config";
 import {
   getUserBillingByStripeCustomer,
   updateUserBillingPlan,
   grantCredits,
   setUserBillingFrozen,
+  setStripeCustomerIdForUser,
 } from "@/lib/db-access";
 import { ANALYTICS_EVENTS, captureServerEvent } from "@/lib/server-analytics";
 
@@ -20,6 +22,53 @@ function safeJsonParse(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
+    return null;
+  }
+}
+
+async function resolveClerkUserIdByVerifiedEmail(emailRaw: string): Promise<string | null> {
+  const email = (emailRaw || "").trim().toLowerCase();
+  if (!email || !email.includes("@")) return null;
+
+  try {
+    // Clerk SDK typing varies by version; use a tolerant access pattern.
+    const result = await (clerkClient as unknown as any).users.getUserList({
+      emailAddress: [email],
+      limit: 10,
+    });
+
+    const users = Array.isArray(result) ? result : (result?.data ?? []);
+    if (!Array.isArray(users) || users.length !== 1) {
+      return null;
+    }
+
+    const user = users[0] as any;
+    const userId = (user?.id as string | undefined) || (user?.userId as string | undefined);
+    if (!userId) return null;
+
+    const emailAddresses: any[] =
+      (Array.isArray(user?.emailAddresses) ? user.emailAddresses : null) ||
+      (Array.isArray(user?.email_addresses) ? user.email_addresses : null) ||
+      [];
+
+    const match = emailAddresses.find((entry) => {
+      const addr = (entry?.emailAddress ?? entry?.email_address ?? "").toString().toLowerCase();
+      return addr === email;
+    });
+
+    // If Clerk provides verification status, require it to be verified.
+    const status = (match?.verification?.status ?? match?.verification_status ?? null) as
+      | "verified"
+      | "unverified"
+      | string
+      | null;
+    if (status && status !== "verified") {
+      return null;
+    }
+
+    return userId;
+  } catch (err) {
+    console.warn("resolveClerkUserIdByVerifiedEmail failed", { email, err });
     return null;
   }
 }
@@ -191,36 +240,130 @@ export async function POST(req: NextRequest) {
         let creditAmountStr = (pi.metadata?.creditAmount as string | undefined) || undefined;
         let sessionId: string | undefined = (pi.metadata?.sessionId as string | undefined) || undefined;
         let customerId = typeof pi.customer === "string" ? pi.customer : undefined;
+        let receiptEmail =
+          (typeof (pi as any).receipt_email === "string" ? (pi as any).receipt_email : undefined) ||
+          undefined;
+        let sessionEmail: string | undefined;
 
-        // Backward-compat: older payments may not have PI metadata.
-        // Resolve owning Checkout Session by payment_intent id.
-        if (!clerkUserId || !creditAmountStr || !priceId) {
-          const sessions = await getStripe().checkout.sessions.list({
-            payment_intent: paymentIntentId,
-            limit: 1,
-          });
-          const session = sessions.data[0];
-          if (session) {
-            clerkUserId = clerkUserId || session.metadata?.clerkUserId || undefined;
-            priceId = priceId || session.metadata?.priceId || undefined;
-            creditAmountStr = creditAmountStr || session.metadata?.creditAmount || undefined;
-            sessionId = sessionId || session.id;
-            customerId = customerId || (typeof session.customer === "string" ? session.customer : undefined);
+        // Backward-compat + "off-site" flows:
+        // Resolve the owning Checkout Session by payment_intent id and expand line_items so we can infer priceId.
+        // This covers Stripe Checkout / Payment Links where PI metadata may be empty.
+        let expandedSession: Stripe.Checkout.Session | null = null;
+        try {
+          if (!sessionId || !priceId || !creditAmountStr || !clerkUserId || !customerId) {
+            const sessions = await getStripe().checkout.sessions.list({
+              payment_intent: paymentIntentId,
+              limit: 1,
+            });
+            const s = sessions.data[0];
+            if (s) {
+              sessionId = sessionId || s.id;
+              customerId =
+                customerId || (typeof s.customer === "string" ? s.customer : undefined);
+              sessionEmail =
+                (s.customer_details?.email as string | undefined) ||
+                (typeof (s as any).customer_email === "string" ? (s as any).customer_email : undefined) ||
+                undefined;
+
+              // Retrieve with expansions for robust price inference.
+              try {
+                expandedSession = await getStripe().checkout.sessions.retrieve(s.id, {
+                  expand: ["line_items.data.price"],
+                });
+              } catch {
+                expandedSession = s;
+              }
+
+              clerkUserId =
+                clerkUserId || expandedSession?.metadata?.clerkUserId || undefined;
+              priceId =
+                priceId ||
+                expandedSession?.metadata?.priceId ||
+                (expandedSession?.line_items?.data?.[0]?.price?.id as string | undefined) ||
+                undefined;
+              creditAmountStr =
+                creditAmountStr || expandedSession?.metadata?.creditAmount || undefined;
+              customerId =
+                customerId ||
+                (typeof expandedSession?.customer === "string"
+                  ? expandedSession.customer
+                  : undefined);
+              sessionEmail =
+                sessionEmail ||
+                (expandedSession?.customer_details?.email as string | undefined) ||
+                undefined;
+            }
           }
-        }
-
-        if (!clerkUserId) {
-          console.error("payment_intent.succeeded: cannot resolve clerkUserId", {
+        } catch (err) {
+          console.warn("payment_intent.succeeded: failed to resolve checkout session", {
             payment_intent_id: paymentIntentId,
             event_id: event.id,
-            parsed_body: safeJsonParse(body),
+            err,
           });
+        }
+
+        // Infer credit amount if missing but we have priceId.
+        const creditAmountMap: Record<string, number> = {
+          [stripeConfig.starterPriceId]: 10,
+          [stripeConfig.starterXmasPriceId]: 20,
+          [stripeConfig.valuePriceId]: 30,
+          [stripeConfig.proPriceId]: 100,
+        };
+
+        const inferredCreditAmount =
+          parseInt(creditAmountStr || "0", 10) ||
+          (priceId ? creditAmountMap[priceId] || 0 : 0);
+        if (!Number.isFinite(inferredCreditAmount) || inferredCreditAmount <= 0) {
+          // Not a credit-pack purchase, or we cannot infer credits safely.
           break;
         }
 
-        const creditAmount = parseInt(creditAmountStr || "0", 10);
-        if (!Number.isFinite(creditAmount) || creditAmount <= 0) {
-          // Not a credit-pack purchase, or missing metadata. Ignore.
+        // Determine the target user:
+        // 1) clerkUserId from metadata (best)
+        // 2) map via known Stripe customer id (good)
+        // 3) last-resort: match a VERIFIED Clerk email to receipt/customer email (best-effort)
+        let targetUserId: string | undefined = clerkUserId || undefined;
+
+        if (!targetUserId && customerId) {
+          const billing = await getUserBillingByStripeCustomer(customerId);
+          if (billing) {
+            targetUserId = billing.user_id;
+          }
+        }
+
+        const candidateEmail = (sessionEmail || receiptEmail || "").trim();
+        if (!targetUserId && candidateEmail) {
+          const userIdFromEmail = await resolveClerkUserIdByVerifiedEmail(candidateEmail);
+          if (userIdFromEmail) {
+            targetUserId = userIdFromEmail;
+            // Persist customer mapping if available and not already mapped.
+            if (customerId) {
+              const existing = await getUserBillingByStripeCustomer(customerId);
+              if (!existing) {
+                try {
+                  await setStripeCustomerIdForUser(userIdFromEmail, customerId);
+                } catch (e) {
+                  console.warn("Failed to persist stripe_customer_id for inferred user", {
+                    userIdFromEmail,
+                    customerId,
+                    e,
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        if (!targetUserId) {
+          console.error("payment_intent.succeeded: cannot resolve target user", {
+            payment_intent_id: paymentIntentId,
+            event_id: event.id,
+            customer_id: customerId || null,
+            receipt_email: candidateEmail || null,
+            price_id: priceId || null,
+            session_id: sessionId || null,
+            parsed_body: safeJsonParse(body),
+          });
           break;
         }
 
@@ -234,17 +377,19 @@ export async function POST(req: NextRequest) {
           mode: "payment_intent",
           currency: pi.currency,
           amount_received: typeof pi.amount_received === "number" ? pi.amount_received : null,
+          attribution:
+            clerkUserId
+              ? "payment_intent_metadata"
+              : customerId
+                ? "stripe_customer_id"
+                : candidateEmail
+                  ? "verified_email"
+                  : "unknown",
+          receipt_email: candidateEmail || null,
         };
 
         // Idempotency: always use payment_intent id
-        if (customerId) {
-          const billing = await getUserBillingByStripeCustomer(customerId);
-          if (billing) {
-            await grantCredits(billing.user_id, creditAmount, creditMetadata, paymentIntentId);
-            break;
-          }
-        }
-        await grantCredits(clerkUserId, creditAmount, creditMetadata, paymentIntentId);
+        await grantCredits(targetUserId, inferredCreditAmount, creditMetadata, paymentIntentId);
         break;
       }
 

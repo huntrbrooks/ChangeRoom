@@ -13,6 +13,7 @@ import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
 import time
+import uuid
 
 # Ensure UTF-8 encoding for all string operations
 import locale
@@ -27,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from services import vton, gemini, shop, analyze_clothing, analyze_user
 from services import preprocess_clothing
+from services.image_normalize import normalize_image_bytes, ensure_heif_registered
 
 load_dotenv()
 
@@ -38,6 +40,30 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="IGetDressed.Online API")
+
+# Add a small “which stack served this response?” marker + request correlation id to all responses.
+@app.middleware("http")
+async def add_stack_header(request: Request, call_next):
+    # Prefer client-provided request id; otherwise generate one.
+    rid = (
+        request.headers.get("x-request-id")
+        or request.headers.get("x-changeroom-request-id")
+        or str(uuid.uuid4())
+    )
+    request.state.request_id = rid
+
+    response = await call_next(request)
+
+    # Helps debugging in browser Network tab + logs.
+    response.headers["X-ChangeRoom-Stack"] = "fastapi-render"
+    response.headers["X-Request-Id"] = rid
+    response.headers["X-ChangeRoom-Request-Id"] = rid
+    return response
+
+
+def get_request_id(request: Request) -> str:
+    rid = getattr(request.state, "request_id", None)
+    return rid if isinstance(rid, str) and rid else "unknown"
 
 # Configure CORS
 # For production, specify exact origins in ALLOWED_ORIGINS environment variable
@@ -77,8 +103,32 @@ UPLOADS_DIR.mkdir(exist_ok=True)
 # File upload security limits
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 10 * 1024 * 1024))  # 10MB default
 MAX_TOTAL_SIZE = int(os.getenv("MAX_TOTAL_SIZE", 50 * 1024 * 1024))  # 50MB default
-ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+# Accept a wider range of image types; we normalize server-side to JPEG/PNG before model calls.
+ALLOWED_IMAGE_TYPES = {
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/bmp",
+    "image/tiff",
+    "image/heic",
+    "image/heif",
+    "image/avif",
+}
+ALLOWED_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".gif",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".heic",
+    ".heif",
+    ".avif",
+}
 
 _rate_buckets: dict[str, tuple[int, float]] = {}
 
@@ -105,8 +155,9 @@ def get_client_ip(request: Request) -> str:
 
 def validate_image_file(file: UploadFile) -> tuple[bool, str]:
     """Validate that uploaded file is a valid image"""
-    if not file.content_type or file.content_type.lower() not in ALLOWED_IMAGE_TYPES:
-        return False, f"Invalid file type. Allowed types: {', '.join(ALLOWED_IMAGE_TYPES)}"
+    # Some clients (or proxies) send missing/incorrect content_type.
+    # We allow a safe fallback based on filename extension; decode will still be enforced later.
+    ct = (file.content_type or "").lower().strip()
     
     if not file.filename:
         return False, "Filename is required"
@@ -114,8 +165,59 @@ def validate_image_file(file: UploadFile) -> tuple[bool, str]:
     file_ext = Path(file.filename).suffix.lower()
     if file_ext not in ALLOWED_EXTENSIONS:
         return False, f"Invalid file extension. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"
+
+    if ct and ct in ALLOWED_IMAGE_TYPES:
+        return True, ""
+
+    # Allow missing/unknown content type when extension is allowed.
+    # Downstream decode+normalize will reject non-image bytes.
+    if not ct or ct in ("application/octet-stream", "binary/octet-stream"):
+        return True, ""
+
+    # If content-type disagrees but extension is allowed, accept and rely on decode step.
+    if ct not in ALLOWED_IMAGE_TYPES:
+        return True, ""
     
     return True, ""
+
+
+async def read_and_normalize_upload(
+    file: UploadFile,
+    *,
+    label: str,
+    max_dimension: int = 2200,
+) -> tuple[bytes, str, Optional[int], Optional[int]]:
+    """
+    Read an UploadFile, enforce size limits, and normalize to JPEG/PNG for downstream model calls.
+    Returns (bytes, mime_type, width, height).
+    """
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"{label} too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB",
+        )
+
+    # Normalize (handles EXIF orientation + downscale + consistent encoding).
+    try:
+        normalized, mime_type, w, h = normalize_image_bytes(
+            contents, max_dimension=max_dimension, prefer_mime="image/jpeg"
+        )
+        return normalized, mime_type, w, h
+    except Exception as e:
+        # Special-case HEIC/HEIF without pillow-heif
+        ct = (file.content_type or "").lower()
+        ext = Path(file.filename or "").suffix.lower()
+        if ct in ("image/heic", "image/heif") or ext in (".heic", ".heif"):
+            if not ensure_heif_registered():
+                raise HTTPException(
+                    status_code=415,
+                    detail=(
+                        "This image looks like HEIC/HEIF (iPhone 'High Efficiency'). "
+                        "Please convert it to JPEG/PNG (recommended) and re-upload."
+                    ),
+                )
+        raise HTTPException(status_code=415, detail=f"Could not decode image: {str(e)}")
 
 # Mount static files for serving uploaded images
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
@@ -142,12 +244,15 @@ async def try_on(
     Supports multiple user images (up to 5) for better context.
     Supports multiple clothing items for full outfit try-on.
     """
+    rid = get_request_id(request)
+    logger.info(f"[try-on] request_id={rid} received")
+
     # Rate limit per IP to protect expensive endpoint (best-effort)
     ip = get_client_ip(request)
     if not check_rate_limit(f"try-on:{ip}", limit=10, window_seconds=60):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
     try:
-        # Collect user images
+        # Collect user images (normalized to JPEG/PNG in-memory)
         user_image_files = []
         user_quality_flags = []
         MIN_DIM_HARD_FAIL = 400  # px
@@ -161,88 +266,54 @@ async def try_on(
                 is_valid, error_msg = validate_image_file(img)
                 if not is_valid:
                     raise HTTPException(status_code=400, detail=f"User image validation failed: {error_msg}")
-                
-                # Read and validate size
-                img_bytes = await img.read()
-                if len(img_bytes) > MAX_FILE_SIZE:
+
+                normalized_bytes, _mime, w, h = await read_and_normalize_upload(
+                    img, label="User image", max_dimension=2200
+                )
+                total_size += len(normalized_bytes)
+                min_dim = min(w, h) if w and h else None
+                if min_dim is not None and min_dim < MIN_DIM_HARD_FAIL:
                     raise HTTPException(
-                        status_code=413, 
-                        detail=f"User image too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB"
+                        status_code=422,
+                        detail="User image resolution too low. Please upload a higher-resolution photo.",
                     )
-                total_size += len(img_bytes)
-                img.file.seek(0)
-                # Resolution check
-                try:
-                    from PIL import Image as PILImage  # type: ignore
-                    pil_img = PILImage.open(io.BytesIO(img_bytes))
-                    w, h = pil_img.size
-                    min_dim = min(w, h)
-                    if min_dim < MIN_DIM_HARD_FAIL:
-                        raise HTTPException(
-                            status_code=422,
-                            detail="User image resolution too low. Please upload a higher-resolution photo."
-                        )
-                    user_quality_flags.append({
+                user_quality_flags.append(
+                    {
                         "name": img.filename or f"user_{len(user_quality_flags)+1}",
                         "width": w,
                         "height": h,
                         "min_dim": min_dim,
-                        "low_res": min_dim < MIN_DIM_WARN
-                    })
-                except HTTPException:
-                    raise
-                except Exception:
-                    user_quality_flags.append({
-                        "name": img.filename or f"user_{len(user_quality_flags)+1}",
-                        "width": None,
-                        "height": None,
-                        "min_dim": None,
-                        "low_res": False
-                    })
-                user_image_files.append(img.file)
+                        "low_res": bool(min_dim is not None and min_dim < MIN_DIM_WARN),
+                    }
+                )
+                user_image_files.append(io.BytesIO(normalized_bytes))
                 
         # Handle single user image (backward compatibility) if no list provided
         elif user_image:
              is_valid, error_msg = validate_image_file(user_image)
              if not is_valid:
                  raise HTTPException(status_code=400, detail=error_msg)
-             
-             user_image_bytes = await user_image.read()
-             if len(user_image_bytes) > MAX_FILE_SIZE:
+
+             normalized_bytes, _mime, w, h = await read_and_normalize_upload(
+                 user_image, label="User image", max_dimension=2200
+             )
+             total_size += len(normalized_bytes)
+             min_dim = min(w, h) if w and h else None
+             if min_dim is not None and min_dim < MIN_DIM_HARD_FAIL:
                  raise HTTPException(
-                     status_code=413, 
-                     detail=f"User image too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB"
+                     status_code=422,
+                     detail="User image resolution too low. Please upload a higher-resolution photo.",
                  )
-             total_size += len(user_image_bytes)
-             try:
-                 from PIL import Image as PILImage  # type: ignore
-                 pil_img = PILImage.open(io.BytesIO(user_image_bytes))
-                 w, h = pil_img.size
-                 min_dim = min(w, h)
-                 if min_dim < MIN_DIM_HARD_FAIL:
-                     raise HTTPException(
-                         status_code=422,
-                         detail="User image resolution too low. Please upload a higher-resolution photo."
-                     )
-                 user_quality_flags.append({
+             user_quality_flags.append(
+                 {
                      "name": user_image.filename or "user_image",
                      "width": w,
                      "height": h,
                      "min_dim": min_dim,
-                     "low_res": min_dim < MIN_DIM_WARN
-                 })
-             except HTTPException:
-                 raise
-             except Exception:
-                 user_quality_flags.append({
-                     "name": user_image.filename or "user_image",
-                     "width": None,
-                     "height": None,
-                     "min_dim": None,
-                     "low_res": False
-                 })
-             user_image.file.seek(0)
-             user_image_files.append(user_image.file)
+                     "low_res": bool(min_dim is not None and min_dim < MIN_DIM_WARN),
+                 }
+             )
+             user_image_files.append(io.BytesIO(normalized_bytes))
              
         if not user_image_files:
              raise HTTPException(status_code=400, detail="At least one user image is required")
@@ -264,17 +335,12 @@ async def try_on(
                 is_valid, error_msg = validate_image_file(img)
                 if not is_valid:
                     raise HTTPException(status_code=400, detail=f"Clothing image validation failed: {error_msg}")
-                
-                # Validate size
-                img_bytes = await img.read()
-                if len(img_bytes) > MAX_FILE_SIZE:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"Clothing image too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB"
-                    )
-                total_size += len(img_bytes)
-                img.file.seek(0)  # Reset file pointer
-                clothing_image_files.append(img.file)
+
+                normalized_bytes, _mime, _w, _h = await read_and_normalize_upload(
+                    img, label="Clothing image", max_dimension=2200
+                )
+                total_size += len(normalized_bytes)
+                clothing_image_files.append(io.BytesIO(normalized_bytes))
         
         # Handle single uploaded image (backward compatibility)
         if clothing_image:
@@ -282,17 +348,12 @@ async def try_on(
             is_valid, error_msg = validate_image_file(clothing_image)
             if not is_valid:
                 raise HTTPException(status_code=400, detail=f"Clothing image validation failed: {error_msg}")
-            
-            # Validate size
-            img_bytes = await clothing_image.read()
-            if len(img_bytes) > MAX_FILE_SIZE:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"Clothing image too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB"
-                )
-            total_size += len(img_bytes)
-            clothing_image.file.seek(0)  # Reset file pointer
-            clothing_image_files.append(clothing_image.file)
+
+            normalized_bytes, _mime, _w, _h = await read_and_normalize_upload(
+                clothing_image, label="Clothing image", max_dimension=2200
+            )
+            total_size += len(normalized_bytes)
+            clothing_image_files.append(io.BytesIO(normalized_bytes))
         
         # Validate total size
         if total_size > MAX_TOTAL_SIZE:
@@ -414,6 +475,8 @@ async def try_on(
         except Exception as e:
             logger.warning(f"User attribute analysis failed (continuing without it): {e}")
         
+        result = None
+        result_url = None
         try:
             # #region agent log
             try:
@@ -500,7 +563,13 @@ async def identify_products(
         if not check_rate_limit(f"identify-products:{ip}", limit=30, window_seconds=60):
             raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
         logger.info("Product identification request received")
-        contents = await clothing_image.read()
+        is_valid, error_msg = validate_image_file(clothing_image)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+
+        contents, _mime, _w, _h = await read_and_normalize_upload(
+            clothing_image, label="Clothing image", max_dimension=2200
+        )
         analysis = await gemini.analyze_garment(contents)  # Now async
         logger.info(f"Product identification completed. Analysis: {analysis}")
         return analysis
@@ -521,7 +590,13 @@ async def analyze_clothing_stream(clothing_images: List[UploadFile], save_files:
         analyzed_items = []
         for idx, clothing_image in enumerate(clothing_images):
             try:
-                contents = await clothing_image.read()
+                is_valid, error_msg = validate_image_file(clothing_image)
+                if not is_valid:
+                    raise HTTPException(status_code=400, detail=error_msg)
+
+                contents, _mime, _w, _h = await read_and_normalize_upload(
+                    clothing_image, label="Clothing image", max_dimension=2200
+                )
                 original_filename = clothing_image.filename or f"item_{idx + 1}"
                 
                 # Update progress: starting item analysis
@@ -656,7 +731,13 @@ async def analyze_and_save_clothing_items(
         results = []
         for idx, clothing_image in enumerate(clothing_images):
             try:
-                contents = await clothing_image.read()
+                is_valid, error_msg = validate_image_file(clothing_image)
+                if not is_valid:
+                    raise HTTPException(status_code=400, detail=error_msg)
+
+                contents, _mime, _w, _h = await read_and_normalize_upload(
+                    clothing_image, label="Clothing image", max_dimension=2200
+                )
                 original_filename = clothing_image.filename or f"item_{idx + 1}"
                 
                 logger.info(f"Processing item {idx + 1}: {original_filename}")
@@ -765,8 +846,14 @@ async def preprocess_clothing_batch(
         original_filenames = []
         
         for image_file in clothing_images:
-            contents = await image_file.read()
-            image_bytes_list.append(contents)
+            is_valid, error_msg = validate_image_file(image_file)
+            if not is_valid:
+                raise HTTPException(status_code=400, detail=error_msg)
+
+            normalized, _mime, _w, _h = await read_and_normalize_upload(
+                image_file, label="Clothing image", max_dimension=2200
+            )
+            image_bytes_list.append(normalized)
             original_filenames.append(image_file.filename or "unknown")
         
         # Call batch preprocessing service

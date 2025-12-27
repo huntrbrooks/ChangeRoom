@@ -5,7 +5,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
-import axios from 'axios';
+import { httpClient } from '@/lib/httpClient';
 import { UploadZone } from './components/UploadZone';
 import { BulkUploadZone } from './components/BulkUploadZone';
 import { VirtualMirror } from './components/VirtualMirror';
@@ -203,7 +203,7 @@ function HomeContent() {
         // Verify paid checkout server-side (idempotent) then refresh billing
         (async () => {
           try {
-            await axios.post('/api/billing/verify-checkout-session', { sessionId });
+            await httpClient.post('/api/billing/verify-checkout-session', { sessionId });
           } catch (error) {
             // Verification is a best-effort fallback (webhook is primary)
             // eslint-disable-next-line no-console
@@ -222,7 +222,7 @@ function HomeContent() {
 
   const fetchBilling = async () => {
     try {
-      const response = await axios.get('/api/my/billing');
+      const response = await httpClient.get('/api/my/billing');
       setBilling({
         ...response.data,
         hasPurchase: Boolean(response.data?.hasPurchase),
@@ -418,7 +418,7 @@ function HomeContent() {
     }
 
     try {
-      const response = await axios.post("/api/my/clothing-items", {
+      const response = await httpClient.post("/api/my/clothing-items", {
         items: payload,
       });
       const savedItems = response.data?.clothingItems || [];
@@ -677,7 +677,7 @@ function HomeContent() {
       }));
 
       // Save to database via API
-      const response = await axios.post('/api/my/outfits', {
+      const response = await httpClient.post('/api/my/outfits', {
         imageUrl,
         clothingItems,
       });
@@ -818,7 +818,7 @@ function HomeContent() {
       // Wake up Render service first (health check)
       console.log("Waking up Render service...");
       try {
-        const healthCheck = await axios.get(`${API_URL}/`, { timeout: 180000 }); // 3 minutes
+        const healthCheck = await httpClient.get(`${API_URL}/`, { timeout: 180000 }); // 3 minutes
         console.log("Service is awake:", healthCheck.data);
       } catch (wakeError: unknown) {
         const error = wakeError instanceof Error ? wakeError : new Error(String(wakeError));
@@ -1024,8 +1024,11 @@ function HomeContent() {
         // #endregion
         tryOnRes = await withRetry(
           () =>
-            axios.post(`${API_URL}/api/try-on`, tryOnFormData, {
-              headers: { 'Content-Type': 'multipart/form-data' },
+            httpClient.post(`${API_URL}/api/try-on`, tryOnFormData, {
+              headers: {
+                'Content-Type': 'multipart/form-data',
+                ...(requestId ? { 'X-Request-Id': requestId } : {}),
+              },
               timeout: 600000, // 10 minutes for Render wake-up + VTON generation
               signal: controller.signal,
             }),
@@ -1088,7 +1091,7 @@ function HomeContent() {
           // Mark trial as used if backend reported free trial consumption (idempotent)
           if (tryOnRes?.data?.usedFreeTrial || (billing && !billing.trialUsed)) {
             try {
-              await axios.post('/api/my/trial/consume');
+              await httpClient.post('/api/my/trial/consume');
           trialConsumedRef.current = true;
           setBilling((prev) => (prev ? { ...prev, trialUsed: true } : prev));
             } catch (consumeErr) {
@@ -1111,7 +1114,7 @@ function HomeContent() {
         if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
           try {
             if (requestId) {
-              await axios.post('/api/try-on/cancel', { requestId });
+              await httpClient.post('/api/try-on/cancel', { requestId });
             }
           } catch {
             // ignore
@@ -1165,7 +1168,7 @@ function HomeContent() {
           // Second (or later) blocked attempt after warning: apply 1-credit penalty (idempotent by requestId).
           try {
             if (requestId) {
-              const penaltyRes = await axios.post('/api/my/credits/content-block-penalty', { requestId });
+              const penaltyRes = await httpClient.post('/api/my/credits/content-block-penalty', { requestId });
               const creditsAvailable = penaltyRes?.data?.creditsAvailable;
               if (typeof creditsAvailable === 'number') {
                 setBilling((prev) => (prev ? { ...prev, creditsAvailable } : prev));
@@ -1227,7 +1230,7 @@ function HomeContent() {
         
         const analysisRes = await withRetry(
           () =>
-            axios.post(`${API_URL}/api/identify-products`, identifyFormData, {
+            httpClient.post(`${API_URL}/api/identify-products`, identifyFormData, {
               headers: { 'Content-Type': 'multipart/form-data' },
               timeout: 600000, // 10 minutes for Render wake-up + Gemini processing
               signal: controller.signal,
@@ -1277,7 +1280,7 @@ function HomeContent() {
           
           const shopRes = await withRetry(
             () =>
-              axios.post(`${API_URL}/api/shop`, shopFormData, {
+              httpClient.post(`${API_URL}/api/shop`, shopFormData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
                 timeout: 60000, // 1 minute for product search
                 signal: controller.signal,
@@ -1602,6 +1605,8 @@ function HomeContent() {
                   enabled: true,
                   maxSizeMB: 9.5,
                   maxDimension: 2200,
+                  // Prevent over-downscaling (keeps faces/details clearer).
+                  absoluteMinDimension: 1200,
                   preferredMimeType: 'image/jpeg',
                 }}
               />

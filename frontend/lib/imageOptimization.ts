@@ -27,6 +27,12 @@ export interface OptimizeImageOptions {
    * Factor used to further shrink dimensions if quality adjustments alone are not enough. Defaults to 0.85 (15% smaller).
    */
   dimensionStep?: number;
+  /**
+   * Hard minimum longest-side dimension (px) before we stop shrinking further.
+   * Useful to avoid over-downscaling faces/details.
+   * Defaults to 720.
+   */
+  absoluteMinDimension?: number;
 }
 
 export interface OptimizeImageResult {
@@ -116,6 +122,7 @@ export const optimizeImageFile = async (
     qualityStep = DEFAULTS.qualityStep,
     dimensionStep = DEFAULTS.dimensionStep,
     preferredMimeType,
+    absoluteMinDimension = DEFAULTS.absoluteMinDimension,
   } = options;
 
   const maxBytes = bytesFromMB(maxSizeMB);
@@ -168,8 +175,8 @@ export const optimizeImageFile = async (
   let currentQuality = initialQuality;
   let blob = await canvasToBlob(canvas, targetMimeType, currentQuality);
 
-  const absoluteMinDimension = Math.min(
-    DEFAULTS.absoluteMinDimension,
+  const absoluteMinDimensionClamped = Math.min(
+    Math.max(1, absoluteMinDimension),
     maxDimension
   );
 
@@ -178,15 +185,15 @@ export const optimizeImageFile = async (
       currentQuality = Math.max(minQuality, currentQuality - qualityStep);
     } else {
       const longestSide = Math.max(workingWidth, workingHeight);
-      if (longestSide <= absoluteMinDimension) {
+      if (longestSide <= absoluteMinDimensionClamped) {
         break;
       }
       workingWidth = Math.max(
-        absoluteMinDimension,
+        absoluteMinDimensionClamped,
         workingWidth * dimensionStep
       );
       workingHeight = Math.max(
-        absoluteMinDimension,
+        absoluteMinDimensionClamped,
         workingHeight * dimensionStep
       );
       drawScaledImage(workingWidth, workingHeight);

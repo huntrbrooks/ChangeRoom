@@ -10,6 +10,7 @@ from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 import io
 from datetime import datetime
+from .image_normalize import normalize_image_bytes_with_budget
 
 logger = logging.getLogger(__name__)
 
@@ -208,23 +209,27 @@ async def analyze_clothing_item(image_bytes: bytes, original_filename: str = "")
 
     def run_analysis():
         client = OpenAI(api_key=api_key)
-        
-        # Detect image format and encode to base64 for OpenAI API
-        try:
-            image = Image.open(io.BytesIO(image_bytes))
-            # Determine MIME type based on image format
-            format_map = {
-                'JPEG': 'jpeg',
-                'PNG': 'png',
-                'WEBP': 'webp',
-                'GIF': 'gif'
-            }
-            mime_type = format_map.get(image.format, 'jpeg')
-        except Exception:
-            # Default to jpeg if format detection fails
-            mime_type = 'jpeg'
-        
-        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+
+        # Normalize + budget guard to keep OpenAI vision requests reliable on huge mobile uploads.
+        # Note: analyze_clothing uses OpenAI vision; we can safely flatten alpha for analysis.
+        max_bytes = int(os.getenv("OPENAI_VISION_MAX_IMAGE_BYTES", 4 * 1024 * 1024))  # 4MB
+        normalized_bytes, out_mime, _w, _h = normalize_image_bytes_with_budget(
+            image_bytes,
+            max_bytes=max_bytes,
+            max_dimension=2200,
+            min_dimension=900,
+            prefer_mime="image/jpeg",
+            jpeg_quality=88,
+            min_jpeg_quality=70,
+            allow_png_alpha=False,
+        )
+        mime_type = "jpeg"
+        if out_mime == "image/png":
+            mime_type = "png"
+        elif out_mime == "image/webp":
+            mime_type = "webp"
+
+        image_base64 = base64.b64encode(normalized_bytes).decode('utf-8')
         
         prompt = """
         You are an expert clothing classifier. Your ONLY job is to identify what clothing item is in this image and classify it correctly.

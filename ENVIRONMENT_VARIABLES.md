@@ -2,7 +2,20 @@
 
 This document lists all required and optional environment variables for the Change Room application.
 
+## Deployment context (do not skip)
+
+- **Backend** is deployed on **Render**
+- **Frontend** is deployed on **Vercel**
+
+If you're working locally:
+- Backend runs at `http://localhost:8000`
+- Frontend runs at `http://localhost:3000`
+
 ## Backend Environment Variables
+
+### Backend (Render)
+
+Set these in the **Render service** for the backend (see `render.yaml`).
 
 ### Required
 
@@ -20,8 +33,16 @@ This document lists all required and optional environment variables for the Chan
 | `ALLOWED_ORIGINS` | Comma-separated CORS allowlist for the backend | (built-in defaults) | `https://igetdressed.online,https://www.igetdressed.online` |
 | `MAX_FILE_SIZE` | Max bytes per uploaded image | `10485760` | `10485760` |
 | `MAX_TOTAL_SIZE` | Max bytes per request across all images | `52428800` | `52428800` |
+| `VTON_MAX_TOTAL_IMAGE_BYTES` | Max total bytes of base64-decoded images sent to Gemini in a single try-on call (auto-downscales refs to stay under budget) | `12582912` (~12MB) | `16777216` |
+| `VTON_MIN_MAIN_USER_DIM` | Minimum longest-side dimension (px) for the main user reference image when auto-downscaling to fit Gemini payload budget | `1600` | `1800` |
+| `VTON_MIN_MAIN_USER_JPEG_QUALITY` | Minimum JPEG quality for the main user reference image when auto-downscaling to fit Gemini payload budget | `82` | `86` |
+| `OPENAI_VISION_MAX_IMAGE_BYTES` | Max bytes per image sent to OpenAI vision calls (analysis/preprocess). Images are auto-normalized/downscaled to fit budget. | `4194304` (~4MB) | `6291456` |
 
 ## Frontend Environment Variables
+
+### Frontend (Vercel)
+
+Set these in the **Vercel project** for the frontend (`frontend/`).
 
 ### Required
 
@@ -48,7 +69,7 @@ This document lists all required and optional environment variables for the Chan
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `NEXT_PUBLIC_API_URL` | Backend API URL | `http://localhost:8000` | `https://api.example.com` |
+| `NEXT_PUBLIC_API_URL` | **Render backend** base URL | `http://localhost:8000` | `https://your-render-service.onrender.com` |
 | `NEXT_PUBLIC_APP_URL` | Frontend application URL | `http://localhost:3000` | `https://app.example.com` |
 | `TRYON_FREE_CREDITS` | Number of free credits for new users | `10` | `10` |
 | `TRYON_STANDARD_MONTHLY_CREDITS` | Monthly credits for Standard plan | `50` | `50` |

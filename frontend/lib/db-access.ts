@@ -712,7 +712,7 @@ export async function grantCredits(
 
     const updated = await tx`
       UPDATE users_billing
-      SET
+      SET 
         credits_available = credits_available + ${amount},
         updated_at = now()
       WHERE user_id = ${userId}
@@ -721,25 +721,25 @@ export async function grantCredits(
 
     // If requestId wasn't provided, we still write an audit ledger row (non-idempotent by design).
     if (!requestId || !requestId.trim()) {
-      await tx`
-        INSERT INTO credit_ledger_entries (
-          id,
-          user_id,
-          request_id,
-          entry_type,
-          credits_change,
-          balance_after,
-          metadata
-        )
-        VALUES (
-          ${generateUuid()},
-          ${userId},
+    await tx`
+      INSERT INTO credit_ledger_entries (
+        id,
+        user_id,
+        request_id,
+        entry_type,
+        credits_change,
+        balance_after,
+        metadata
+      )
+      VALUES (
+        ${generateUuid()},
+        ${userId},
           NULL,
-          'grant',
-          ${amount},
-          ${updated.rows[0].credits_available},
-          ${JSON.stringify(metadata)}
-        )
+        'grant',
+        ${amount},
+        ${updated.rows[0].credits_available},
+        ${JSON.stringify(metadata)}
+      )
       `;
     } else if (insertedLedgerId) {
       // Fill in balance_after for the inserted ledger row
@@ -1153,6 +1153,41 @@ export async function updateUserBillingPlan(
     }
 
     return { ...(result.rows[0] as UserBilling), is_frozen: (result.rows[0] as UserBilling).is_frozen ?? false };
+  });
+}
+
+/**
+ * Set Stripe customer id for a user WITHOUT changing plan or credits.
+ * Useful when we can infer the owning user (e.g., via verified email) after an
+ * off-site Stripe Checkout/Payment Link purchase.
+ */
+export async function setStripeCustomerIdForUser(
+  userId: string,
+  stripeCustomerId: string
+): Promise<UserBilling> {
+  if (!stripeCustomerId || !stripeCustomerId.trim()) {
+    throw new Error("stripe_customer_id_required");
+  }
+
+  return withUsersBillingTable(async () => {
+    // Ensure row exists
+    await getOrCreateUserBilling(userId);
+
+    const result = await sql`
+      UPDATE users_billing
+      SET
+        stripe_customer_id = ${stripeCustomerId},
+        updated_at = now()
+      WHERE user_id = ${userId}
+      RETURNING *
+    `;
+
+    if (result.rows.length === 0) {
+      return getOrCreateUserBilling(userId);
+    }
+
+    const updated = result.rows[0] as UserBilling;
+    return { ...updated, is_frozen: updated.is_frozen ?? false, trial_used: updated.trial_used ?? false };
   });
 }
 

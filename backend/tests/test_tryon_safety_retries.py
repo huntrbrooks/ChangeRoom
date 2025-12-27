@@ -38,24 +38,6 @@ def test_heuristic_rewrite_sanitizes_and_adds_defaults():
 
 
 @pytest.mark.asyncio
-async def test_openai_rewrite_falls_back_without_key(monkeypatch):
-    from services.vton import rewrite_for_modesty_openai
-
-    # Ensure no key is present
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-
-    meta, prompt, summary = await rewrite_for_modesty_openai(
-        {"description": "lingerie"},
-        "prompt",
-        {"reason": "IMAGE_SAFETY"},
-        strictness="moderate",
-    )
-    assert isinstance(meta, dict)
-    assert isinstance(prompt, str)
-    assert "fallback" in summary
-
-
-@pytest.mark.asyncio
 async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_bytes):
     """
     Stubs Gemini responses: 3 safety blocks then a success.
@@ -63,12 +45,45 @@ async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_byt
     """
     from services import vton
 
-    call_count = {"n": 0}
+    call_count = {"n": 0, "image": 0, "rewrite": 0}
 
     async def fake_post(_client, *, url, headers, payload):
         call_count["n"] += 1
-        # 1-3: safety block with IMAGE_SAFETY finish reason
-        if call_count["n"] <= 3:
+
+        # Detect rewrite calls: text-only (no inline_data images).
+        try:
+            parts = payload["contents"][0]["parts"]
+            has_inline = any(
+                isinstance(p, dict) and ("inline_data" in p or "inlineData" in p) for p in (parts or [])
+            )
+        except Exception:
+            has_inline = True
+
+        if not has_inline:
+            call_count["rewrite"] += 1
+            # Gemini rewrite response (text JSON)
+            return DummyGeminiResponse(
+                ok=True,
+                data={
+                    "candidates": [
+                        {
+                            "finishReason": "STOP",
+                            "content": {
+                                "parts": [
+                                    {
+                                        "text": '{"prompt_additions":"Keep framing conservative, avoid close-ups, add opaque lining if needed.","metadata":{"description":"intimate apparel","framing":"three_quarter"},"changes":["sanitized description","more modest framing"]}'
+                                    }
+                                ]
+                            },
+                        }
+                    ]
+                },
+            )
+
+        # Image generation calls: 1-3 safety block, then success on the final attempt.
+        # Note: with Gemini rewrite enabled on attempt 2 and 3, there will be two extra calls.
+        call_count["image"] += 1
+        if call_count["image"] <= 3:
             return DummyGeminiResponse(
                 ok=True,
                 data={
@@ -81,7 +96,8 @@ async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_byt
                     ]
                 },
             )
-        # 4: success with an image part
+
+        # Success with an image part
         return DummyGeminiResponse(
             ok=True,
             data={
@@ -95,8 +111,6 @@ async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_byt
         )
 
     monkeypatch.setattr(vton, "_gemini_post_json", fake_post)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-
     user_file = io.BytesIO(sample_image_bytes)
     garment_file = io.BytesIO(sample_image_bytes)
 
@@ -114,8 +128,12 @@ async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_byt
     assert result.get("image_url", "").startswith("data:image/")
     retry_info = result.get("retry_info", [])
     assert isinstance(retry_info, list)
-    assert len(retry_info) == 3
-    assert retry_info[0]["strategy"] == "heuristic"
+    # The implementation may add a preflight rewrite entry before the first Gemini call
+    # (e.g., when intimate keywords are detected), so allow >=3.
+    assert len(retry_info) >= 3
+    strategies = [r.get("strategy") for r in retry_info if isinstance(r, dict)]
+    # We should see a rewrite strategy (either preflight heuristic and/or gemini rewrite and/or heuristic fallback).
+    assert any(s in ("preflight_heuristic", "heuristic", "gemini_rewrite") for s in strategies)
 
 
 def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeypatch):
@@ -129,11 +147,42 @@ def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeyp
     async def fake_user_attrs(_files):
         return {}
 
-    call_count = {"n": 0}
+    call_count = {"n": 0, "image": 0, "rewrite": 0}
 
     async def fake_post(_client, *, url, headers, payload):
         call_count["n"] += 1
-        if call_count["n"] <= 2:
+
+        # Detect rewrite calls: text-only (no inline_data images).
+        try:
+            parts = payload["contents"][0]["parts"]
+            has_inline = any(
+                isinstance(p, dict) and ("inline_data" in p or "inlineData" in p) for p in (parts or [])
+            )
+        except Exception:
+            has_inline = True
+
+        if not has_inline:
+            call_count["rewrite"] += 1
+            return DummyGeminiResponse(
+                ok=True,
+                data={
+                    "candidates": [
+                        {
+                            "finishReason": "STOP",
+                            "content": {
+                                "parts": [
+                                    {
+                                        "text": '{"prompt_additions":"Keep framing conservative and professional.","metadata":{"framing":"three_quarter"},"changes":["more modest framing"]}'
+                                    }
+                                ]
+                            },
+                        }
+                    ]
+                },
+            )
+
+        call_count["image"] += 1
+        if call_count["image"] <= 2:
             return DummyGeminiResponse(
                 ok=True,
                 data={
@@ -159,8 +208,6 @@ def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeyp
 
     monkeypatch.setattr(analyze_user, "analyze_user_attributes", fake_user_attrs)
     monkeypatch.setattr(vton, "_gemini_post_json", fake_post)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-
     files = {
         "user_image": ("user.png", sample_image_bytes, "image/png"),
         "clothing_image": ("garment.png", sample_image_bytes, "image/png"),

@@ -63,7 +63,8 @@ export async function generateTryOnWithGemini3ProImage({
   const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models";
   const modelName = "gemini-3-pro-image-preview";
 
-  const maxAttempts = 3;
+  // 4 total tries = 1 initial attempt + 3 retries
+  const maxAttempts = 4;
   let lastErrorDetail = "";
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
