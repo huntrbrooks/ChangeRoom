@@ -68,32 +68,45 @@ def get_request_id(request: Request) -> str:
 # Configure CORS
 # For production, specify exact origins in ALLOWED_ORIGINS environment variable
 # Format: comma-separated list, e.g., "https://app.example.com,https://www.example.com"
+#
+# IMPORTANT: This backend is called directly by the Vercel frontend (cross-origin).
+# The frontend may add request correlation headers (X-Request-Id / X-ChangeRoom-Request-Id),
+# which triggers an OPTIONS preflight. If those headers are not allowed, the browser will
+# show "TypeError: Failed to fetch" and the UI can appear to loop/retry.
+
+default_allowed_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://igetdressed.online",
+    "https://www.igetdressed.online",
+    "https://getdressed.online",
+    "https://www.getdressed.online",
+]
+
+# Add production frontend URL if NEXT_PUBLIC_APP_URL is set (for custom deployments)
+production_frontend_url = os.getenv("NEXT_PUBLIC_APP_URL", "")
+if production_frontend_url and production_frontend_url.startswith(("https://", "http://")):
+    default_allowed_origins.append(production_frontend_url)
+
 allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "")
-if allowed_origins_str:
-    allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",") if origin.strip()]
-else:
-    # Default: allow localhost for development and known production URLs
-    # For stricter security in production, set ALLOWED_ORIGINS environment variable
-    allowed_origins = [
-        "http://localhost:3000", 
-        "http://127.0.0.1:3000",
-        "https://igetdressed.online",
-        "https://www.igetdressed.online",
-        "https://getdressed.online",
-        "https://www.getdressed.online",
-    ]
-    # Add production frontend URL if NEXT_PUBLIC_APP_URL is set (for custom deployments)
-    production_frontend_url = os.getenv("NEXT_PUBLIC_APP_URL", "")
-    if production_frontend_url and production_frontend_url.startswith("https://"):
-        if production_frontend_url not in allowed_origins:
-            allowed_origins.append(production_frontend_url)
+env_allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",") if origin.strip()]
+
+# If ALLOWED_ORIGINS is set but accidentally empty/invalid, fall back to defaults.
+# Otherwise, merge env + defaults to avoid foot-guns that break production.
+allowed_origins = sorted(set(default_allowed_origins + env_allowed_origins))
+
+allowed_origin_regex = os.getenv("ALLOWED_ORIGIN_REGEX", "").strip() or None
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,  # Specific origins for production
+    allow_origin_regex=allowed_origin_regex,
     allow_credentials=True,  # Can enable when origins are specific
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+    # Use "*" so preflight succeeds even when the frontend injects correlation headers.
+    allow_methods=["*"],
+    allow_headers=["*"],
+    # Expose debugging/correlation headers to the browser.
+    expose_headers=["X-ChangeRoom-Stack", "X-Request-Id", "X-ChangeRoom-Request-Id"],
 )
 
 # Create uploads directory if it doesn't exist

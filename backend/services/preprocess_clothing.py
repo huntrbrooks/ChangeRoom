@@ -30,6 +30,7 @@ from datetime import datetime
 
 # Shared normalization (handles HEIC/HEIF when pillow-heif is installed)
 from .image_normalize import normalize_image_bytes, normalize_image_bytes_with_budget
+from .analyze_clothing import embed_metadata_in_image
 
 # OpenAI SDK for structured outputs
 try:
@@ -393,13 +394,14 @@ async def preprocess_clothing_batch(
                 "ACCESSORY": "accessories",
                 "FULL_BODY": "full_body"
             }
+            # This is also the canonical frontend category format (lower_snake_case).
             category_for_filename = filename_category_map.get(body_region, body_region.lower())
             unique_suffix = uuid.uuid4().hex[:8]
             saved_filename = f"{category_for_filename}_{base_name}_{unique_suffix}{ext}"
             
             # Limit filename length
             if len(saved_filename) > 200:
-                name_part = f"{category.lower()}_{base_name}"
+                name_part = f"{category_for_filename}_{base_name}"
                 if len(name_part) > 190:
                     name_part = name_part[:190]
                 saved_filename = f"{name_part}_{unique_suffix}{ext}"
@@ -424,17 +426,14 @@ async def preprocess_clothing_batch(
                 if counter > 100:  # Safety limit
                     break
             
-            # Save file
-            public_url = await storage.save_file(normalized_bytes, storage_path, content_type)
-            logger.info(f"Saved image {index} to: {storage_path} -> {public_url}")
-            
             # Build metadata dict for response
             item_type = analysis.get("item_type", "")
             short_description = analysis.get("short_description", "")
             
             metadata = {
-                "body_region": body_region,
-                "category": body_region,  # For backward compatibility
+                # Use lower_snake_case category names everywhere (matches frontend + wearing-style configs).
+                "body_region": category_for_filename,
+                "category": category_for_filename,  # For backward compatibility
                 "item_type": item_type,
                 "color": analysis.get("color", "unknown"),
                 "style": analysis.get("style", "casual"),
@@ -444,6 +443,14 @@ async def preprocess_clothing_batch(
                 "tags": analysis.get("tags", []),
                 "original_filename": original_name,
             }
+
+            # Embed metadata into the image bytes before saving so downstream reads work
+            # (`/api/read-image-metadata` and any other tooling that relies on EXIF/XMP).
+            bytes_to_save = embed_metadata_in_image(normalized_bytes, metadata)
+
+            # Save file (with embedded metadata)
+            public_url = await storage.save_file(bytes_to_save, storage_path, content_type)
+            logger.info(f"Saved image {index} to: {storage_path} -> {public_url}")
             
             # Build response matching frontend expectations
             return {
@@ -456,8 +463,8 @@ async def preprocess_clothing_batch(
                 "url": public_url,  # Alias for compatibility
                 "storage_path": storage_path,
                 # Top-level fields that frontend expects
-                "body_region": body_region,
-                "category": body_region,  # For backward compatibility
+                "body_region": category_for_filename,
+                "category": category_for_filename,  # For backward compatibility
                 "subcategory": item_type,  # Frontend maps this to analysis.item_type
                 "description": short_description,
                 "color": analysis.get("color", "unknown"),
@@ -467,8 +474,8 @@ async def preprocess_clothing_batch(
                 "recommended_filename": analysis.get("suggested_filename", ""),
                 # Full analysis object (for detailed metadata)
                 "analysis": {
-                    "body_region": body_region,
-                    "category": body_region,  # For backward compatibility
+                    "body_region": category_for_filename,
+                    "category": category_for_filename,  # For backward compatibility
                     "item_type": item_type,
                     "color": analysis.get("color", "unknown"),
                     "style": analysis.get("style", "casual"),
@@ -497,17 +504,28 @@ async def preprocess_clothing_batch(
                 inferred_body_region = "FULL_BODY"
             
             logger.warning(f"Using inferred body_region '{inferred_body_region}' for failed image {original_name}")
+
+            filename_category_map = {
+                "SHOES": "shoes",
+                "FOOTWEAR": "shoes",
+                "UPPER_BODY": "upper_body",
+                "LOWER_BODY": "lower_body",
+                "ACCESSORIES": "accessories",
+                "ACCESSORY": "accessories",
+                "FULL_BODY": "full_body"
+            }
+            inferred_category = filename_category_map.get(inferred_body_region, inferred_body_region.lower())
             
             return {
                 "status": "error",
                 "index": index,
                 "original_filename": original_name,
                 "error": str(e),
-                "body_region": inferred_body_region,
-                "category": inferred_body_region,  # For backward compatibility
+                "body_region": inferred_category,
+                "category": inferred_category,  # For backward compatibility
                 "analysis": {
-                    "body_region": inferred_body_region,
-                    "category": inferred_body_region,
+                    "body_region": inferred_category,
+                    "category": inferred_category,
                     "item_type": "unknown",
                     "brand": "unknown",
                     "description": f"Failed to analyze: {str(e)}",

@@ -121,6 +121,26 @@ def test_preprocess_clothing_too_many_files(client: TestClient, sample_image_byt
     assert response.status_code == 400
     assert "5" in response.json()["detail"]
 
+def test_cors_preflight_preprocess_clothing_allows_request_id_headers(client: TestClient):
+    """
+    The frontend may include X-Request-Id / X-ChangeRoom-Request-Id headers (for correlation),
+    which triggers an OPTIONS preflight. That preflight must succeed (2xx) with appropriate CORS headers.
+    """
+    origin = "https://igetdressed.online"
+    resp = client.options(
+        "/api/preprocess-clothing",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "X-Request-Id,X-ChangeRoom-Request-Id,Content-Type",
+        },
+    )
+    assert resp.status_code in (200, 204)
+    assert resp.headers.get("access-control-allow-origin") == origin
+    assert resp.headers.get("access-control-allow-credentials") == "true"
+    allow_headers = (resp.headers.get("access-control-allow-headers") or "").lower()
+    assert ("*" in allow_headers) or ("x-request-id" in allow_headers)
+
 
 def test_shop_endpoint_missing_query(client: TestClient):
     """Test shop endpoint with missing query"""

@@ -13,6 +13,19 @@ import {
 } from '@/lib/imageConversion';
 import { fetchWithRequestId } from '@/lib/fetchWithRequestId';
 
+function normalizeCategory(raw: string | undefined | null): string {
+  const v = (raw || '').toLowerCase().trim();
+  if (!v) return '';
+  // Accept both legacy and current backend formats.
+  if (v === 'upper_body' || v === 'upper body' || v === 'upperbody' || v === 'upper-body') return 'upper_body';
+  if (v === 'lower_body' || v === 'lower body' || v === 'lowerbody' || v === 'lower-body') return 'lower_body';
+  if (v === 'full_body' || v === 'full body' || v === 'fullbody' || v === 'full-body') return 'full_body';
+  if (v === 'shoes' || v === 'shoe' || v === 'footwear') return 'shoes';
+  if (v === 'accessories' || v === 'accessory') return 'accessories';
+  // Default: normalize whitespace to underscores
+  return v.replace(/\s+/g, '_');
+}
+
 interface FileWithMetadata extends File {
   metadata?: Record<string, unknown>;
   detailed_description?: string;
@@ -262,12 +275,16 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             ? (metadata as { brand?: string }).brand
             : undefined);
         
+        const normalizedCategory = normalizeCategory(
+          item.analysis?.body_region || item.body_region || item.analysis?.category || item.category || 'unknown'
+        );
+
         return {
         index: startIndex + idx,
         original_filename: originalFilename,
         analysis: {
-          body_region: item.analysis?.body_region || item.body_region || item.analysis?.category || item.category || 'unknown',
-          category: item.analysis?.body_region || item.body_region || item.analysis?.category || item.category || 'unknown',  // For backward compatibility
+          body_region: normalizedCategory || 'unknown',
+          category: normalizedCategory || 'unknown',  // For backward compatibility
           item_type: item.analysis?.item_type || item.subcategory || '',
           color: item.analysis?.color || item.color,
           style: item.analysis?.style || item.style,
@@ -364,7 +381,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             const fileWithMeta = newFile as FileWithMetadata;
             fileWithMeta.metadata = processedItem.metadata || {};
             fileWithMeta.detailed_description = processedItem.description || '';
-            fileWithMeta.category = processedItem.category || 'unknown';
+            fileWithMeta.category = normalizeCategory(processedItem.category) || 'unknown';
             fileWithMeta.item_type = processedItem.subcategory || '';
             if (brandFromItem && typeof brandFromItem === 'string') {
               fileWithMeta.brand = brandFromItem;
@@ -386,7 +403,8 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             const fileWithMeta = newFile as FileWithMetadata;
             fileWithMeta.metadata = processedItem?.metadata || {};
             fileWithMeta.detailed_description = processedItem?.description || '';
-            fileWithMeta.category = processedItem?.category || 'unknown';
+            fileWithMeta.category = normalizeCategory(processedItem?.category) || 'unknown';
+            fileWithMeta.category = normalizeCategory(processedItem?.category) || 'unknown';
             fileWithMeta.item_type = processedItem?.subcategory || '';
             if (brandFromItem && typeof brandFromItem === 'string') {
               fileWithMeta.brand = brandFromItem;
