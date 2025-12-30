@@ -528,6 +528,7 @@ async def try_on(
             return {
                 "image_url": result.get("image_url"),
                 "retry_info": result.get("retry_info", []),
+                "modesty_applied": bool(result.get("modesty_applied")),
             }
         return {"image_url": result}
     except HTTPException:

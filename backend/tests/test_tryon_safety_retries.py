@@ -126,13 +126,16 @@ async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_byt
 
     assert isinstance(result, dict)
     assert result.get("image_url", "").startswith("data:image/")
+    # Intimate items should trigger the modesty pipeline.
+    assert result.get("modesty_applied") is True
     retry_info = result.get("retry_info", [])
     assert isinstance(retry_info, list)
     # The implementation may add a preflight rewrite entry before the first Gemini call
     # (e.g., when intimate keywords are detected), so allow >=3.
     assert len(retry_info) >= 3
     strategies = [r.get("strategy") for r in retry_info if isinstance(r, dict)]
-    # We should see a rewrite strategy (either preflight heuristic and/or gemini rewrite and/or heuristic fallback).
+    # We should see the modesty preflight contract and at least one rewrite strategy.
+    assert "modesty_contract_preflight" in strategies
     assert any(s in ("preflight_heuristic", "heuristic", "gemini_rewrite") for s in strategies)
 
 
@@ -222,4 +225,5 @@ def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeyp
     assert "image_url" in payload
     assert "retry_info" in payload
     assert isinstance(payload["retry_info"], list)
+    assert payload.get("modesty_applied") is True
 

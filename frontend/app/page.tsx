@@ -68,6 +68,7 @@ function HomeContent() {
   const [wardrobeItems, setWardrobeItems] = useState<ImageWithAnalysis[]>([]);
   
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
+  const [modestyApplied, setModestyApplied] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [isProductSearchLoading, setIsProductSearchLoading] = useState(false);
   const [productSearchAttempted, setProductSearchAttempted] = useState(false);
@@ -1077,6 +1078,7 @@ function HomeContent() {
         // Render stack does not manage billing; keep preview state from the hold call above.
         // (If Render happens to return usedFreeTrial, we still respect it.)
         setIsPreviewResult(Boolean(tryOnRes?.data?.usedFreeTrial) || isPreviewResult);
+        setModestyApplied(Boolean(tryOnRes?.data?.modesty_applied));
 
         if (tryOnRes.data.image_url) {
           // Reset content-block warning state after a successful generation
@@ -1792,6 +1794,11 @@ function HomeContent() {
                 onTryAnother={redirectToPricing}
                 onImageLoaded={handleResultImageLoaded}
               />
+              {generatedImage && modestyApplied && (
+                <div className="rounded-lg border border-black/15 bg-black/5 p-3 text-xs text-black/70">
+                  For safety, we automatically add tasteful coverage/lining for intimate or minimal-coverage items.
+                </div>
+              )}
               {generatedImage && !isGenerating && user && (
                 <div className="mt-4 rounded-lg border border-black/20 bg-black/5 p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

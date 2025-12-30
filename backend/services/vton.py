@@ -745,6 +745,19 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                 "Add subtle coverage or opacity as needed to maintain appropriateness without changing the garment's fundamental design."
             )
 
+            # If this request is flagged as intimate/high-risk, enforce a deterministic “modesty contract”
+            # so the image model can comply without hard blocking. We allow underlayers/coverage.
+            if local_meta.get("modesty_contract") is True or local_meta.get("intimate_mode") is True:
+                text_prompt += (
+                    "\n\nMODESTY CONTRACT (MANDATORY): "
+                    "This outfit may include intimate or minimal-coverage garments. "
+                    "You MUST output a general-audience, tasteful fashion image. "
+                    "If any garment is small, sheer, or revealing, automatically add opaque lining, increase coverage, "
+                    "and/or add a simple underlayer (e.g., camisole, bralette lining, slip, bandeau, mesh base) "
+                    "while keeping the garment recognizable. "
+                    "Use conservative studio styling, avoid close-ups, avoid explicit emphasis, and keep pose neutral."
+                )
+
             # Add wearing style instructions if provided
             if local_meta:
                 def _normalize_instruction(value):
@@ -908,29 +921,187 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
         retry_info: List[Dict[str, Any]] = []
 
         current_metadata: Dict[str, Any] = copy.deepcopy(garment_metadata) if isinstance(garment_metadata, dict) else {}
-        base_prompt, _ = build_base_text_prompt(current_metadata)
-        current_prompt: str = base_prompt
 
-        # Hardening: if metadata clearly describes intimate / revealing garments, pre-sanitize the prompt/metadata
-        # BEFORE the first Gemini call. This reduces the chance of immediate IMAGE_SAFETY blocks.
-        try:
-            scan_text = json.dumps(current_metadata, ensure_ascii=False).lower() if current_metadata else ""
+        def is_intimate_request(meta: Dict[str, Any], cat: str) -> bool:
+            # Category hint (best-effort; frontend may send upper_body even for bra/bikini)
+            cat_l = (cat or "").lower()
+            if cat_l in ("intimates", "lingerie", "swimwear", "bikini"):
+                return True
+
+            # Metadata hints
+            try:
+                scan_text = json.dumps(meta or {}, ensure_ascii=False).lower()
+            except Exception:
+                scan_text = str(meta or "").lower()
+
             if any(k in scan_text for k in INTIMATE_KEYWORDS):
+                return True
+
+            # Additional common hints
+            for k in ("subcategory", "item_type", "category", "body_region", "tags"):
+                v = meta.get(k) if isinstance(meta, dict) else None
+                if isinstance(v, str) and any(w in v.lower() for w in INTIMATE_KEYWORDS):
+                    return True
+                if isinstance(v, list) and any(isinstance(x, str) and any(w in x.lower() for w in INTIMATE_KEYWORDS) for x in v):
+                    return True
+
+            # Per-item wearing metadata (if present) can contain good descriptors even when top-level description is neutral.
+            try:
+                items = meta.get("items_wearing_styles") if isinstance(meta, dict) else None
+                if isinstance(items, list):
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        for k in ("descriptor", "item_type", "category", "subcategory", "body_region", "wearing_style", "prompt_text"):
+                            v = item.get(k)
+                            if isinstance(v, str) and any(w in v.lower() for w in INTIMATE_KEYWORDS):
+                                return True
+                        tags = item.get("tags")
+                        if isinstance(tags, list) and any(isinstance(t, str) and any(w in t.lower() for w in INTIMATE_KEYWORDS) for t in tags):
+                            return True
+            except Exception:
+                pass
+
+            return False
+
+        async def detect_intimate_from_gemini_vision(
+            client: httpx.AsyncClient,
+            *,
+            api_key_value: str,
+            garment_bytes: bytes,
+        ) -> Tuple[bool, str]:
+            """
+            Best-effort vision classification to detect bras/bikinis/lingerie even when metadata is neutral.
+            Returns (is_intimate, label_reason). Never raises (caller should catch and ignore).
+            """
+            if os.getenv("GEMINI_INTIMATE_DETECT_ENABLED", "1") != "1":
+                return False, "disabled"
+
+            # Keep this lightweight: downscale + compress to reduce request size.
+            try:
+                img = Image.open(io.BytesIO(garment_bytes))
+                img = ImageOps.exif_transpose(img)
+                w, h = img.size
+                max_dim = int(os.getenv("GEMINI_INTIMATE_DETECT_MAX_DIM", "900"))
+                longest = max(w, h)
+                if longest > max_dim:
+                    scale = max_dim / float(longest)
+                    img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                img.convert("RGB").save(buf, format="JPEG", quality=70, optimize=True, progressive=True)
+                b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                mime = "image/jpeg"
+            except Exception:
+                b64 = base64.b64encode(garment_bytes).decode("utf-8")
+                mime = "image/jpeg"
+
+            model = os.getenv("GEMINI_INTIMATE_DETECT_MODEL", "gemini-1.5-flash")
+            endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+            prompt = (
+                "You are a clothing safety classifier. Determine whether the garment in the image is intimate/minimal-coverage "
+                "or likely to trigger image safety filters when used for virtual try-on.\n\n"
+                "Return JSON ONLY:\n"
+                '{\"is_intimate\": boolean, \"label\": string, \"reason\": string}\n\n'
+                "Mark is_intimate=true for items like bras, bralettes, lingerie, bikini tops/bottoms, thongs, sheer lingerie, "
+                "or any minimal coverage undergarment/swimwear.\n"
+                "Otherwise set is_intimate=false."
+            )
+
+            payload = {
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {"text": prompt},
+                            {"inline_data": {"mime_type": mime, "data": b64}},
+                        ],
+                    }
+                ],
+                "generationConfig": {"temperature": 0.0, "maxOutputTokens": 250, "responseMimeType": "application/json"},
+            }
+
+            resp = await _gemini_post_json(
+                client,
+                url=f"{endpoint}?key={api_key_value}",
+                headers={"Content-Type": "application/json"},
+                payload=payload,
+            )
+            if not resp.is_success:
+                return False, f"http_error:{resp.status_code}"
+
+            data = resp.json()
+            candidates = (data or {}).get("candidates") or []
+            if not candidates:
+                return False, "no_candidates"
+            parts = (candidates[0] or {}).get("content", {}).get("parts", []) or []
+            text_out = ""
+            for p in parts:
+                if isinstance(p, dict) and p.get("text"):
+                    text_out = str(p.get("text") or "").strip()
+                    break
+            if not text_out:
+                return False, "empty_text"
+            if text_out.startswith("```"):
+                text_out = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text_out).strip()
+                text_out = re.sub(r"\s*```$", "", text_out).strip()
+            parsed = json.loads(text_out)
+            is_int = bool(parsed.get("is_intimate"))
+            label = str(parsed.get("label") or "")
+            reason = str(parsed.get("reason") or "")
+            return is_int, f"{label}:{reason}"[:140]
+
+        def apply_modesty_contract(meta: Dict[str, Any]) -> Dict[str, Any]:
+            out = copy.deepcopy(meta) if isinstance(meta, dict) else {}
+            out["modesty_contract"] = True
+            out["intimate_mode"] = True
+            # Bias towards safe framing; do not force full_body for intimate items.
+            out.setdefault("framing", "three_quarter")
+            out.setdefault("background", "neutral studio background")
+            out.setdefault("pose", "neutral standing pose")
+            out.setdefault("camera", "professional fashion editorial, neutral studio, avoid close-ups")
+            out.setdefault("content_policy", "general_audience")
+            # Explicit allowance to add coverage/underlayers to pass safety.
+            out.setdefault("allow_underlayer", True)
+            out.setdefault("coverage_preference", "high")
+            out.setdefault("opacity_preference", "opaque")
+            out.setdefault("avoid_closeups", True)
+            return out
+
+        intimate_flag = is_intimate_request(current_metadata, category or "")
+        modesty_applied = False
+
+        async def apply_intimate_pipeline(reason: str):
+            nonlocal current_metadata, modesty_applied
+            current_metadata = apply_modesty_contract(current_metadata)
+            modesty_applied = True
+            retry_info.append({
+                "attempt": 1,
+                "strategy": "modesty_contract_preflight",
+                "reason": reason,
+                "modificationsSummary": "Applied deterministic modesty contract (coverage/underlayer allowed).",
+            })
+            # Preflight sanitization to reduce immediate blocks.
+            try:
                 safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
                     current_metadata,
-                    current_prompt,
+                    build_base_text_prompt(current_metadata)[0],
                     strictness="moderate",
                 )
-                current_metadata = safe_meta
-                current_prompt = safe_prompt
+                current_metadata = apply_modesty_contract(safe_meta)
                 retry_info.append({
                     "attempt": 1,
                     "strategy": "preflight_heuristic",
-                    "reason": "intimate_keywords_detected",
+                    "reason": reason,
                     "modificationsSummary": summary,
                 })
-        except Exception:
-            # Never block try-on due to preflight heuristics.
+            except Exception:
+                pass
+
+        if intimate_flag:
+            # Metadata-based detection caught it; apply pipeline immediately.
+            # (No network call needed.)
+            # Note: prompt will be rebuilt after this.
             pass
 
         def summarize_candidate(candidate_obj):
@@ -942,6 +1113,35 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
             return finish_reason_local, safety_ratings, parts_local, texts
 
         async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minute timeout for image generation
+            # If not detected by metadata, do a lightweight Gemini vision check on the first garment image.
+            if not intimate_flag and limited_garments:
+                try:
+                    is_int, label = await asyncio.wait_for(
+                        detect_intimate_from_gemini_vision(
+                            client,
+                            api_key_value=api_key,
+                            garment_bytes=limited_garments[0],
+                        ),
+                        timeout=float(os.getenv("GEMINI_INTIMATE_DETECT_TIMEOUT_S", "6")),
+                    )
+                    if is_int:
+                        intimate_flag = True
+                        retry_info.append({
+                            "attempt": 1,
+                            "strategy": "intimate_vision_detect",
+                            "reason": "gemini_vision",
+                            "modificationsSummary": label or "Detected intimate item via Gemini vision.",
+                        })
+                except Exception:
+                    pass
+
+            if intimate_flag and not modesty_applied:
+                await apply_intimate_pipeline("intimate_detected")
+
+            # Build prompt after all preflight modifications (metadata/vision detection).
+            base_prompt, _ = build_base_text_prompt(current_metadata)
+            current_prompt: str = base_prompt
+
             for attempt in range(1, max_attempts + 1):
                 retry_suffix = ""
                 if attempt == 2:
@@ -1185,6 +1385,7 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                         return {
                             "image_url": f"data:{mime_type};base64,{image_base64}",
                             "retry_info": retry_info,
+                            "modesty_applied": modesty_applied,
                         }
                     
                     # If we get here, we either have no image or a non-STOP finish reason
