@@ -99,8 +99,10 @@ function HomeContent() {
   const contentBlockWarnedRef = useRef(false);
   const creditHoldAppliedRef = useRef(false);
   const virtualMirrorSectionRef = useRef<HTMLElement | null>(null);
+  const virtualMirrorCardRef = useRef<HTMLElement | null>(null);
   const stickyHeaderRef = useRef<HTMLElement | null>(null);
   const mobileActionBarRef = useRef<HTMLDivElement | null>(null);
+  const autoScrollArmedRef = useRef(false);
 
   const withRetry = useCallback(
     async function withRetryFn<T>(fn: () => Promise<T>, retries = 2, delayMs = 1500): Promise<T> {
@@ -122,7 +124,8 @@ function HomeContent() {
   );
 
   const scrollToVirtualMirror = useCallback(() => {
-    const el = virtualMirrorSectionRef.current;
+    // Prefer the mirror frame itself, falling back to the whole section.
+    const el = virtualMirrorCardRef.current || virtualMirrorSectionRef.current;
     if (!el) return;
 
     const headerH = stickyHeaderRef.current?.getBoundingClientRect().height ?? 0;
@@ -131,15 +134,10 @@ function HomeContent() {
     const availableH = Math.max(0, viewportH - headerH - bottomBarH);
 
     const rect = el.getBoundingClientRect();
-    const elTopAbs = window.scrollY + rect.top;
-    const padding = 12; // small breathing room so it matches the "framed" look
-
-    // If the mirror card fits inside the available area (between header and bottom bar),
-    // center it within that area. Otherwise, align it just under the header.
-    const fits = rect.height <= Math.max(0, availableH - padding * 2);
-    const targetTop = fits
-      ? elTopAbs - headerH - (availableH - rect.height) / 2
-      : elTopAbs - headerH - padding;
+    const elCenterAbs = window.scrollY + rect.top + rect.height / 2;
+    // Always center the mirror within the available area, even if it overflows.
+    // This matches the "Virtual Mirror centered regardless of aspect ratio" behavior.
+    const targetTop = elCenterAbs - headerH - availableH / 2;
 
     const maxScroll = Math.max(0, document.documentElement.scrollHeight - viewportH);
     const clamped = Math.min(maxScroll, Math.max(0, Math.round(targetTop)));
@@ -155,8 +153,14 @@ function HomeContent() {
       clearTimeout(resultImageLoadTimerRef.current);
       resultImageLoadTimerRef.current = null;
     }
+    if (autoScrollArmedRef.current) {
+      autoScrollArmedRef.current = false;
+      requestAnimationFrame(() => {
+        scrollToVirtualMirror();
+      });
+    }
     setIsTryOnLoading(false);
-  }, []);
+  }, [scrollToVirtualMirror]);
 
   useEffect(() => {
     router.prefetch('/pricing');
@@ -1699,16 +1703,20 @@ function HomeContent() {
                     e.preventDefault();
                     e.stopPropagation();
                     console.log("Try-on button clicked");
+                    autoScrollArmedRef.current = true;
                     scrollToVirtualMirror();
                     if (!isAuthenticated) {
+                      autoScrollArmedRef.current = false;
                       setError('Please sign in to try on.');
                       return;
                     }
                     if (isGenerating) {
+                      autoScrollArmedRef.current = false;
                       console.log("Button clicked but already generating, ignoring");
                       return;
                     }
                     if (lacksCredits) {
+                      autoScrollArmedRef.current = false;
                       redirectToPricing();
                       return;
                     }
@@ -1784,16 +1792,18 @@ function HomeContent() {
                 <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,0,0,0.5)]">3</span>
                 Virtual Mirror
               </h2>
-              <VirtualMirror
-                imageUrl={generatedImage}
-                isLoading={isTryOnLoading}
-                errorMessage={error}
-                onStageChange={handleLoaderStageChange}
-                isPreview={isPreviewResult}
-                onDownloadClean={redirectToPricing}
-                onTryAnother={redirectToPricing}
-                onImageLoaded={handleResultImageLoaded}
-              />
+              <div ref={virtualMirrorCardRef}>
+                <VirtualMirror
+                  imageUrl={generatedImage}
+                  isLoading={isTryOnLoading}
+                  errorMessage={error}
+                  onStageChange={handleLoaderStageChange}
+                  isPreview={isPreviewResult}
+                  onDownloadClean={redirectToPricing}
+                  onTryAnother={redirectToPricing}
+                  onImageLoaded={handleResultImageLoaded}
+                />
+              </div>
               {generatedImage && modestyApplied && (
                 <div className="rounded-lg border border-black/15 bg-black/5 p-3 text-xs text-black/70">
                   For safety, we automatically add tasteful coverage/lining for intimate or minimal-coverage items.
@@ -2020,13 +2030,16 @@ function HomeContent() {
             </div>
             <button
               onClick={() => {
+                autoScrollArmedRef.current = true;
                 scrollToVirtualMirror();
                 if (!isAuthenticated) {
+                  autoScrollArmedRef.current = false;
                   setError('Please sign in to try on.');
                   return;
                 }
                 if (isGenerating) return;
                 if (lacksCredits) {
+                  autoScrollArmedRef.current = false;
                   redirectToPricing();
                   return;
                 }
