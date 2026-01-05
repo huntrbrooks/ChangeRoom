@@ -251,10 +251,57 @@ async function withCreditTables<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
-// Lightweight transaction helper for @vercel/postgres (begin is available at runtime)
+/**
+ * Transaction helper for `@vercel/postgres`.
+ *
+ * In some runtimes/builds, `sql.begin(...)` is not present (we've seen this surface as
+ * "t.sql.begin is not a function" in production). When that happens, we fall back to
+ * using a dedicated connection via `sql.connect()` and issuing explicit BEGIN/COMMIT/ROLLBACK.
+ */
 const runTransaction = async <T>(fn: (tx: typeof sql) => Promise<T>): Promise<T> => {
-  const client = sql as unknown as { begin: (cb: (tx: typeof sql) => Promise<T>) => Promise<T> };
-  return client.begin(async (tx: typeof sql) => fn(tx));
+  const anySql = sql as unknown as {
+    begin?: (cb: (tx: typeof sql) => Promise<T>) => Promise<T>;
+    connect?: () => Promise<{
+      sql: typeof sql;
+      release?: () => void | Promise<void>;
+      end?: () => void | Promise<void>;
+    }>;
+  };
+
+  if (typeof anySql.begin === "function") {
+    return anySql.begin(async (tx: typeof sql) => fn(tx));
+  }
+
+  if (typeof anySql.connect === "function") {
+    const client = await anySql.connect();
+    try {
+      await client.sql`BEGIN`;
+      const result = await fn(client.sql);
+      await client.sql`COMMIT`;
+      return result;
+    } catch (error) {
+      try {
+        await client.sql`ROLLBACK`;
+      } catch {
+        // Ignore rollback failures; rethrow original error.
+      }
+      throw error;
+    } finally {
+      try {
+        await client.release?.();
+      } catch {
+        // ignore
+      }
+      try {
+        await client.end?.();
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  // Last resort: run without a transaction.
+  return fn(sql);
 };
 
 async function ensureUserBillingWithLock(
