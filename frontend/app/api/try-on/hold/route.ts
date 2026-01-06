@@ -148,9 +148,33 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     console.error("try-on hold error:", err);
     const error = err instanceof Error ? err : new Error(String(err));
+    const message = error.message;
+    
+    // Categorize errors for better client-side handling
+    let errorCode = "hold_failed";
+    let statusCode = 500;
+    
+    if (message.includes("database_pool_unavailable") || 
+        message.includes("database_connection_failed") ||
+        message.includes("database_client_invalid")) {
+      // Database connectivity issues - may be temporary
+      errorCode = "database_error";
+      console.error("Database error in try-on hold - this may be a transient issue:", message);
+    } else if (message.includes("ECONNREFUSED") || 
+               message.includes("ETIMEDOUT") ||
+               message.includes("connection")) {
+      // Network/connection issues
+      errorCode = "database_error";
+      console.error("Database connection error in try-on hold:", message);
+    }
+    
     const res = NextResponse.json(
-      { error: "hold_failed", details: error.message },
-      { status: 500 }
+      { 
+        error: errorCode, 
+        details: message,
+        retryable: errorCode === "database_error" // Client can retry on transient DB errors
+      },
+      { status: statusCode }
     );
     res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
     if (currentRequestId) {

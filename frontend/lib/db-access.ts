@@ -251,10 +251,78 @@ async function withCreditTables<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
-// Lightweight transaction helper for @vercel/postgres (begin is available at runtime)
+/**
+ * Transaction helper for @vercel/postgres
+ * Uses pool client with BEGIN/COMMIT/ROLLBACK for proper transaction isolation.
+ * The `tx` parameter passed to the callback is the client's template literal sql function.
+ * 
+ * @throws Error if database connection cannot be established
+ * @throws Error if transaction fails (original error is preserved)
+ */
 const runTransaction = async <T>(fn: (tx: typeof sql) => Promise<T>): Promise<T> => {
-  const client = sql as unknown as { begin: (cb: (tx: typeof sql) => Promise<T>) => Promise<T> };
-  return client.begin(async (tx: typeof sql) => fn(tx));
+  // Validate that sql.connect exists (defensive check for @vercel/postgres API)
+  if (typeof sql.connect !== 'function') {
+    console.error('Database pool connect method not available. Check @vercel/postgres version.');
+    throw new Error('database_pool_unavailable: sql.connect is not a function');
+  }
+  
+  // Get a dedicated client from the pool for transaction isolation
+  let client;
+  try {
+    client = await sql.connect();
+  } catch (connectError) {
+    console.error('Failed to acquire database connection for transaction:', connectError);
+    throw new Error(
+      `database_connection_failed: ${connectError instanceof Error ? connectError.message : String(connectError)}`
+    );
+  }
+  
+  // Validate that client has required methods
+  if (typeof client.query !== 'function' || typeof client.sql !== 'function') {
+    console.error('Database client missing required methods. Check @vercel/postgres version.');
+    client.release();
+    throw new Error('database_client_invalid: client missing query or sql methods');
+  }
+  
+  try {
+    // Start transaction
+    await client.query('BEGIN');
+    
+    // Create a wrapper that uses the connected client's sql method
+    // but preserves the same type signature as the global sql
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const txSql = ((strings: TemplateStringsArray, ...values: any[]) => {
+      return client.sql(strings, ...values);
+    }) as typeof sql;
+    
+    // Execute the transaction function
+    const result = await fn(txSql);
+    
+    // Commit on success
+    await client.query('COMMIT');
+    
+    return result;
+  } catch (error) {
+    // Rollback on any error
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      // Log rollback failure but don't override the original error
+      console.error('Transaction rollback failed:', rollbackError);
+    }
+    
+    // Log the transaction error for debugging
+    console.error('Transaction failed:', error instanceof Error ? error.message : String(error));
+    throw error;
+  } finally {
+    // Always release the client back to the pool
+    try {
+      client.release();
+    } catch (releaseError) {
+      // Log but don't throw - the original error (if any) is more important
+      console.error('Failed to release database client:', releaseError);
+    }
+  }
 };
 
 async function ensureUserBillingWithLock(
