@@ -549,6 +549,10 @@ export async function createCreditHold(params: {
       RETURNING *
     `;
 
+    // Note: No ON CONFLICT needed here because the hold itself is idempotent
+    // (we check for existing hold at the start of the transaction).
+    // The partial unique index on (request_id, entry_type) WHERE request_id IS NOT NULL
+    // cannot be used with ON CONFLICT directly in PostgreSQL.
     await tx`
       INSERT INTO credit_ledger_entries (
         id,
@@ -570,7 +574,6 @@ export async function createCreditHold(params: {
         ${updatedBilling.rows[0].credits_available},
         ${JSON.stringify({ reason })}
       )
-      ON CONFLICT (request_id, entry_type) DO NOTHING
     `;
 
     return {
@@ -619,29 +622,36 @@ export async function finalizeDebitFromHold(
       RETURNING *
     `;
 
-    await tx`
-      INSERT INTO credit_ledger_entries (
-        id,
-        user_id,
-        request_id,
-        hold_id,
-        entry_type,
-        credits_change,
-        balance_after,
-        metadata
-      )
-      VALUES (
-        ${generateUuid()},
-        ${hold.user_id},
-        ${requestId},
-        ${hold.id},
-        'debit',
-        0,
-        ${billing.credits_available},
-        ${JSON.stringify({ amount: hold.amount })}
-      )
-      ON CONFLICT (request_id, entry_type) DO NOTHING
+    // Check if debit ledger entry already exists (for idempotency)
+    const existingDebit = await tx`
+      SELECT id FROM credit_ledger_entries
+      WHERE request_id = ${requestId} AND entry_type = 'debit'
+      LIMIT 1
     `;
+    if (existingDebit.rows.length === 0) {
+      await tx`
+        INSERT INTO credit_ledger_entries (
+          id,
+          user_id,
+          request_id,
+          hold_id,
+          entry_type,
+          credits_change,
+          balance_after,
+          metadata
+        )
+        VALUES (
+          ${generateUuid()},
+          ${hold.user_id},
+          ${requestId},
+          ${hold.id},
+          'debit',
+          0,
+          ${billing.credits_available},
+          ${JSON.stringify({ amount: hold.amount })}
+        )
+      `;
+    }
 
     return updatedHold.rows[0] as CreditHold;
   });
@@ -695,29 +705,36 @@ export async function releaseCreditHold(
       RETURNING *
     `;
 
-    await tx`
-      INSERT INTO credit_ledger_entries (
-        id,
-        user_id,
-        request_id,
-        hold_id,
-        entry_type,
-        credits_change,
-        balance_after,
-        metadata
-      )
-      VALUES (
-        ${generateUuid()},
-        ${hold.user_id},
-        ${requestId},
-        ${hold.id},
-        'release',
-        ${hold.status === "active" ? hold.amount : 0},
-        ${updatedBilling.rows[0].credits_available},
-        ${JSON.stringify({ reason })}
-      )
-      ON CONFLICT (request_id, entry_type) DO NOTHING
+    // Check if release ledger entry already exists (for idempotency)
+    const existingRelease = await tx`
+      SELECT id FROM credit_ledger_entries
+      WHERE request_id = ${requestId} AND entry_type = 'release'
+      LIMIT 1
     `;
+    if (existingRelease.rows.length === 0) {
+      await tx`
+        INSERT INTO credit_ledger_entries (
+          id,
+          user_id,
+          request_id,
+          hold_id,
+          entry_type,
+          credits_change,
+          balance_after,
+          metadata
+        )
+        VALUES (
+          ${generateUuid()},
+          ${hold.user_id},
+          ${requestId},
+          ${hold.id},
+          'release',
+          ${hold.status === "active" ? hold.amount : 0},
+          ${updatedBilling.rows[0].credits_available},
+          ${JSON.stringify({ reason })}
+        )
+      `;
+    }
 
     return updatedHold.rows[0] as CreditHold;
   });
@@ -742,11 +759,27 @@ export async function grantCredits(
     // Ensure billing exists and lock row for safe concurrent updates
     await ensureUserBillingWithLock(tx, userId);
 
-    // Idempotency gate: if requestId is provided, insert the ledger row first.
-    // Only if the insert succeeds do we mutate the user's balance.
+    // Idempotency gate: if requestId is provided, check if grant already exists.
+    // Only if no existing grant do we mutate the user's balance.
     let insertedLedgerId: string | null = null;
     if (requestId && requestId.trim()) {
-      const inserted = await tx`
+      // Check if grant already exists for this requestId (idempotency check)
+      const existingGrant = await tx`
+        SELECT id FROM credit_ledger_entries
+        WHERE request_id = ${requestId} AND entry_type = 'grant'
+        LIMIT 1
+      `;
+      if (existingGrant.rows.length > 0) {
+        // Already granted for this requestId
+        const existing = await tx`
+          SELECT * FROM users_billing WHERE user_id = ${userId} FOR UPDATE
+        `;
+        return existing.rows[0] as UserBilling;
+      }
+      
+      // Insert the ledger row
+      const newId = generateUuid();
+      await tx`
         INSERT INTO credit_ledger_entries (
           id,
           user_id,
@@ -757,7 +790,7 @@ export async function grantCredits(
           metadata
         )
         VALUES (
-          ${generateUuid()},
+          ${newId},
           ${userId},
           ${requestId},
           'grant',
@@ -765,17 +798,8 @@ export async function grantCredits(
           NULL,
           ${JSON.stringify(metadata)}
         )
-        ON CONFLICT (request_id, entry_type) DO NOTHING
-        RETURNING id
       `;
-      if (inserted.rows.length === 0) {
-        // Already granted for this requestId
-        const existing = await tx`
-          SELECT * FROM users_billing WHERE user_id = ${userId} FOR UPDATE
-        `;
-        return existing.rows[0] as UserBilling;
-      }
-      insertedLedgerId = inserted.rows[0].id as string;
+      insertedLedgerId = newId;
     }
 
     const updated = await tx`
@@ -1045,6 +1069,7 @@ export async function applyContentBlockPenalty(params: {
 
     const updated = updatedBilling.rows[0] as UserBilling;
 
+    // Insert adjustment ledger entry (idempotency already checked above via existing query)
     await tx`
       INSERT INTO credit_ledger_entries (
         id,
@@ -1064,7 +1089,6 @@ export async function applyContentBlockPenalty(params: {
         ${updated.credits_available},
         ${JSON.stringify({ reason: "content_block_penalty", amount })}
       )
-      ON CONFLICT (request_id, entry_type) DO NOTHING
     `;
 
     return { charged: true, billing: updated };
