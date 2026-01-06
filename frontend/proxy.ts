@@ -10,6 +10,12 @@ const isPublicRoute = createRouteMatcher([
   '/how-it-works',
   '/about',
   '/pricing',
+  // MCP OAuth metadata endpoints must be publicly accessible
+  '/.well-known/oauth-authorization-server(.*)',
+  '/.well-known/oauth-protected-resource(.*)',
+  // Legal pages
+  '/privacy-policy',
+  '/terms-of-service',
 ]);
 
 // Check if Clerk keys are available
