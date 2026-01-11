@@ -1,10 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth, currentUser } from "@clerk/nextjs/server";
-import {
-  createCreditHold,
-  getOrCreateUserBilling,
-  grantFreeTrialOnce,
-} from "@/lib/db-access";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { randomUUID } from "crypto";
 import { isBypassUser } from "@/lib/bypass-config";
@@ -17,7 +11,41 @@ import { isBypassUser } from "@/lib/bypass-config";
  * This is designed to be called BEFORE the long-running Render try-on request.
  */
 export async function POST(req: NextRequest) {
-  const { userId } = await auth();
+  // Dynamic imports so env/auth misconfig doesn't crash the module at import time
+  // (empty 500s in production are nearly impossible to debug from the browser).
+  let auth: typeof import("@clerk/nextjs/server").auth;
+  let currentUser: typeof import("@clerk/nextjs/server").currentUser;
+  try {
+    ({ auth, currentUser } = await import("@clerk/nextjs/server"));
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("try-on hold: failed to import @clerk/nextjs/server", err);
+    return NextResponse.json(
+      {
+        error: "clerk_server_unavailable",
+        details: message,
+        hint: "Check Vercel env vars: CLERK_SECRET_KEY must be set for server-side auth.",
+      },
+      { status: 500 }
+    );
+  }
+
+  let userId: string | null = null;
+  try {
+    ({ userId } = await auth());
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("try-on hold: auth() failed", err);
+    return NextResponse.json(
+      {
+        error: "auth_failed",
+        details: message,
+        hint: "This usually means CLERK_SECRET_KEY (server-side) is missing/invalid in Vercel.",
+      },
+      { status: 500 }
+    );
+  }
+
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -26,6 +54,9 @@ export async function POST(req: NextRequest) {
   let usedFreeTrial = false;
 
   try {
+    const { createCreditHold, getOrCreateUserBilling, grantFreeTrialOnce } =
+      await import("@/lib/db-access");
+
     const reqHeaderId =
       req.headers.get("x-request-id") || req.headers.get("x-changeroom-request-id");
     const body = await req.json();
