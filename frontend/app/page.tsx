@@ -150,7 +150,7 @@ function HomeContent() {
     window.scrollTo({ top: clamped, behavior: 'smooth' });
   }, []);
 
-  const getBackendAuthHeaders = useCallback(async () => {
+  const getBackendAuthHeaders = useCallback(async (): Promise<Record<string, string>> => {
     try {
       const token = await getToken({ template: 'backend' });
       if (token) {
@@ -169,7 +169,7 @@ function HomeContent() {
       // No-op: unauthenticated or token unavailable.
     }
 
-    return {};
+    return {} as Record<string, string>;
   }, [getToken]);
 
   const handleLoaderStageChange = useCallback((stageId: number) => {
