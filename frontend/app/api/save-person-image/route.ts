@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { insertPersonImage } from "@/lib/db-access";
 
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
@@ -44,6 +43,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const { insertPersonImage } = await import("@/lib/db-access");
     const personImage = await insertPersonImage(userId, {
       storageKey,
       publicUrl,

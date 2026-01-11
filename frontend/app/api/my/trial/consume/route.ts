@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { markFreeTrialUsed, getOrCreateUserBilling } from "@/lib/db-access";
 
 /**
  * POST /api/my/trial/consume
@@ -14,6 +13,7 @@ export async function POST(_req: NextRequest) {
   }
 
   try {
+    const { markFreeTrialUsed } = await import("@/lib/db-access");
     const billing = await markFreeTrialUsed(userId);
     return NextResponse.json({
       plan: billing.plan,
@@ -25,6 +25,7 @@ export async function POST(_req: NextRequest) {
     console.error("Error consuming free trial:", err);
     // Fallback to current billing state to avoid blocking clients and keep idempotent behavior
     try {
+      const { getOrCreateUserBilling } = await import("@/lib/db-access");
       const billing = await getOrCreateUserBilling(userId);
       return NextResponse.json({
         plan: billing.plan,

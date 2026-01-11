@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import {
-  getUserClothingItems,
-  getUserPersonImages,
-} from "@/lib/db-access";
 
 // GET /api/wardrobe - Fetch user's clothing items and person images
 export async function GET(_req: NextRequest) {
@@ -14,6 +10,7 @@ export async function GET(_req: NextRequest) {
   }
 
   try {
+    const { getUserClothingItems, getUserPersonImages } = await import("@/lib/db-access");
     const [clothingItems, personImages] = await Promise.all([
       getUserClothingItems(userId),
       getUserPersonImages(userId),

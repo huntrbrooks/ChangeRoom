@@ -817,6 +817,8 @@ async def analyze_and_save_clothing_item(
         analysis_result["metadata_file"] = save_result.get("metadata_file")
     
         return analysis_result
+    
+    return analysis_result
 
 
 def read_metadata_from_image(image_path: str) -> Optional[Dict[str, Any]]:
@@ -870,4 +872,3 @@ def read_metadata_from_image(image_path: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Error reading metadata from image: {e}", exc_info=True)
         return None
-

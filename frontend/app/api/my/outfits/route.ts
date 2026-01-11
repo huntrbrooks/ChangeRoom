@@ -1,12 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import {
-  insertUserOutfit,
-  getUserOutfits,
-  getOrCreateUserBilling,
-  hasPaidCreditGrant,
-  type ClothingItemMetadata,
-} from "@/lib/db-access";
+import type { ClothingItemMetadata } from "@/lib/db-access";
 
 const toIsoString = (value: unknown): string => {
   if (value instanceof Date) {
@@ -61,6 +55,9 @@ export async function GET(_req: NextRequest) {
   }
 
   try {
+    const { getUserOutfits, getOrCreateUserBilling, hasPaidCreditGrant } = await import(
+      "@/lib/db-access"
+    );
     const billing = await getOrCreateUserBilling(userId);
     const hasPurchase = billing.plan !== "free" || (await hasPaidCreditGrant(userId));
     // Gate access until a purchase/paid grant exists (credits alone not sufficient)
@@ -104,6 +101,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const { insertUserOutfit, getOrCreateUserBilling } = await import("@/lib/db-access");
     await getOrCreateUserBilling(userId);
     // Allow saving even if My Outfits viewing is gated; do not block on purchase
 

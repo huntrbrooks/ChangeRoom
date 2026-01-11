@@ -6,6 +6,7 @@ httpx
 requests
 python-multipart
 python-dotenv
+python-jose[cryptography]
 Pillow
 pillow-heif
 piexif
@@ -16,4 +17,3 @@ boto3>=1.26.0  # For cloud storage (R2/S3) support
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
 httpx>=0.24.0  # For TestClient
-

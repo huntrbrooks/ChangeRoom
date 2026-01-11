@@ -1,8 +1,10 @@
 # Current Try-On API Calls
 
+**Status**: The Next.js `/api/try-on` route is deprecated (returns 410). The active try-on pipeline is the FastAPI backend (`/api/try-on` on Render).
+
 This document shows the current API calls being made for virtual try-on generation.
 
-## 1. Frontend API Route (Currently Active)
+## 1. Frontend API Route (Deprecated)
 
 **Location**: `frontend/app/api/try-on/route.ts`
 
@@ -98,7 +100,7 @@ return {
 
 ---
 
-## 2. Backend API Route (Python/FastAPI)
+## 2. Backend API Route (Active, Python/FastAPI)
 
 **Location**: `backend/services/vton.py`
 
@@ -268,8 +270,6 @@ Both use:
 - **API Version**: `v1beta`
 - **Method**: `generateContent`
 - **Authentication**: API key as query parameter (`?key=...`)
-
-
 
 
 

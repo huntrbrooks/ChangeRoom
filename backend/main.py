@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from services import vton, gemini, shop, analyze_clothing, analyze_user
 from services import preprocess_clothing
 from services.image_normalize import normalize_image_bytes, ensure_heif_registered
+from services.auth import require_backend_auth
 
 load_dotenv()
 
@@ -242,7 +243,7 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 async def root():
     return {"message": "IGetDressed.Online API is running"}
 
-@app.post("/api/try-on")
+@app.post("/api/try-on", dependencies=[Depends(require_backend_auth)])
 async def try_on(
     request: Request,
     user_image: Optional[UploadFile] = File(None),  # Backward compatibility
@@ -572,7 +573,7 @@ async def try_on(
         logger.error(f"Full error details - Type: {error_type}, Message: {error_detail}, Exception: {repr(e)}")
         raise HTTPException(status_code=500, detail=error_detail)
 
-@app.post("/api/identify-products")
+@app.post("/api/identify-products", dependencies=[Depends(require_backend_auth)])
 async def identify_products(
     request: Request,
     clothing_image: UploadFile = File(...),
@@ -696,7 +697,7 @@ async def analyze_clothing_stream(clothing_images: List[UploadFile], save_files:
         logger.error(f"Error in analyze-clothing stream: {e}", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
-@app.post("/api/analyze-clothing")
+@app.post("/api/analyze-clothing", dependencies=[Depends(require_backend_auth)])
 async def analyze_clothing_items(
     request: Request,
     clothing_images: List[UploadFile] = File(...),
@@ -731,7 +732,7 @@ async def analyze_clothing_items(
         logger.error(f"Error in analyze-clothing endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/analyze-and-save-clothing")
+@app.post("/api/analyze-and-save-clothing", dependencies=[Depends(require_backend_auth)])
 async def analyze_and_save_clothing_items(
     clothing_images: List[UploadFile] = File(...),
     save_files: bool = Form(True),
@@ -789,7 +790,7 @@ async def analyze_and_save_clothing_items(
         logger.error(f"Error in analyze-and-save-clothing endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/read-image-metadata")
+@app.get("/api/read-image-metadata", dependencies=[Depends(require_backend_auth)])
 async def read_image_metadata(request: Request, image_path: str):
     """
     Reads embedded metadata from a saved image file.
@@ -827,7 +828,7 @@ async def read_image_metadata(request: Request, image_path: str):
         logger.error(f"Error reading image metadata: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/preprocess-clothing")
+@app.post("/api/preprocess-clothing", dependencies=[Depends(require_backend_auth)])
 async def preprocess_clothing_batch(
     request: Request,
     clothing_images: List[UploadFile] = File(...)
@@ -906,7 +907,7 @@ async def preprocess_clothing_batch(
             detail=f"Failed to preprocess clothing images: {str(e)}"
         )
 
-@app.post("/api/shop")
+@app.post("/api/shop", dependencies=[Depends(require_backend_auth)])
 async def shop_endpoint(
     request: Request,
     query: str = Form(...),
@@ -938,4 +939,3 @@ if __name__ == "__main__":
         timeout_keep_alive=600,  # 10 minutes for long-running requests
         timeout_graceful_shutdown=30  # 30 seconds for graceful shutdown
     )
-

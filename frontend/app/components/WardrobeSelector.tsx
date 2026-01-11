@@ -28,13 +28,15 @@ interface WardrobeSelectorProps {
   onItemSelect: (index: number, file: File) => void;
   onBulkUpload?: (files: File[], analyses: AnalyzedItem[]) => void;
   API_URL?: string;
+  getBackendAuthHeaders?: () => Promise<Record<string, string>>;
 }
 
 export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({ 
   items, 
   onItemSelect, 
   onBulkUpload,
-  API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+  API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+  getBackendAuthHeaders
 }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<string>('');
@@ -62,8 +64,9 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
       });
 
       // Send to analysis endpoint
+      const authHeaders = getBackendAuthHeaders ? await getBackendAuthHeaders() : {};
       const response = await httpClient.post(`${API_URL}/api/analyze-clothing`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+        headers: { 'Content-Type': 'multipart/form-data', ...authHeaders },
         timeout: 300000, // 5 minutes for analysis
       });
 
@@ -125,7 +128,7 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
       // Reset file input
       e.target.value = '';
     }
-  }, [onItemSelect, onBulkUpload, items.length, API_URL]);
+  }, [onItemSelect, onBulkUpload, items.length, API_URL, getBackendAuthHeaders]);
 
   const handleBulkDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
@@ -194,4 +197,3 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
     </div>
   );
 };
-

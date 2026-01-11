@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { findBestOffersForQuery, buildSearchQueryFromItem } from "@/lib/shop/providers";
-import { getClothingItemsByIds, upsertClothingItemOffers, getClothingItemOffers } from "@/lib/db-access";
 import { checkRateLimit } from "@/lib/rate-limit";
+import type { ClothingItem } from "@/lib/db-access";
 
-type DbClothingItem = Awaited<ReturnType<typeof getClothingItemsByIds>>[number];
+type DbClothingItem = ClothingItem;
 
 /**
  * POST /api/shop-search
@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const { getClothingItemsByIds, upsertClothingItemOffers } = await import("@/lib/db-access");
     const ip =
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
       req.headers.get("x-real-ip") ||
@@ -196,6 +197,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    const { getClothingItemOffers } = await import("@/lib/db-access");
     const ip =
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
       req.headers.get("x-real-ip") ||

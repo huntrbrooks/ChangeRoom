@@ -1,10 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import {
-  getUserClothingItems,
-  getSavedClothingItemIds,
-  insertClothingItems,
-} from "@/lib/db-access";
 import { ensureAbsoluteUrl } from "@/lib/url";
 
 type ClothingItemInput = {
@@ -34,6 +29,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    const { getUserClothingItems, getSavedClothingItemIds } = await import("@/lib/db-access");
     const { searchParams } = new URL(req.url);
     const category = searchParams.get("category") || undefined;
     const tagsParam = searchParams.get("tags");
@@ -87,6 +83,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const { insertClothingItems } = await import("@/lib/db-access");
     const body = await req.json();
     const items = Array.isArray(body?.items) ? body.items : [];
 

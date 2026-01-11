@@ -3,7 +3,6 @@ import { auth } from "@clerk/nextjs/server";
 import Stripe from "stripe";
 import { stripeConfig } from "@/lib/config";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { getOrCreateUserBilling, grantCredits } from "@/lib/db-access";
 
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
 function getStripe() {
@@ -54,6 +53,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const { getOrCreateUserBilling, grantCredits } = await import("@/lib/db-access");
     const session = await getStripe().checkout.sessions.retrieve(sessionId, {
       expand: ["line_items.data.price", "payment_intent"],
     });

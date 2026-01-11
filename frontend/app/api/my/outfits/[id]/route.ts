@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { deleteUserOutfit, getOrCreateUserBilling, hasPaidCreditGrant } from "@/lib/db-access";
 
 /**
  * DELETE /api/my/outfits/[id]
@@ -17,6 +16,9 @@ export async function DELETE(
   }
 
   try {
+    const { deleteUserOutfit, getOrCreateUserBilling, hasPaidCreditGrant } = await import(
+      "@/lib/db-access"
+    );
     // Handle both sync and async params (Next.js 15+ uses Promise)
     const resolvedParams = params instanceof Promise ? await params : params;
     const outfitId = resolvedParams.id;

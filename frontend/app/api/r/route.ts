@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { logAffiliateClick } from "@/lib/db-access";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 /**
@@ -64,11 +63,13 @@ export async function GET(req: NextRequest) {
     const { userId } = await auth();
 
     // Log the click (fire and forget - don't block redirect)
-    logAffiliateClick({
-      offerId: offerId || null,
-      userId: userId || null,
-      clickedUrl: decodedUrl,
-    }).catch((err) => {
+    (await import("@/lib/db-access"))
+      .logAffiliateClick({
+        offerId: offerId || null,
+        userId: userId || null,
+        clickedUrl: decodedUrl,
+      })
+      .catch((err) => {
       console.error("Error logging affiliate click:", err);
       // Don't fail the redirect if logging fails
     });

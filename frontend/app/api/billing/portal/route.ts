@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import Stripe from "stripe";
 import { stripeConfig, appConfig } from "@/lib/config";
-import { getOrCreateUserBilling } from "@/lib/db-access";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
@@ -24,6 +23,7 @@ export async function POST(_req: NextRequest) {
   }
 
   try {
+    const { getOrCreateUserBilling } = await import("@/lib/db-access");
     const ip =
       _req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
       _req.headers.get("x-real-ip") ||

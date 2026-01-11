@@ -8,9 +8,8 @@
       "command": "npx",
       "args": ["-y", "firecrawl-mcp"],
       "env": {
-        "FIRECRAWL_API_KEY": "fc-4f12c432543c412ab5424e5bbc4f35d3"
+        "FIRECRAWL_API_KEY": "REPLACE_ME"
       }
     }
   }
 }
-

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { generateSignedPutUrl, getPublicUrl } from "@/lib/r2";
 import { randomUUID } from "crypto";
-import { countClothingItemsByUser } from "@/lib/db-access";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
@@ -52,6 +51,7 @@ export async function POST(req: NextRequest) {
     createdAt !== null &&
     Date.now() - createdAt.getTime() < 3 * 24 * 60 * 60 * 1000;
   if (isNewUser && kind === "clothing") {
+    const { countClothingItemsByUser } = await import("@/lib/db-access-compat");
     const todayCount = await countClothingItemsByUser(
       userId,
       new Date(Date.now() - 24 * 60 * 60 * 1000)

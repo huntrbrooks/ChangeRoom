@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { getUserPersonImages } from "@/lib/db-access";
 
 /**
  * GET /api/my/person-images
@@ -14,6 +13,7 @@ export async function GET(_req: NextRequest) {
   }
 
   try {
+    const { getUserPersonImages } = await import("@/lib/db-access");
     const personImages = await getUserPersonImages(userId);
     return NextResponse.json({ personImages });
   } catch (err: unknown) {

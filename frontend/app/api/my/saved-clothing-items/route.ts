@@ -1,11 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import {
-  getSavedClothingItems,
-  getSavedClothingItemIds,
-  saveClothingItem,
-  removeSavedClothingItem,
-} from "@/lib/db-access";
 import { ensureAbsoluteUrl } from "@/lib/url";
 
 type SavedClothingItem = {
@@ -33,6 +27,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    const { getSavedClothingItems, getSavedClothingItemIds } = await import("@/lib/db-access");
     const { searchParams } = new URL(req.url);
     const limitParam = searchParams.get("limit");
     const limit = limitParam ? Number.parseInt(limitParam, 10) : undefined;
@@ -60,6 +55,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const { saveClothingItem } = await import("@/lib/db-access");
     const body = await req.json();
     const clothingItemId =
       typeof body?.clothingItemId === "string" ? body.clothingItemId : "";
@@ -90,6 +86,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
+    const { removeSavedClothingItem } = await import("@/lib/db-access");
     const body = await req.json();
     const clothingItemId =
       typeof body?.clothingItemId === "string" ? body.clothingItemId : "";

@@ -2,13 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { clerkClient } from "@clerk/nextjs/server";
 import { stripeConfig } from "@/lib/config";
-import {
-  getUserBillingByStripeCustomer,
-  updateUserBillingPlan,
-  grantCredits,
-  setUserBillingFrozen,
-  setStripeCustomerIdForUser,
-} from "@/lib/db-access";
 import { ANALYTICS_EVENTS, captureServerEvent } from "@/lib/server-analytics";
 
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
@@ -30,38 +23,56 @@ async function resolveClerkUserIdByVerifiedEmail(emailRaw: string): Promise<stri
   const email = (emailRaw || "").trim().toLowerCase();
   if (!email || !email.includes("@")) return null;
 
+  const asRecord = (v: unknown): Record<string, unknown> | null =>
+    v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+
+  const asArray = <T = unknown>(v: unknown): T[] | null => (Array.isArray(v) ? (v as T[]) : null);
+
   try {
-    // Clerk SDK typing varies by version; use a tolerant access pattern.
-    const result = await (clerkClient as unknown as any).users.getUserList({
+    // Clerk SDK typing varies by version; use a tolerant access pattern without `any`.
+    const cc = clerkClient as unknown as {
+      users?: {
+        getUserList?: (args: { emailAddress: string[]; limit: number }) => Promise<unknown>;
+      };
+    };
+
+    const getUserList = cc?.users?.getUserList;
+    if (typeof getUserList !== "function") {
+      return null;
+    }
+
+    const result = await getUserList({
       emailAddress: [email],
       limit: 10,
     });
 
-    const users = Array.isArray(result) ? result : (result?.data ?? []);
+    const resultRec = asRecord(result);
+    const users = Array.isArray(result) ? result : (resultRec?.data ?? []);
     if (!Array.isArray(users) || users.length !== 1) {
       return null;
     }
 
-    const user = users[0] as any;
-    const userId = (user?.id as string | undefined) || (user?.userId as string | undefined);
+    const userRec = asRecord(users[0]);
+    const userIdRaw = userRec?.id ?? userRec?.userId;
+    const userId = typeof userIdRaw === "string" ? userIdRaw : undefined;
     if (!userId) return null;
 
-    const emailAddresses: any[] =
-      (Array.isArray(user?.emailAddresses) ? user.emailAddresses : null) ||
-      (Array.isArray(user?.email_addresses) ? user.email_addresses : null) ||
-      [];
+    const emailAddresses =
+      asArray(userRec?.emailAddresses) ?? asArray(userRec?.email_addresses) ?? [];
 
     const match = emailAddresses.find((entry) => {
-      const addr = (entry?.emailAddress ?? entry?.email_address ?? "").toString().toLowerCase();
+      const entryRec = asRecord(entry);
+      const addr = (entryRec?.emailAddress ?? entryRec?.email_address ?? "")
+        .toString()
+        .toLowerCase();
       return addr === email;
     });
 
     // If Clerk provides verification status, require it to be verified.
-    const status = (match?.verification?.status ?? match?.verification_status ?? null) as
-      | "verified"
-      | "unverified"
-      | string
-      | null;
+    const matchRec = asRecord(match);
+    const verificationRec = asRecord(matchRec?.verification);
+    const statusRaw = verificationRec?.status ?? matchRec?.verification_status ?? null;
+    const status = typeof statusRaw === "string" ? statusRaw : null;
     if (status && status !== "verified") {
       return null;
     }
@@ -84,6 +95,13 @@ async function resolveClerkUserIdByVerifiedEmail(emailRaw: string): Promise<stri
  * - payment_intent.succeeded (fallback for one-time payments; uses payment_intent id for idempotency)
  */
 export async function POST(req: NextRequest) {
+  const {
+    getUserBillingByStripeCustomer,
+    updateUserBillingPlan,
+    grantCredits,
+    setUserBillingFrozen,
+    setStripeCustomerIdForUser,
+  } = await import("@/lib/db-access");
   const body = await req.text();
   const signature = req.headers.get("stripe-signature");
 
@@ -240,9 +258,10 @@ export async function POST(req: NextRequest) {
         let creditAmountStr = (pi.metadata?.creditAmount as string | undefined) || undefined;
         let sessionId: string | undefined = (pi.metadata?.sessionId as string | undefined) || undefined;
         let customerId = typeof pi.customer === "string" ? pi.customer : undefined;
-        let receiptEmail =
-          (typeof (pi as any).receipt_email === "string" ? (pi as any).receipt_email : undefined) ||
-          undefined;
+        const receiptEmail = (() => {
+          const receiptEmailRaw = (pi as unknown as { receipt_email?: unknown }).receipt_email;
+          return typeof receiptEmailRaw === "string" ? receiptEmailRaw : undefined;
+        })();
         let sessionEmail: string | undefined;
 
         // Backward-compat + "off-site" flows:
@@ -260,9 +279,10 @@ export async function POST(req: NextRequest) {
               sessionId = sessionId || s.id;
               customerId =
                 customerId || (typeof s.customer === "string" ? s.customer : undefined);
+              const customerEmailRaw = (s as unknown as { customer_email?: unknown }).customer_email;
               sessionEmail =
                 (s.customer_details?.email as string | undefined) ||
-                (typeof (s as any).customer_email === "string" ? (s as any).customer_email : undefined) ||
+                (typeof customerEmailRaw === "string" ? customerEmailRaw : undefined) ||
                 undefined;
 
               // Retrieve with expansions for robust price inference.

@@ -2,12 +2,7 @@ import { verifyClerkToken } from "@clerk/mcp-tools/next";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { createMcpHandler, withMcpAuth } from "@vercel/mcp-adapter";
 import { z } from "zod";
-import {
-  getOrCreateUserBilling,
-  getUserClothingItems,
-  getUserOutfits,
-  getLedgerEntries,
-} from "@/lib/db-access";
+import type { CreditLedgerEntry, UserBilling } from "@/lib/db-access";
 
 const clerk = await clerkClient();
 
@@ -51,7 +46,8 @@ const handler = createMcpHandler((server) => {
     {},
     async (_, { authInfo }) => {
       const userId = authInfo?.extra?.userId as string;
-      const billing = await getOrCreateUserBilling(userId);
+      const { getOrCreateUserBilling } = await import("@/lib/db-access");
+      const billing: UserBilling = await getOrCreateUserBilling(userId);
 
       return {
         content: [
@@ -89,6 +85,7 @@ const handler = createMcpHandler((server) => {
       const category =
         typeof params.category === "string" ? params.category : undefined;
 
+      const { getUserClothingItems } = await import("@/lib/db-access");
       const items = await getUserClothingItems(userId, {
         limit,
         category,
@@ -130,6 +127,7 @@ const handler = createMcpHandler((server) => {
       const limit =
         typeof params.limit === "number" ? params.limit : 10;
 
+      const { getUserOutfits } = await import("@/lib/db-access");
       const outfits = await getUserOutfits(userId, limit);
 
       return {
@@ -163,7 +161,8 @@ const handler = createMcpHandler((server) => {
       const limit =
         typeof params.limit === "number" ? params.limit : 20;
 
-      const entries = await getLedgerEntries(userId, limit);
+      const { getLedgerEntries } = await import("@/lib/db-access");
+      const entries: CreditLedgerEntry[] = await getLedgerEntries(userId, limit);
 
       return {
         content: [

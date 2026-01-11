@@ -79,6 +79,8 @@ interface BulkUploadZoneProps {
   onAuthRequired?: () => void;
   /** Message shown when uploads are blocked. */
   blockedMessage?: string;
+  /** Optional async getter for backend Authorization headers. */
+  getBackendAuthHeaders?: () => Promise<Record<string, string>>;
 }
 
 export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({ 
@@ -90,7 +92,8 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
   API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
   isAuthenticated = true,
   onAuthRequired,
-  blockedMessage = 'Please sign in to upload clothing items.'
+  blockedMessage = 'Please sign in to upload clothing items.',
+  getBackendAuthHeaders
 }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<string>('');
@@ -225,9 +228,11 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
       });
 
       // Call the new batch preprocessing endpoint
+      const authHeaders = getBackendAuthHeaders ? await getBackendAuthHeaders() : {};
       const response = await fetchWithRequestId(`${API_URL_FETCH}/api/preprocess-clothing`, {
         method: 'POST',
         body: formData,
+        headers: authHeaders,
         // Don't set Content-Type header, let browser set it with boundary
       }, { prefix: 'preprocess', force: true });
 
@@ -480,7 +485,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
     } finally {
       setIsAnalyzing(false);
     }
-  }, [API_URL, maybeConvertFiles, requireAuth]);
+  }, [API_URL, getBackendAuthHeaders, maybeConvertFiles, requireAuth]);
 
   const handleBulkUpload = useCallback(async (files: File[], shouldReplace: boolean = false) => {
     if (files.length === 0) return;
@@ -887,4 +892,3 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
     </div>
   );
 };
-

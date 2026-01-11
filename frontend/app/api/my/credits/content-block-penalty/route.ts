@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { applyContentBlockPenalty, getOrCreateUserBilling } from "@/lib/db-access";
 
 /**
  * POST /api/my/credits/content-block-penalty
@@ -27,6 +26,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const { applyContentBlockPenalty } = await import("@/lib/db-access-compat");
     const result = await applyContentBlockPenalty({ userId, requestId, amount: 1 });
     return NextResponse.json({
       ok: true,
@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     if (message === "insufficient_credits") {
+      const { getOrCreateUserBilling } = await import("@/lib/db-access");
       const billing = await getOrCreateUserBilling(userId);
       return NextResponse.json(
         { error: "no_credits", creditsAvailable: billing.credits_available },

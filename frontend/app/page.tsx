@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useAuth } from '@clerk/nextjs';
 import { httpClient } from '@/lib/httpClient';
 import { UploadZone } from './components/UploadZone';
 import { BulkUploadZone } from './components/BulkUploadZone';
@@ -59,6 +59,7 @@ const formatCurrency = (value?: number | null, currency?: string | null) => {
 
 function HomeContent() {
   const { user, isLoaded } = useUser();
+  const { getToken } = useAuth();
   const router = useRouter();
   const [userImages, setUserImages] = useState<File[]>([]);
   
@@ -148,6 +149,28 @@ function HomeContent() {
     const clamped = Math.min(maxScroll, Math.max(0, Math.round(targetTop)));
     window.scrollTo({ top: clamped, behavior: 'smooth' });
   }, []);
+
+  const getBackendAuthHeaders = useCallback(async () => {
+    try {
+      const token = await getToken({ template: 'backend' });
+      if (token) {
+        return { Authorization: `Bearer ${token}` };
+      }
+    } catch {
+      // Fallback to default token below.
+    }
+
+    try {
+      const fallback = await getToken();
+      if (fallback) {
+        return { Authorization: `Bearer ${fallback}` };
+      }
+    } catch {
+      // No-op: unauthenticated or token unavailable.
+    }
+
+    return {};
+  }, [getToken]);
 
   const handleLoaderStageChange = useCallback((stageId: number) => {
     console.info('try-on-stage', { stageId, ts: Date.now() });
@@ -274,27 +297,6 @@ function HomeContent() {
       !hasPaidAccess,
     [billing, hasPaidAccess, isBypass, isLoaded, user]
   );
-
-  const noteCreditUse = useCallback(() => {
-    if (creditLoggedRef.current) {
-      return;
-    }
-    creditLoggedRef.current = true;
-    console.info('credit-used', {
-      requestId: lastRequestId,
-      plan: billing?.plan ?? 'unknown',
-      creditsBefore: billing?.creditsAvailable ?? null,
-    });
-    setBilling((prev) => {
-      if (!prev || isBypass) return prev;
-      // Skip decrement for free trial users (trial handled separately)
-      if (isOnTrial) return prev;
-      if (typeof prev.creditsAvailable === 'number' && prev.creditsAvailable > 0) {
-        return { ...prev, creditsAvailable: prev.creditsAvailable - 1 };
-      }
-      return prev;
-    });
-  }, [billing?.creditsAvailable, billing?.plan, isBypass, isOnTrial, lastRequestId]);
 
   useEffect(() => {
     if (activeTab === 'my-outfits' && shouldLockMyOutfits) {
@@ -1135,12 +1137,14 @@ function HomeContent() {
         // #region agent log
         logIngest({location:'page.tsx:640',message:'Frontend try-on request starting',data:{apiUrl:API_URL,userImagesCount:userImages.length,clothingItemsCount:preparedTryOnFiles.length,metadataKeys:Object.keys(metadata)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'});
         // #endregion
+        const backendAuthHeaders = await getBackendAuthHeaders();
         tryOnRes = await withRetry(
           () =>
             httpClient.post(`${API_URL}/api/try-on`, tryOnFormData, {
               headers: {
                 'Content-Type': 'multipart/form-data',
                 ...(requestId ? { 'X-Request-Id': requestId } : {}),
+                ...backendAuthHeaders,
               },
               timeout: 600000, // 10 minutes for Render wake-up + VTON generation
               signal: controller.signal,
@@ -1362,11 +1366,11 @@ function HomeContent() {
           throw new Error('No clothing item available for product identification');
         }
         identifyFormData.append('clothing_image', primaryTryOnFile);
-        
+        const identifyAuthHeaders = await getBackendAuthHeaders();
         const analysisRes = await withRetry(
           () =>
             httpClient.post(`${API_URL}/api/identify-products`, identifyFormData, {
-              headers: { 'Content-Type': 'multipart/form-data' },
+              headers: { 'Content-Type': 'multipart/form-data', ...identifyAuthHeaders },
               timeout: 600000, // 10 minutes for Render wake-up + Gemini processing
               signal: controller.signal,
             }),
@@ -1412,11 +1416,11 @@ function HomeContent() {
           console.log("Product identification successful, searching for products...");
           const shopFormData = new FormData();
           shopFormData.append('query', queryToUse);
-          
+          const shopAuthHeaders = await getBackendAuthHeaders();
           const shopRes = await withRetry(
             () =>
               httpClient.post(`${API_URL}/api/shop`, shopFormData, {
-                headers: { 'Content-Type': 'multipart/form-data' },
+                headers: { 'Content-Type': 'multipart/form-data', ...shopAuthHeaders },
                 timeout: 60000, // 1 minute for product search
                 signal: controller.signal,
               }),
@@ -1782,6 +1786,7 @@ function HomeContent() {
                 onFilesUploaded={handleBulkUpload}
                 onItemRemove={handleItemRemove}
                 onItemReplace={handleItemReplace}
+                getBackendAuthHeaders={getBackendAuthHeaders}
                 isAuthenticated={isAuthenticated}
                 onAuthRequired={requireAuth}
                 blockedMessage="Please sign in to upload clothing items."

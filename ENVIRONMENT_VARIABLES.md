@@ -37,6 +37,12 @@ Set these in the **Render service** for the backend (see `render.yaml`).
 | `VTON_MIN_MAIN_USER_DIM` | Minimum longest-side dimension (px) for the main user reference image when auto-downscaling to fit Gemini payload budget | `1600` | `1800` |
 | `VTON_MIN_MAIN_USER_JPEG_QUALITY` | Minimum JPEG quality for the main user reference image when auto-downscaling to fit Gemini payload budget | `82` | `86` |
 | `OPENAI_VISION_MAX_IMAGE_BYTES` | Max bytes per image sent to OpenAI vision calls (analysis/preprocess). Images are auto-normalized/downscaled to fit budget. | `4194304` (~4MB) | `6291456` |
+| `BACKEND_AUTH_MODE` | Protect expensive endpoints: `none`, `clerk`, or `api_key` | `none` | `clerk` |
+| `BACKEND_API_KEY` | Shared secret when `BACKEND_AUTH_MODE=api_key` | (none) | `replace_me` |
+| `CLERK_ISSUER` | Clerk issuer URL for JWT verification when `BACKEND_AUTH_MODE=clerk` | (none) | `https://your-clerk-issuer` |
+| `CLERK_JWKS_URL` | JWKS URL (optional override if not using issuer) | (derived) | `https://your-clerk-issuer/.well-known/jwks.json` |
+| `CLERK_AUDIENCE` | Optional JWT audience check for Clerk tokens | (none) | `your-audience` |
+| `CLERK_JWKS_CACHE_SECONDS` | JWKS cache TTL in seconds | `300` | `600` |
 
 ## Frontend Environment Variables
 
@@ -74,6 +80,7 @@ Set these in the **Vercel project** for the frontend (`frontend/`).
 | `TRYON_FREE_CREDITS` | Number of free credits for new users | `10` | `10` |
 | `TRYON_STANDARD_MONTHLY_CREDITS` | Monthly credits for Standard plan | `50` | `50` |
 | `TRYON_PRO_MONTHLY_CREDITS` | Monthly credits for Pro plan | `250` | `250` |
+| `CREDIT_HOLD_TTL_MINUTES` | Minutes before an in-flight credit hold expires and is auto-released | `30` | `45` |
 | `METRICS_EMAIL_SECRET` | Secret token to call the admin-only `/api/metrics-email` route | (none) | `your-long-random-token` |
 
 ## Environment Setup
@@ -159,4 +166,3 @@ The application validates required environment variables at runtime:
 - **Stripe Keys**: https://dashboard.stripe.com/apikeys
 - **OpenAI Key**: https://platform.openai.com/api-keys
 - **R2 Keys**: Cloudflare Dashboard → R2 → Manage R2 API Tokens
-

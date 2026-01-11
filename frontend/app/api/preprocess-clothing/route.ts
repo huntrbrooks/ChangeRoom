@@ -3,7 +3,6 @@ import { auth } from "@clerk/nextjs/server";
 import OpenAI from "openai";
 import type { ChatCompletionContentPart } from "openai/resources/chat/completions";
 import { openaiConfig } from "@/lib/config";
-import { insertClothingItems } from "@/lib/db-access";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { r2, getPublicUrl } from "@/lib/r2";
 import { r2Config } from "@/lib/config";
@@ -227,6 +226,7 @@ Return JSON only, matching the schema, one item per input image, with index matc
       })
       .filter((item): item is NonNullable<typeof item> => item !== null);
 
+    const { insertClothingItems } = await import("@/lib/db-access");
     const saved = await insertClothingItems(userId, itemsToInsert);
 
     const res = NextResponse.json({ items: saved });
