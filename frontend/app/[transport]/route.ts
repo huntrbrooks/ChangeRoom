@@ -1,6 +1,7 @@
 import { verifyClerkToken } from "@clerk/mcp-tools/next";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { createMcpHandler, withMcpAuth } from "@vercel/mcp-adapter";
+import { z } from "zod";
 import {
   getOrCreateUserBilling,
   getUserClothingItems,
@@ -75,14 +76,11 @@ const handler = createMcpHandler((server) => {
     "get-user-wardrobe",
     "Gets the user's uploaded clothing items (wardrobe). Returns category, color, style, and description for each item.",
     {
-      limit: {
-        type: "number",
-        description: "Maximum number of items to return (default: 20)",
-      },
-      category: {
-        type: "string",
-        description: "Filter by category (e.g., 'tops', 'bottoms', 'dresses')",
-      },
+      limit: z.number().optional().describe("Maximum number of items to return (default: 20)"),
+      category: z
+        .string()
+        .optional()
+        .describe("Filter by category (e.g., 'tops', 'bottoms', 'dresses')"),
     },
     async (params, { authInfo }) => {
       const userId = authInfo?.extra?.userId as string;
@@ -125,10 +123,7 @@ const handler = createMcpHandler((server) => {
     "get-user-outfits",
     "Gets the user's saved try-on outfits (virtual fitting results)",
     {
-      limit: {
-        type: "number",
-        description: "Maximum number of outfits to return (default: 10)",
-      },
+      limit: z.number().optional().describe("Maximum number of outfits to return (default: 10)"),
     },
     async (params, { authInfo }) => {
       const userId = authInfo?.extra?.userId as string;
@@ -161,10 +156,7 @@ const handler = createMcpHandler((server) => {
     "get-credit-history",
     "Gets the user's credit transaction history (grants, holds, debits, refunds)",
     {
-      limit: {
-        type: "number",
-        description: "Maximum number of entries to return (default: 20)",
-      },
+      limit: z.number().optional().describe("Maximum number of entries to return (default: 20)"),
     },
     async (params, { authInfo }) => {
       const userId = authInfo?.extra?.userId as string;

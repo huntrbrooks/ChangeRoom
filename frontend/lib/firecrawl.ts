@@ -1,9 +1,25 @@
 import Firecrawl from '@mendable/firecrawl-js';
 
-// Initialize Firecrawl client
-const firecrawl = new Firecrawl({
-  apiKey: process.env.FIRECRAWL_API_KEY || '',
-});
+/**
+ * IMPORTANT (build stability):
+ * Don't instantiate Firecrawl at module-import time, because Next.js may evaluate API routes during `next build`
+ * (Collecting page data). If FIRECRAWL_API_KEY isn't set at build-time, that would crash the build.
+ *
+ * Instead, lazily create the client the first time a scrape/search/crawl function is called.
+ */
+let _firecrawl: Firecrawl | null = null;
+function getFirecrawlClient(): Firecrawl {
+  const apiKey = process.env.FIRECRAWL_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "FIRECRAWL_API_KEY is not set. Configure it in Vercel Project Settings → Environment Variables."
+    );
+  }
+  if (!_firecrawl) {
+    _firecrawl = new Firecrawl({ apiKey });
+  }
+  return _firecrawl;
+}
 
 export interface ProductData {
   title: string;
@@ -22,7 +38,8 @@ export interface ProductData {
  */
 export async function scrapeProductPage(url: string): Promise<ProductData | null> {
   try {
-    const result = await firecrawl.scrapeUrl(url, {
+    const firecrawl = getFirecrawlClient();
+    const result = await firecrawl.scrape(url, {
       formats: [
         'markdown',
         {
@@ -44,7 +61,7 @@ export async function scrapeProductPage(url: string): Promise<ProductData | null
       ],
     });
 
-    if (result.success && result.json) {
+    if (result?.json) {
       return {
         ...result.json,
         productUrl: url,
@@ -64,6 +81,7 @@ export async function scrapeProductPage(url: string): Promise<ProductData | null
  */
 export async function searchFashionItems(query: string, limit = 10) {
   try {
+    const firecrawl = getFirecrawlClient();
     const result = await firecrawl.search(query, {
       limit,
       scrapeOptions: {
@@ -71,7 +89,8 @@ export async function searchFashionItems(query: string, limit = 10) {
       },
     });
 
-    return result.success ? result.data : [];
+    // Firecrawl v2 client returns a structured object (web/news/images), not { success, data }.
+    return result?.web ?? [];
   } catch (error) {
     console.error('Firecrawl search error:', error);
     return [];
@@ -89,7 +108,8 @@ export async function crawlRetailer(
   const { limit = 50, includePatterns } = options;
 
   try {
-    const result = await firecrawl.crawlUrl(retailerUrl, {
+    const firecrawl = getFirecrawlClient();
+    const result = await firecrawl.crawl(retailerUrl, {
       limit,
       includePaths: includePatterns,
       scrapeOptions: {
@@ -131,7 +151,8 @@ export async function crawlRetailer(
  */
 export async function extractProductImages(url: string): Promise<string[]> {
   try {
-    const result = await firecrawl.scrapeUrl(url, {
+    const firecrawl = getFirecrawlClient();
+    const result = await firecrawl.scrape(url, {
       formats: [
         {
           type: 'json',
@@ -140,8 +161,8 @@ export async function extractProductImages(url: string): Promise<string[]> {
       ],
     });
 
-    if (result.success && result.json?.imageUrls) {
-      return result.json.imageUrls as string[];
+    if (result?.json && typeof result.json === "object" && (result.json as any).imageUrls) {
+      return (result.json as any).imageUrls as string[];
     }
 
     return [];
@@ -163,5 +184,5 @@ export async function findSimilarProducts(productName: string, brand?: string) {
   return searchFashionItems(query, 20);
 }
 
-export default firecrawl;
+export default getFirecrawlClient;
 
