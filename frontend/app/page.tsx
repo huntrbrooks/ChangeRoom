@@ -8,7 +8,9 @@ import { useUser } from '@clerk/nextjs';
 import { httpClient } from '@/lib/httpClient';
 import { UploadZone } from './components/UploadZone';
 import { BulkUploadZone } from './components/BulkUploadZone';
+import { TryOnFromUrl } from './components/TryOnFromUrl';
 import { VirtualMirror } from './components/VirtualMirror';
+import { SocialShareButtons } from './components/SocialShareButtons';
 import { ProductCard } from './components/ProductCard';
 import { PaywallModal } from './components/PaywallModal';
 import { MyOutfits } from './components/MyOutfits';
@@ -18,6 +20,7 @@ import { getWearingStylePromptText } from '@/lib/wearingStyles';
 import { isBypassUser } from '@/lib/bypass-config';
 import { ensureAbsoluteUrl } from '@/lib/url';
 import { ANALYTICS_EVENTS, captureEvent } from '@/lib/analytics';
+import { trackTrialConsumed, trackOutfitGenerated } from '@/lib/userEvents';
 
 // Force dynamic rendering to prevent static generation issues with Clerk
 export const dynamic = 'force-dynamic';
@@ -500,6 +503,75 @@ function HomeContent() {
     });
   };
 
+  // Handler for "Try On Any URL" feature - when a product is scraped from a URL
+  const handleProductScraped = useCallback(async (
+    product: { title: string; price?: string; currency?: string; imageUrl: string; description?: string; brand?: string; category?: string; productUrl: string },
+    imageFile: File
+  ) => {
+    if (!requireAuth()) return;
+
+    // Check wardrobe limit
+    if (wardrobeItems.length >= 5) {
+      const confirmed = window.confirm(
+        'Your wardrobe is full (5 items). Would you like to start a new wardrobe with this item?'
+      );
+      if (!confirmed) return;
+      // Clear existing items to make room
+      setWardrobeItems([]);
+    }
+
+    // Create analysis object from scraped product data
+    const analysis: AnalyzedItem = {
+      index: wardrobeItems.length >= 5 ? 0 : wardrobeItems.length,
+      original_filename: imageFile.name,
+      analysis: {
+        body_region: product.category?.toLowerCase().includes('pant') || product.category?.toLowerCase().includes('jean') || product.category?.toLowerCase().includes('skirt') 
+          ? 'lower_body' 
+          : product.category?.toLowerCase().includes('shoe') || product.category?.toLowerCase().includes('boot')
+          ? 'shoes'
+          : 'upper_body',
+        category: product.category?.toLowerCase().includes('pant') || product.category?.toLowerCase().includes('jean') || product.category?.toLowerCase().includes('skirt') 
+          ? 'lower_body' 
+          : product.category?.toLowerCase().includes('shoe') || product.category?.toLowerCase().includes('boot')
+          ? 'shoes'
+          : 'upper_body',
+        item_type: product.category || undefined,
+        brand: product.brand || undefined,
+        short_description: product.title || undefined,
+        description: product.description || product.title || undefined,
+        suggested_filename: imageFile.name,
+        tags: product.brand ? [product.brand] : [],
+      },
+      file_url: product.imageUrl,
+      saved_filename: imageFile.name,
+      status: 'success',
+    };
+
+    // Add metadata to file
+    const fileWithMeta = imageFile as FileWithMetadata;
+    fileWithMeta.category = analysis.analysis?.category;
+    fileWithMeta.item_type = analysis.analysis?.item_type;
+    fileWithMeta.brand = product.brand;
+    fileWithMeta.detailed_description = product.description || product.title;
+    fileWithMeta.file_url = product.imageUrl;
+
+    const newEntry: ImageWithAnalysis = {
+      file: fileWithMeta,
+      analysis,
+    };
+
+    if (wardrobeItems.length >= 5) {
+      setWardrobeItems([newEntry]);
+    } else {
+      setWardrobeItems(prev => [...prev, newEntry]);
+    }
+
+    // Persist the clothing item
+    void persistClothingItems([newEntry]);
+
+    console.log('Product added from URL:', product.title, product.productUrl);
+  }, [requireAuth, wardrobeItems.length, persistClothingItems]);
+
   const shopSaveReadyItems = useMemo<ShopSaveClothingItem[]>(() => {
     return wardrobeItems.reduce<ShopSaveClothingItem[]>((acc, entry) => {
       const analysisMeta = entry.analysis?.analysis;
@@ -776,6 +848,11 @@ function HomeContent() {
     }
     setIsTryOnLoading(true);
     setIsGenerating(true);
+
+    // Scroll to Virtual Mirror after loading state is set so user sees the loader
+    requestAnimationFrame(() => {
+      scrollToVirtualMirror();
+    });
     setError(null);
     setProducts([]);
     setIsProductSearchLoading(false);
@@ -1138,10 +1215,15 @@ function HomeContent() {
               await httpClient.post('/api/my/trial/consume');
           trialConsumedRef.current = true;
           setBilling((prev) => (prev ? { ...prev, trialUsed: true } : prev));
+          // Track trial consumption for n8n automation
+          trackTrialConsumed(requestId || undefined);
             } catch (consumeErr) {
               console.warn('Failed to mark trial consumed client-side', consumeErr);
             }
           }
+
+          // Track outfit generation for n8n automation
+          trackOutfitGenerated(requestId || '', preparedTryOnFiles.length);
 
           // Refresh billing info after successful try-on
           if (isLoaded && user) {
@@ -1673,6 +1755,27 @@ function HomeContent() {
                 <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,0,0,0.5)]">2</span>
                 Choose Wardrobe
               </h2>
+
+              {/* Try On Any URL - Competitive Differentiator */}
+              <div className="p-3 sm:p-4 rounded-xl border-2 border-dashed border-black/20 bg-gradient-to-r from-violet-50/50 to-purple-50/50">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="px-2 py-0.5 rounded-full bg-black text-white text-[10px] font-bold uppercase tracking-wide">New</span>
+                  <h3 className="text-sm font-semibold text-black">Try On Any URL</h3>
+                </div>
+                <TryOnFromUrl
+                  onProductScraped={handleProductScraped}
+                  isAuthenticated={isAuthenticated}
+                  onAuthRequired={requireAuth}
+                  disabled={wardrobeItems.length >= 5}
+                />
+              </div>
+
+              <div className="relative flex items-center gap-3 my-2">
+                <div className="flex-1 h-px bg-black/10"></div>
+                <span className="text-xs font-medium text-black/40 uppercase tracking-wide">or upload images</span>
+                <div className="flex-1 h-px bg-black/10"></div>
+              </div>
+
               <BulkUploadZone 
                 existingImages={wardrobeItems.map(item => item.file)}
                 existingAnalyses={wardrobeItems.map(item => item.analysis).filter((a): a is AnalyzedItem => a !== undefined)}
@@ -1699,7 +1802,6 @@ function HomeContent() {
                     e.preventDefault();
                     e.stopPropagation();
                     console.log("Try-on button clicked");
-                    scrollToVirtualMirror();
                     if (!isAuthenticated) {
                       setError('Please sign in to try on.');
                       return;
@@ -1799,6 +1901,27 @@ function HomeContent() {
                   For safety, we automatically add tasteful coverage/lining for intimate or minimal-coverage items.
                 </div>
               )}
+              
+              {/* Social Share Buttons - appears after successful try-on */}
+              {generatedImage && !isGenerating && (
+                <div className="mt-4 p-4 rounded-lg border border-black/10 bg-gradient-to-r from-violet-50/50 to-purple-50/50">
+                  <h3 className="text-sm font-semibold text-black mb-3 flex items-center gap-2">
+                    📸 Share Your Look
+                    <span className="px-2 py-0.5 rounded-full bg-black/10 text-[10px] font-medium uppercase tracking-wide">
+                      Get 2 free credits
+                    </span>
+                  </h3>
+                  <SocialShareButtons
+                    imageUrl={generatedImage}
+                    isPreview={isPreviewResult}
+                    onUpgradeClick={redirectToPricing}
+                  />
+                  <p className="mt-3 text-[11px] text-black/60">
+                    Tag @igetdressed.online on Instagram for a chance to be featured! 🌟
+                  </p>
+                </div>
+              )}
+
               {generatedImage && !isGenerating && user && (
                 <div className="mt-4 rounded-lg border border-black/20 bg-black/5 p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -2020,7 +2143,6 @@ function HomeContent() {
             </div>
             <button
               onClick={() => {
-                scrollToVirtualMirror();
                 if (!isAuthenticated) {
                   setError('Please sign in to try on.');
                   return;

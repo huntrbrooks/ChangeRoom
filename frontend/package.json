@@ -19,6 +19,7 @@
     "@google/genai": "^1.30.0",
     "@google/generative-ai": "^0.21.0",
     "@mediapipe/tasks-vision": "^0.10.14",
+    "@mendable/firecrawl-js": "^4.10.0",
     "@vercel/mcp-adapter": "^1.0.0",
     "@vercel/postgres": "^0.10.0",
     "axios": "^1.13.2",

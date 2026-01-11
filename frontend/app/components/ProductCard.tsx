@@ -1,5 +1,8 @@
-import React from 'react';
+'use client';
+
+import React, { useMemo, useCallback } from 'react';
 import { ShoppingCart } from 'lucide-react';
+import { convertToAffiliateLink, trackAffiliateClick } from '@/lib/affiliateLinks';
 
 interface Product {
   title: string;
@@ -15,6 +18,23 @@ interface ProductCardProps {
 }
 
 export const ProductCard: React.FC<ProductCardProps> = ({ product, loading = false }) => {
+  // Convert product link to affiliate link for revenue
+  const affiliateLink = useMemo(() => {
+    if (!product?.link) return '';
+    return convertToAffiliateLink(product.link);
+  }, [product?.link]);
+
+  // Track affiliate click for analytics
+  const handleClick = useCallback(() => {
+    if (!product) return;
+    trackAffiliateClick(
+      product.link,
+      affiliateLink,
+      product.title,
+      product.source
+    );
+  }, [product, affiliateLink]);
+
   if (loading || !product) {
     return (
       <div className="border border-black/10 rounded-none overflow-hidden bg-white animate-pulse">
@@ -36,7 +56,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, loading = fal
       <div className="aspect-square relative overflow-hidden bg-gray-100">
         {product.thumbnail && (
           // Use <img> instead of next/image because shopping thumbnails can come from many hosts.
-          // This avoids brittle remote-host allowlists and prevents silent “no image” failures.
+          // This avoids brittle remote-host allowlists and prevents silent "no image" failures.
           <img
             src={product.thumbnail}
             alt={product.title}
@@ -55,7 +75,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, loading = fal
           <span className="text-[10px] sm:text-xs text-black/60 uppercase tracking-wider">{product.source}</span>
         </div>
         <a
-          href={product.link}
+          href={affiliateLink}
+          onClick={handleClick}
           target="_blank"
           rel="noopener noreferrer"
           className="mt-3 w-full flex items-center justify-center gap-2 bg-black text-white py-2.5 sm:py-2 rounded-none hover:bg-gray-900 active:bg-gray-800 transition-colors text-xs sm:text-sm font-semibold uppercase tracking-wider min-h-[44px] touch-manipulation"
