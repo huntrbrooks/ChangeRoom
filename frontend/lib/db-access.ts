@@ -956,7 +956,7 @@ export async function finalizeDebitFromHold(
 
   await ensureUsersBillingTable();
   await ensureCreditTables();
-  return runTransaction(async (tx) => {
+  const hold = await runTransaction(async (tx) => {
     const holdResult = await tx`
       SELECT * FROM credit_holds WHERE request_id = ${requestId} FOR UPDATE
     `;
@@ -1012,17 +1012,19 @@ export async function finalizeDebitFromHold(
       `;
     }
 
-    const hold = updatedHold.rows[0] as CreditHold;
-    
-    // Reconcile credits after releasing hold to ensure consistency
+    return updatedHold.rows[0] as CreditHold;
+  });
+  
+  // Reconcile credits after finalizing debit to ensure consistency
+  if (hold) {
     try {
       await reconcileCreditsFromLedger(hold.user_id);
     } catch (e) {
-      console.warn("releaseCreditHold: reconciliation failed (non-fatal)", e);
+      console.warn("finalizeDebitFromHold: reconciliation failed (non-fatal)", e);
     }
-    
-    return hold;
-  });
+  }
+  
+  return hold;
 }
 
 /**
@@ -1038,7 +1040,7 @@ export async function releaseCreditHold(
 
   await ensureUsersBillingTable();
   await ensureCreditTables();
-  return runTransaction(async (tx) => {
+  const hold = await runTransaction(async (tx) => {
     const holdResult = await tx`
       SELECT * FROM credit_holds WHERE request_id = ${requestId} FOR UPDATE
     `;
@@ -1104,17 +1106,19 @@ export async function releaseCreditHold(
       `;
     }
 
-    const hold = updatedHold.rows[0] as CreditHold;
-    
-    // Reconcile credits after finalizing debit to ensure consistency
+    return updatedHold.rows[0] as CreditHold;
+  });
+  
+  // Reconcile credits after releasing hold to ensure consistency
+  if (hold) {
     try {
       await reconcileCreditsFromLedger(hold.user_id);
     } catch (e) {
-      console.warn("finalizeDebitFromHold: reconciliation failed (non-fatal)", e);
+      console.warn("releaseCreditHold: reconciliation failed (non-fatal)", e);
     }
-    
-    return hold;
-  });
+  }
+  
+  return hold;
 }
 
 /**
