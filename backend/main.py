@@ -35,8 +35,11 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Silence httpx INFO logs to avoid leaking API keys in URL query params.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="IGetDressed.Online API")
@@ -547,6 +550,8 @@ async def try_on(
         # Treat safety/policy blocks and “no image after retries with IMAGE_* finish reason” as 422 so the UI can warn/penalize.
         if (
             "IMAGE_SAFETY" in error_detail
+            or "PROHIBITED_CONTENT" in error_detail
+            or "no candidates returned" in error_detail.lower()
             or "safety filter" in error_detail.lower()
             or (
                 "no image generated after" in error_detail.lower()
