@@ -205,9 +205,23 @@ async def rewrite_for_modesty_gemini(
     if os.getenv("GEMINI_REWRITE_ENABLED", "1") != "1":
         raise RuntimeError("gemini_rewrite_disabled")
 
-    model_name = os.getenv("GEMINI_REWRITE_MODEL", "gemini-1.5-flash")
-    base_url = "https://generativelanguage.googleapis.com/v1beta/models"
-    endpoint = f"{base_url}/{model_name}:generateContent"
+    preferred_model = os.getenv("GEMINI_REWRITE_MODEL") or os.getenv("GEMINI_TEXT_MODEL")
+    model_candidates: List[str] = []
+    for m in [
+        preferred_model,
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+        "gemini-3-pro-image-preview",
+    ]:
+        m2 = (m or "").strip()
+        if m2 and m2 not in model_candidates:
+            model_candidates.append(m2)
+
+    endpoints: List[Tuple[str, str]] = []
+    for m in model_candidates:
+        endpoints.append((m, f"https://generativelanguage.googleapis.com/v1/models/{m}:generateContent"))
+        endpoints.append((m, f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent"))
 
     system = (
         "You are a safety compliance editor for a fashion virtual try-on system. "
@@ -257,18 +271,36 @@ async def rewrite_for_modesty_gemini(
         },
     }
 
-    async def do_call() -> httpx.Response:
+    async def do_call(endpoint_url: str) -> httpx.Response:
         return await _gemini_post_json(
             client,
-            url=f"{endpoint}?key={api_key}",
+            url=f"{endpoint_url}?key={api_key}",
             headers={"Content-Type": "application/json"},
             payload=req,
         )
 
     timeout_s = float(os.getenv("GEMINI_REWRITE_TIMEOUT_S", "12"))
-    resp = await asyncio.wait_for(do_call(), timeout=timeout_s)
-    if not resp.is_success:
-        raise RuntimeError(f"gemini_rewrite_http_error:{resp.status_code}:{resp.text[:300]}")
+    resp: Optional[httpx.Response] = None
+    used_model: Optional[str] = None
+    last_error: Optional[str] = None
+    for model_name, endpoint_url in endpoints:
+        try:
+            resp = await asyncio.wait_for(do_call(endpoint_url), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            raise RuntimeError("gemini_rewrite_timeout")
+
+        if not resp.is_success:
+            last_error = f"gemini_rewrite_http_error:{model_name}:{resp.status_code}:{resp.text[:200]}"
+            # Most common failure here is a deprecated model alias (404 NOT_FOUND). Try the next candidate quickly.
+            if resp.status_code == 404:
+                continue
+            raise RuntimeError(last_error)
+
+        used_model = model_name
+        break
+
+    if not resp or not resp.is_success:
+        raise RuntimeError(last_error or "gemini_rewrite_all_endpoints_failed")
 
     data = resp.json() if hasattr(resp, "json") else {}
     candidates = (data or {}).get("candidates") or []
@@ -1001,8 +1033,22 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                 b64 = base64.b64encode(garment_bytes).decode("utf-8")
                 mime = "image/jpeg"
 
-            model = os.getenv("GEMINI_INTIMATE_DETECT_MODEL", "gemini-1.5-flash")
-            endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            preferred_model = (
+                os.getenv("GEMINI_INTIMATE_DETECT_MODEL")
+                or os.getenv("GEMINI_VISION_MODEL")
+                or os.getenv("GEMINI_TEXT_MODEL")
+            )
+            model_candidates: List[str] = []
+            for m in [
+                preferred_model,
+                "gemini-2.0-flash",
+                "gemini-2.0-flash-lite",
+                "gemini-1.5-flash",
+                "gemini-3-pro-image-preview",
+            ]:
+                m2 = (m or "").strip()
+                if m2 and m2 not in model_candidates:
+                    model_candidates.append(m2)
 
             prompt = (
                 "You are a clothing safety classifier. Determine whether the garment in the image is intimate/minimal-coverage "
@@ -1027,14 +1073,29 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                 "generationConfig": {"temperature": 0.0, "maxOutputTokens": 250, "responseMimeType": "application/json"},
             }
 
-            resp = await _gemini_post_json(
-                client,
-                url=f"{endpoint}?key={api_key_value}",
-                headers={"Content-Type": "application/json"},
-                payload=payload,
-            )
-            if not resp.is_success:
-                return False, f"http_error:{resp.status_code}"
+            last_http: Optional[str] = None
+            resp: Optional[httpx.Response] = None
+            used_model: Optional[str] = None
+            for model_name in model_candidates:
+                for endpoint_url in [
+                    f"https://generativelanguage.googleapis.com/v1/models/{model_name}:generateContent",
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
+                ]:
+                    resp = await _gemini_post_json(
+                        client,
+                        url=f"{endpoint_url}?key={api_key_value}",
+                        headers={"Content-Type": "application/json"},
+                        payload=payload,
+                    )
+                    if resp.is_success:
+                        used_model = model_name
+                        break
+                    last_http = f"{model_name}:{resp.status_code}"
+                if resp and resp.is_success:
+                    break
+
+            if not resp or not resp.is_success:
+                return False, f"http_error:{last_http or 'unknown'}"
 
             data = resp.json()
             candidates = (data or {}).get("candidates") or []
@@ -1055,6 +1116,8 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
             is_int = bool(parsed.get("is_intimate"))
             label = str(parsed.get("label") or "")
             reason = str(parsed.get("reason") or "")
+            if used_model and preferred_model and used_model != preferred_model:
+                return is_int, f"{label}:{reason} (fallback_model={used_model})"[:140]
             return is_int, f"{label}:{reason}"[:140]
 
         def apply_modesty_contract(meta: Dict[str, Any]) -> Dict[str, Any]:
