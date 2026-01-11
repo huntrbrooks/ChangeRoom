@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
-import { finalizeDebitFromHold, getHoldByRequestId } from "@/lib/db-access";
 
 /**
  * POST /api/try-on/finalize
@@ -10,10 +8,44 @@ import { finalizeDebitFromHold, getHoldByRequestId } from "@/lib/db-access";
  * visible balance (the hold already deducted), but records the debit in the ledger.
  */
 export async function POST(req: NextRequest) {
-  const { userId } = await auth();
+  // Dynamic imports so env/auth misconfig doesn't crash the module at import time.
+  let auth: typeof import("@clerk/nextjs/server").auth;
+  try {
+    ({ auth } = await import("@clerk/nextjs/server"));
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("try-on finalize: failed to import @clerk/nextjs/server", err);
+    return NextResponse.json(
+      {
+        error: "clerk_server_unavailable",
+        details: message,
+        hint: "Check Vercel env vars: CLERK_SECRET_KEY must be set for server-side auth.",
+      },
+      { status: 500 }
+    );
+  }
+
+  let userId: string | null = null;
+  try {
+    ({ userId } = await auth());
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("try-on finalize: auth() failed", err);
+    return NextResponse.json(
+      {
+        error: "auth_failed",
+        details: message,
+        hint: "This usually means CLERK_SECRET_KEY (server-side) is missing/invalid in Vercel.",
+      },
+      { status: 500 }
+    );
+  }
+
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const { finalizeDebitFromHold, getHoldByRequestId } = await import("@/lib/db-access");
 
   const body = await req.json();
   const requestId =
@@ -49,5 +81,3 @@ export async function POST(req: NextRequest) {
   res.headers.set("X-ChangeRoom-Request-Id", requestId);
   return res;
 }
-
-
