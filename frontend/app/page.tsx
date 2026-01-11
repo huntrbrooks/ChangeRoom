@@ -85,6 +85,7 @@ function HomeContent() {
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [isPreviewResult, setIsPreviewResult] = useState(false);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
+  const [billingStatus, setBillingStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [showPaywall, setShowPaywall] = useState(false);
   const [lastRequestId, setLastRequestId] = useState<string | null>(null);
   const [hasShownPaywallAfterResult, setHasShownPaywallAfterResult] = useState(false);
@@ -250,27 +251,20 @@ function HomeContent() {
 
   const fetchBilling = async () => {
     try {
+      setBillingStatus('loading');
       const response = await httpClient.get('/api/my/billing');
       setBilling({
         ...response.data,
         hasPurchase: Boolean(response.data?.hasPurchase),
       });
+      setBillingStatus('ready');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
       // Only log error if it's not a 401 (unauthorized) - that's expected when not logged in
       if (error.response?.status !== 401) {
         console.error('Error fetching billing:', error.response?.data || error.message);
       }
-      // Set default billing if fetch fails
-      if (user) {
-        setBilling({
-          plan: 'free',
-          creditsAvailable: 0,
-          creditsRefreshAt: null,
-          trialUsed: false,
-          hasPurchase: false,
-        });
-      }
+      setBillingStatus('error');
     }
   };
 
@@ -286,16 +280,18 @@ function HomeContent() {
   const hasCreditsAvailable = billing ? billing.creditsAvailable > 0 : false;
   const hasPaidPlan = billing ? billing.plan !== 'free' : false;
   const hasPaidAccess = Boolean(billing?.hasPurchase || hasPaidPlan);
-  const lacksCredits = !isBypass && !isOnTrial && (!billing || !hasCreditsAvailable);
+  const lacksCredits =
+    !isBypass && !isOnTrial && billingStatus === 'ready' && (!billing || !hasCreditsAvailable);
   const shouldLockMyOutfits = useMemo(
     () =>
       isLoaded &&
       !!user &&
       !isBypass &&
+      billingStatus === 'ready' &&
       billing !== null &&
       (billing.trialUsed ?? false) &&
       !hasPaidAccess,
-    [billing, hasPaidAccess, isBypass, isLoaded, user]
+    [billing, billingStatus, hasPaidAccess, isBypass, isLoaded, user]
   );
 
   useEffect(() => {

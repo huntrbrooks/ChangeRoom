@@ -74,6 +74,54 @@ export interface CreditLedgerEntry {
   created_at: Date;
 }
 
+export interface CreditDiagnosticsSummary {
+  entryType: string;
+  count: number;
+  creditsChange: number;
+}
+
+export interface CreditDiagnosticsHold {
+  id: string;
+  request_id: string;
+  amount: number;
+  status: string;
+  reason: string | null;
+  expires_at: Date | null;
+  created_at: Date;
+}
+
+export interface CreditDiagnosticsEntry {
+  id: string;
+  request_id: string | null;
+  entry_type: CreditLedgerEntryType;
+  credits_change: number;
+  balance_after: number | null;
+  reason: string | null;
+  created_at: Date;
+}
+
+export interface CreditDiagnostics {
+  userId: string;
+  generatedAt: string;
+  billing: UserBilling | null;
+  ledger: {
+    netCredits: number;
+    summary: CreditDiagnosticsSummary[];
+    recentEntries: CreditDiagnosticsEntry[];
+  };
+  holds: {
+    summary: CreditDiagnosticsSummary[];
+    active: CreditDiagnosticsHold[];
+    staleActive: CreditDiagnosticsHold[];
+    staleThresholdMinutes: number;
+  };
+  discrepancy: null | {
+    expectedBalance: number;
+    currentBalance: number;
+    diff: number;
+  };
+}
+
 export interface ClothingItem {
   id: string;
   user_id: string;
@@ -604,8 +652,8 @@ async function reconcileCreditsFromLedger(userId: string): Promise<{
   }
 
   return runTransaction(async (tx) => {
-    // Calculate net credits from ledger (EXCLUDE adjustments - they're corrections, not real transactions)
-    // Adjustments are logged for audit but shouldn't affect the calculation
+    // Calculate net credits from ledger.
+    // Exclude reconciliation adjustments to avoid feedback loops.
     const ledgerResult = await tx`
       SELECT 
         SUM(CASE 
@@ -614,36 +662,66 @@ async function reconcileCreditsFromLedger(userId: string): Promise<{
           WHEN entry_type = 'hold' THEN credits_change  -- holds are negative
           WHEN entry_type = 'release' THEN credits_change  -- releases are positive (refund)
           WHEN entry_type = 'refund' THEN credits_change
-          -- NOTE: adjustment entries are EXCLUDED - they're corrections, not real transactions
-          -- Including them would cause reconciliation feedback loops
+          WHEN entry_type = 'adjustment'
+            AND COALESCE(metadata->>'reason', '') <> 'reconciliation' THEN credits_change
           ELSE 0
         END) as net_credits
       FROM credit_ledger_entries
       WHERE user_id = ${userId}
-        AND entry_type != 'adjustment'  -- Exclude adjustments from calculation
     `;
-    const netCreditsFromLedger = Number(ledgerResult.rows[0]?.net_credits ?? 0) || 0;
-
-    // Subtract any active holds (they're already in the ledger as negative, but credits_available reflects them)
-    const activeHoldsResult = await tx`
-      SELECT COALESCE(SUM(amount), 0) as active_holds_total
-      FROM credit_holds
-      WHERE user_id = ${userId} AND status = 'active'
-    `;
-    const activeHoldsTotal = Number(activeHoldsResult.rows[0]?.active_holds_total ?? 0) || 0;
-    
-    // Expected balance = ledger net - active holds (since active holds are already deducted from credits_available)
-    const expectedBalance = netCreditsFromLedger - activeHoldsTotal;
+    let netCreditsFromLedger = Number(ledgerResult.rows[0]?.net_credits ?? 0) || 0;
 
     // Get current billing balance
     const billing = await ensureUserBillingWithLock(tx, userId);
     const currentBalance = billing.credits_available;
 
+    // If the user is on a paid plan and the ledger is missing a plan baseline,
+    // seed the ledger to match the current billing balance (legacy safety).
+    if (billing.plan !== "free" && billing.credits_refresh_at) {
+      const baselineExists = await tx`
+        SELECT 1
+        FROM credit_ledger_entries
+        WHERE user_id = ${userId}
+          AND entry_type = 'adjustment'
+          AND COALESCE(metadata->>'reason', '') IN ('plan_reset', 'plan_baseline')
+        LIMIT 1
+      `;
+      if (baselineExists.rows.length === 0) {
+        const delta = currentBalance - netCreditsFromLedger;
+        if (delta !== 0) {
+          await tx`
+            INSERT INTO credit_ledger_entries (
+              id,
+              user_id,
+              request_id,
+              entry_type,
+              credits_change,
+              balance_after,
+              metadata
+            )
+            VALUES (
+              ${generateUuid()},
+              ${userId},
+              NULL,
+              'adjustment',
+              ${delta},
+              ${currentBalance},
+              ${JSON.stringify({ reason: "plan_baseline", plan: billing.plan })}
+            )
+          `;
+          netCreditsFromLedger = currentBalance;
+        }
+      }
+    }
+
+    // Expected balance = ledger net (holds already accounted for in ledger)
+    const expectedBalance = netCreditsFromLedger;
+
     // If there's a discrepancy, fix it
     if (Math.abs(currentBalance - expectedBalance) > 0.01) {
       console.warn(
         `credit_reconciliation: fixing discrepancy for user ${userId}: ` +
-        `billing=${currentBalance}, expected=${expectedBalance} (ledger=${netCreditsFromLedger}, active_holds=${activeHoldsTotal}), diff=${expectedBalance - currentBalance}`
+        `billing=${currentBalance}, expected=${expectedBalance} (ledger=${netCreditsFromLedger}), diff=${expectedBalance - currentBalance}`
       );
 
       // Update billing to match expected balance
@@ -678,7 +756,6 @@ async function reconcileCreditsFromLedger(userId: string): Promise<{
             reason: "reconciliation",
             old_balance: currentBalance,
             calculated_from_ledger: netCreditsFromLedger,
-            active_holds: activeHoldsTotal,
             expected_balance: expectedBalance,
           })}
         )
@@ -1273,6 +1350,159 @@ export async function getLedgerEntries(
   });
 }
 
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
+
+export async function getCreditDiagnostics(
+  userId: string,
+  options: { entryLimit?: number; holdLimit?: number } = {}
+): Promise<CreditDiagnostics> {
+  const entryLimit = clampNumber(options.entryLimit ?? 25, 5, 100);
+  const holdLimit = clampNumber(options.holdLimit ?? 20, 5, 100);
+
+  await ensureUsersBillingTable();
+  await ensureCreditTables();
+
+  return runTransaction(async (tx) => {
+    const billingResult = await tx`
+      SELECT * FROM users_billing WHERE user_id = ${userId} LIMIT 1
+    `;
+    const billing =
+      billingResult.rows.length > 0 ? (billingResult.rows[0] as UserBilling) : null;
+
+    const ledgerNetResult = await tx`
+      SELECT 
+        SUM(CASE 
+          WHEN entry_type = 'grant' THEN credits_change
+          WHEN entry_type = 'debit' THEN 0
+          WHEN entry_type = 'hold' THEN credits_change
+          WHEN entry_type = 'release' THEN credits_change
+          WHEN entry_type = 'refund' THEN credits_change
+          WHEN entry_type = 'adjustment'
+            AND COALESCE(metadata->>'reason', '') <> 'reconciliation' THEN credits_change
+          ELSE 0
+        END) as net_credits
+      FROM credit_ledger_entries
+      WHERE user_id = ${userId}
+    `;
+    const netCredits = Number(ledgerNetResult.rows[0]?.net_credits ?? 0) || 0;
+
+    const ledgerSummaryRows = await tx`
+      SELECT entry_type, COUNT(*)::int as count, COALESCE(SUM(credits_change), 0)::int as total
+      FROM credit_ledger_entries
+      WHERE user_id = ${userId}
+      GROUP BY entry_type
+      ORDER BY entry_type
+    `;
+
+    const ledgerSummary: CreditDiagnosticsSummary[] = ledgerSummaryRows.rows.map((row) => ({
+      entryType: String((row as any).entry_type),
+      count: Number((row as any).count || 0),
+      creditsChange: Number((row as any).total || 0),
+    }));
+
+    const ledgerEntriesResult = await tx`
+      SELECT
+        id,
+        request_id,
+        entry_type,
+        credits_change,
+        balance_after,
+        metadata->>'reason' as reason,
+        created_at
+      FROM credit_ledger_entries
+      WHERE user_id = ${userId}
+      ORDER BY created_at DESC
+      LIMIT ${entryLimit}
+    `;
+
+    const recentEntries: CreditDiagnosticsEntry[] = ledgerEntriesResult.rows.map((row) => ({
+      id: String((row as any).id),
+      request_id: (row as any).request_id ? String((row as any).request_id) : null,
+      entry_type: (row as any).entry_type as CreditLedgerEntryType,
+      credits_change: Number((row as any).credits_change || 0),
+      balance_after: (row as any).balance_after ?? null,
+      reason: (row as any).reason ? String((row as any).reason) : null,
+      created_at: (row as any).created_at as Date,
+    }));
+
+    const holdsSummaryRows = await tx`
+      SELECT status, COUNT(*)::int as count, COALESCE(SUM(amount), 0)::int as total
+      FROM credit_holds
+      WHERE user_id = ${userId}
+      GROUP BY status
+      ORDER BY status
+    `;
+
+    const holdsSummary: CreditDiagnosticsSummary[] = holdsSummaryRows.rows.map((row) => ({
+      entryType: String((row as any).status),
+      count: Number((row as any).count || 0),
+      creditsChange: Number((row as any).total || 0),
+    }));
+
+    const activeHoldsRows = await tx`
+      SELECT id, request_id, amount, status, reason, expires_at, created_at
+      FROM credit_holds
+      WHERE user_id = ${userId}
+        AND status = 'active'
+      ORDER BY created_at DESC
+      LIMIT ${holdLimit}
+    `;
+
+    const staleHoldsRows = await tx`
+      SELECT id, request_id, amount, status, reason, expires_at, created_at
+      FROM credit_holds
+      WHERE user_id = ${userId}
+        AND status = 'active'
+        AND (
+          (expires_at IS NOT NULL AND expires_at < now())
+          OR (expires_at IS NULL AND created_at < (now() - (${DEFAULT_CREDIT_HOLD_TTL_MS}::bigint * interval '1 millisecond')))
+        )
+      ORDER BY created_at DESC
+      LIMIT ${holdLimit}
+    `;
+
+    const mapHold = (row: any): CreditDiagnosticsHold => ({
+      id: String(row.id),
+      request_id: String(row.request_id),
+      amount: Number(row.amount || 0),
+      status: String(row.status),
+      reason: row.reason ? String(row.reason) : null,
+      expires_at: row.expires_at ?? null,
+      created_at: row.created_at as Date,
+    });
+
+    const discrepancy =
+      billing === null
+        ? null
+        : {
+            expectedBalance: netCredits,
+            currentBalance: billing.credits_available,
+            diff: netCredits - billing.credits_available,
+          };
+
+    return {
+      userId,
+      generatedAt: new Date().toISOString(),
+      billing,
+      ledger: {
+        netCredits,
+        summary: ledgerSummary,
+        recentEntries,
+      },
+      holds: {
+        summary: holdsSummary,
+        active: activeHoldsRows.rows.map(mapHold),
+        staleActive: staleHoldsRows.rows.map(mapHold),
+        staleThresholdMinutes: DEFAULT_CREDIT_HOLD_TTL_MINUTES,
+      },
+      discrepancy,
+    };
+  });
+}
+
 /**
  * Check whether the user has any recorded paid credit grants (excludes free trial).
  */
@@ -1618,8 +1848,11 @@ export async function updateUserBillingPlan(
 
   const refreshAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-  return withUsersBillingTable(async () => {
-    const result = await sql`
+  await ensureUsersBillingTable();
+  await ensureCreditTables();
+  return runTransaction(async (tx) => {
+    const current = await ensureUserBillingWithLock(tx, userId);
+    const result = await tx`
       UPDATE users_billing
       SET 
         plan = ${plan},
@@ -1633,11 +1866,39 @@ export async function updateUserBillingPlan(
     `;
 
     if (result.rows.length === 0) {
-      // Create if doesn't exist
       return getOrCreateUserBilling(userId);
     }
 
     const row = result.rows[0] as UserBilling;
+    const delta = row.credits_available - current.credits_available;
+
+    if (delta !== 0) {
+      await tx`
+        INSERT INTO credit_ledger_entries (
+          id,
+          user_id,
+          request_id,
+          entry_type,
+          credits_change,
+          balance_after,
+          metadata
+        )
+        VALUES (
+          ${generateUuid()},
+          ${userId},
+          NULL,
+          'adjustment',
+          ${delta},
+          ${row.credits_available},
+          ${JSON.stringify({
+            reason: "plan_reset",
+            from_plan: current.plan,
+            to_plan: plan,
+          })}
+        )
+      `;
+    }
+
     return { ...row, is_frozen: row.is_frozen ?? false };
   });
 }

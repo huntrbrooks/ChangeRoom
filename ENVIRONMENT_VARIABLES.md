@@ -82,6 +82,7 @@ Set these in the **Vercel project** for the frontend (`frontend/`).
 | `TRYON_PRO_MONTHLY_CREDITS` | Monthly credits for Pro plan | `250` | `250` |
 | `CREDIT_HOLD_TTL_MINUTES` | Minutes before an in-flight credit hold expires and is auto-released | `30` | `45` |
 | `METRICS_EMAIL_SECRET` | Secret token to call the admin-only `/api/metrics-email` route | (none) | `your-long-random-token` |
+| `ADMIN_API_KEY` | Secret token for admin endpoints (gift credits, diagnostics) | (none) | `your-long-random-token` |
 
 ## Environment Setup
 

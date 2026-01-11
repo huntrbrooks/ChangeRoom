@@ -25,6 +25,7 @@ function BillingPageContent() {
   const router = useRouter();
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  const [billingError, setBillingError] = useState<string | null>(null);
   const [portalLoading, setPortalLoading] = useState(false);
   const [showPaywall, setShowPaywall] = useState(false);
 
@@ -36,10 +37,12 @@ function BillingPageContent() {
 
   const fetchBilling = async () => {
     try {
+      setBillingError(null);
       const response = await httpClient.get('/api/my/billing');
       setBilling(response.data);
     } catch (error) {
       console.error('Error fetching billing:', error);
+      setBillingError('Unable to load billing details right now. Please retry in a moment.');
     } finally {
       setLoading(false);
     }
@@ -119,6 +122,11 @@ function BillingPageContent() {
       </header>
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
+        {billingError && (
+          <div className="mb-6 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
+            {billingError}
+          </div>
+        )}
         {/* Current Plan Status */}
         <div className="bg-gradient-to-br from-blue-50 to-white border-2 border-blue-200 rounded-xl p-6 mb-8">
           <div className="flex items-start justify-between mb-4">
@@ -316,4 +324,3 @@ export default function BillingPage() {
   
   return <BillingPageContent />;
 }
-
