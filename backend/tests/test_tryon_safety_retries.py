@@ -34,6 +34,10 @@ def test_heuristic_rewrite_sanitizes_and_adds_defaults():
     assert "intimate" in str(new_meta).lower() or "delicate" in str(new_meta).lower()
     assert new_meta.get("background") is not None
     assert "safety compliance" in new_prompt.lower()
+    # The heuristic layer should be overlay-only (no redesign / no background changes).
+    assert "overlay-only" in new_prompt.lower() or "overlay only" in new_prompt.lower()
+    assert "do not change background" in new_prompt.lower()
+    assert "do not redesign" in new_prompt.lower()
     assert "heuristic_rewrite" in summary
 
 

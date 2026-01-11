@@ -145,22 +145,24 @@ def rewrite_for_modesty_heuristic(
     safe_meta = sanitize_value(safe_meta)
 
     # Encourage conservative framing; do not overwrite explicit user intent, only set if missing.
-    safe_meta.setdefault("framing", "three_quarter")
-    safe_meta.setdefault("background", "neutral studio background")
-    safe_meta.setdefault("camera", "professional fashion editorial, neutral studio, avoid close-ups")
-    safe_meta.setdefault("pose", "neutral standing pose")
+    # IMPORTANT: We prefer fidelity. Do not force a new background/pose/camera; instead preserve the user's reference image.
+    safe_meta.setdefault("framing", "match_main_reference")
+    safe_meta.setdefault("background", "match_main_reference")
+    safe_meta.setdefault("camera", "match_main_reference")
+    safe_meta.setdefault("pose", "match_main_reference")
     safe_meta.setdefault("content_policy", "general_audience")
 
     guidance = (
-        "\n\nSAFETY COMPLIANCE (MANDATORY): Create a general-audience fashion image. "
-        "Avoid suggestive context, avoid close-up framing, keep styling professional and modest. "
-        "If any garment appears revealing or semi-transparent, automatically add opaque lining/layering "
-        "and increase coverage while keeping the garment recognizable."
+        "\n\nSAFETY COMPLIANCE (MANDATORY): Create a general-audience fashion image while preserving fidelity. "
+        "PRESERVE FIDELITY: Keep the person identical to the user reference (face, hair, skin tone, body shape, tattoos, accessories), "
+        "and keep the new garment identical to the clothing image (design, color, texture, logos, prints). "
+        "DO NOT change background, lighting, camera angle, framing, or pose unless explicitly instructed. "
+        "OVERLAY-ONLY MODE: If needed to satisfy safety policies, ONLY add a thin opaque lining/underlayer or increase fabric opacity "
+        "(e.g., a seamless lining, modesty panel, or built-in lining). Do NOT redesign the garment, do NOT add new garments, and do NOT change fit/style."
     )
     if strictness == "max":
         guidance += (
-            " Prioritize compliance over fidelity: default to conservative studio portrait framing, "
-            "fully opaque fabrics, and layered styling when uncertain."
+            " If safety remains uncertain, prefer slightly higher opacity/lining, but still keep the garment/person/background unchanged."
         )
 
     safe_prompt = sanitize_text(prompt) + guidance
@@ -209,16 +211,18 @@ async def rewrite_for_modesty_gemini(
 
     system = (
         "You are a safety compliance editor for a fashion virtual try-on system. "
-        "Your job is to rewrite METADATA and propose PROMPT_ADDITIONS to reduce image safety blocks "
-        "while keeping the outfit recognizable and professional. "
+        "Your job is to propose MINIMAL changes that reduce image safety blocks while preserving fidelity. "
+        "ABSOLUTE CONSTRAINTS: "
+        "Do NOT change the person's identity (face, hair, skin tone, body shape), do NOT change pose/angle/background/lighting, "
+        "and do NOT change the garment design/color/texture/logos/prints. "
+        "ALLOWED CHANGE ONLY: add a thin opaque lining/underlayer or increase fabric opacity/coverage *without* altering the garment's design. "
         "Do NOT remove or weaken mandatory wearing directives. "
-        "Keep the output general-audience and modest. "
+        "Keep the output general-audience and professional. "
         "Return ONLY valid JSON matching the schema."
     )
     if strictness == "max":
         system += (
-            " Apply MAXIMUM safety: conservative studio framing, avoid close-ups, ensure opacity/coverage, "
-            "and err on the side of layered styling."
+            " Apply MAXIMUM safety using overlay-only changes (higher opacity/lining) while still preserving identity/pose/background and garment design."
         )
 
     schema = {
@@ -708,8 +712,10 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                 "Generate one photorealistic image of the person wearing all provided NEW clothing items. "
                 "OUTFIT PRESERVATION: For any clothing or accessories NOT provided in the new garments list, faithfully reproduce them from the Main Reference Image. "
                 "Replace ONLY the garments that conflict with the new items (e.g., new top replaces the old top, but keep the original pants/shoes if not replaced; a dress replaces both top and bottom). "
-                "BACKGROUND & POSE: Do NOT reuse the original background. Use a clean, neutral, flattering background. Do NOT lock the exact pose/angle—allow natural variation that still fits the person. "
+                "EDITING INSTRUCTION: Treat the Main Reference Image as the base to edit. Make the result look as close to the Main Reference as possible. "
+                "BACKGROUND & POSE: Preserve the Main Reference background, lighting, camera angle, framing, and pose as closely as possible. "
                 "IDENTITY FIDELITY: All user images must be used to perfectly maintain the same face, hair, eyes, skin tone, and body shape/height impression in the final image. "
+                "MINIMAL CHANGE: Do not beautify, restyle, or change facial features, body, age, hair, or makeup. Do not change tattoos or accessories. "
                 "Every user-specified wearing style or positioning instruction is mandatory and overrides any defaults. "
                 "Do not ignore, soften, or reinterpret those directives under any circumstance.\n\n"
             )
@@ -740,9 +746,9 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
             text_prompt += (
                 "IMPORTANT SAFETY GUIDELINES: "
                 "Generate appropriate, tasteful fashion content only. "
-                "If any clothing appears potentially inappropriate, automatically modify it to be more modest and professional while maintaining the essential style and functionality. "
+                "If any clothing appears potentially inappropriate, use overlay-only adjustments to make it more modest and professional while preserving the garment design. "
                 "Ensure all generated content complies with general audience standards. "
-                "Add subtle coverage or opacity as needed to maintain appropriateness without changing the garment's fundamental design."
+                "Add subtle coverage/opacity (lining/underlayer) only if needed, without changing the garment's fundamental design."
             )
 
             # If this request is flagged as intimate/high-risk, enforce a deterministic “modesty contract”
@@ -752,10 +758,10 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                     "\n\nMODESTY CONTRACT (MANDATORY): "
                     "This outfit may include intimate or minimal-coverage garments. "
                     "You MUST output a general-audience, tasteful fashion image. "
-                    "If any garment is small, sheer, or revealing, automatically add opaque lining, increase coverage, "
-                    "and/or add a simple underlayer (e.g., camisole, bralette lining, slip, bandeau, mesh base) "
-                    "while keeping the garment recognizable. "
-                    "Use conservative studio styling, avoid close-ups, avoid explicit emphasis, and keep pose neutral."
+                    "OVERLAY-ONLY: If any garment is small, sheer, or revealing, ONLY add a thin opaque lining/underlayer or increase fabric opacity/coverage "
+                    "while keeping the garment IDENTICAL (same design, color, texture, logos/prints). "
+                    "DO NOT change the person's identity, pose, background, lighting, or camera angle. "
+                    "Avoid explicit emphasis; keep results tasteful and professional."
                 )
 
             # Add wearing style instructions if provided
@@ -1055,16 +1061,17 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
             out = copy.deepcopy(meta) if isinstance(meta, dict) else {}
             out["modesty_contract"] = True
             out["intimate_mode"] = True
-            # Bias towards safe framing; do not force full_body for intimate items.
-            out.setdefault("framing", "three_quarter")
-            out.setdefault("background", "neutral studio background")
-            out.setdefault("pose", "neutral standing pose")
-            out.setdefault("camera", "professional fashion editorial, neutral studio, avoid close-ups")
+            # Prefer fidelity: match the main reference image unless the user explicitly requests otherwise.
+            out.setdefault("framing", "match_main_reference")
+            out.setdefault("background", "match_main_reference")
+            out.setdefault("pose", "match_main_reference")
+            out.setdefault("camera", "match_main_reference")
             out.setdefault("content_policy", "general_audience")
-            # Explicit allowance to add coverage/underlayers to pass safety.
+            # Explicit allowance to add coverage/underlayers to pass safety, but keep it minimal.
             out.setdefault("allow_underlayer", True)
-            out.setdefault("coverage_preference", "high")
-            out.setdefault("opacity_preference", "opaque")
+            out.setdefault("overlay_only", True)
+            out.setdefault("coverage_preference", "minimal")
+            out.setdefault("opacity_preference", "increase_opacity_if_needed")
             out.setdefault("avoid_closeups", True)
             return out
 
@@ -1145,11 +1152,11 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
             for attempt in range(1, max_attempts + 1):
                 retry_suffix = ""
                 if attempt == 2:
-                    retry_suffix = "\n\nRETRY: Keep output professional, conservative, and general-audience."
+                    retry_suffix = "\n\nRETRY: Preserve the person, pose, background, and garment design. Use overlay-only (lining/opacity) if needed for safety."
                 elif attempt == 3:
-                    retry_suffix = "\n\nRETRY: Increase coverage and opacity; avoid close-ups; professional studio framing."
+                    retry_suffix = "\n\nRETRY: Increase opacity/lining slightly (overlay-only). Do NOT change pose/background/identity or garment design."
                 elif attempt == 4:
-                    retry_suffix = "\n\nRETRY (MAX SAFETY): Default to conservative studio portrait; fully opaque fabrics; layered styling."
+                    retry_suffix = "\n\nRETRY (MAX SAFETY): Overlay-only with fully opaque lining if necessary. Do NOT change pose/background/identity or garment design."
 
                 text_prompt = current_prompt + retry_suffix
                 parts = build_parts(text_prompt)
