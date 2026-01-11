@@ -604,7 +604,8 @@ async function reconcileCreditsFromLedger(userId: string): Promise<{
   }
 
   return runTransaction(async (tx) => {
-    // Calculate net credits from ledger
+    // Calculate net credits from ledger (EXCLUDE adjustments - they're corrections, not real transactions)
+    // Adjustments are logged for audit but shouldn't affect the calculation
     const ledgerResult = await tx`
       SELECT 
         SUM(CASE 
@@ -613,11 +614,13 @@ async function reconcileCreditsFromLedger(userId: string): Promise<{
           WHEN entry_type = 'hold' THEN credits_change  -- holds are negative
           WHEN entry_type = 'release' THEN credits_change  -- releases are positive (refund)
           WHEN entry_type = 'refund' THEN credits_change
-          WHEN entry_type = 'adjustment' THEN credits_change
+          -- NOTE: adjustment entries are EXCLUDED - they're corrections, not real transactions
+          -- Including them would cause reconciliation feedback loops
           ELSE 0
         END) as net_credits
       FROM credit_ledger_entries
       WHERE user_id = ${userId}
+        AND entry_type != 'adjustment'  -- Exclude adjustments from calculation
     `;
     const netCreditsFromLedger = Number(ledgerResult.rows[0]?.net_credits ?? 0) || 0;
 
@@ -707,7 +710,8 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
       console.warn("billing: failed to cleanup stale holds (non-fatal)", e);
     }
 
-    // Reconcile credits from ledger to fix any discrepancies
+    // CRITICAL: Reconcile credits BEFORE fetching billing record
+    // This ensures we always return the corrected value
     try {
       await reconcileCreditsFromLedger(userId);
     } catch (e) {
@@ -715,7 +719,7 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
       console.warn("billing: failed to reconcile credits (non-fatal)", e);
     }
 
-    // First try to get existing record
+    // Fetch billing record AFTER reconciliation to get corrected value
     const existing = await sql`
       SELECT * FROM users_billing WHERE user_id = ${userId}
     `;
@@ -1008,7 +1012,16 @@ export async function finalizeDebitFromHold(
       `;
     }
 
-    return updatedHold.rows[0] as CreditHold;
+    const hold = updatedHold.rows[0] as CreditHold;
+    
+    // Reconcile credits after releasing hold to ensure consistency
+    try {
+      await reconcileCreditsFromLedger(hold.user_id);
+    } catch (e) {
+      console.warn("releaseCreditHold: reconciliation failed (non-fatal)", e);
+    }
+    
+    return hold;
   });
 }
 
@@ -1091,7 +1104,16 @@ export async function releaseCreditHold(
       `;
     }
 
-    return updatedHold.rows[0] as CreditHold;
+    const hold = updatedHold.rows[0] as CreditHold;
+    
+    // Reconcile credits after finalizing debit to ensure consistency
+    try {
+      await reconcileCreditsFromLedger(hold.user_id);
+    } catch (e) {
+      console.warn("finalizeDebitFromHold: reconciliation failed (non-fatal)", e);
+    }
+    
+    return hold;
   });
 }
 
@@ -1110,7 +1132,7 @@ export async function grantCredits(
 
   await ensureUsersBillingTable();
   await ensureCreditTables();
-  return runTransaction(async (tx) => {
+  const result = await runTransaction(async (tx) => {
     // Ensure billing exists and lock row for safe concurrent updates
     await ensureUserBillingWithLock(tx, userId);
 
@@ -1199,6 +1221,18 @@ export async function grantCredits(
 
     return updated.rows[0] as UserBilling;
   });
+  
+  // Reconcile credits after granting to ensure consistency
+  try {
+    await reconcileCreditsFromLedger(userId);
+    // Fetch fresh billing after reconciliation
+    const freshBilling = await getOrCreateUserBilling(userId);
+    return freshBilling;
+  } catch (e) {
+    // If reconciliation fails, return the result from the transaction
+    console.warn("grantCredits: reconciliation failed (non-fatal)", e);
+    return result;
+  }
 }
 
 /**
