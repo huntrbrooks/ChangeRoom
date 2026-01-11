@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
-import { getHoldByRequestId, releaseCreditHold } from "@/lib/db-access";
 
 /**
  * POST /api/try-on/cancel
@@ -8,10 +6,44 @@ import { getHoldByRequestId, releaseCreditHold } from "@/lib/db-access";
  * Releases an active hold for the given request (idempotent).
  */
 export async function POST(req: NextRequest) {
-  const { userId } = await auth();
+  // Dynamic imports so env/auth misconfig doesn't crash the module at import time.
+  let auth: typeof import("@clerk/nextjs/server").auth;
+  try {
+    ({ auth } = await import("@clerk/nextjs/server"));
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("try-on cancel: failed to import @clerk/nextjs/server", err);
+    return NextResponse.json(
+      {
+        error: "clerk_server_unavailable",
+        details: message,
+        hint: "Check Vercel env vars: CLERK_SECRET_KEY must be set for server-side auth.",
+      },
+      { status: 500 }
+    );
+  }
+
+  let userId: string | null = null;
+  try {
+    ({ userId } = await auth());
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("try-on cancel: auth() failed", err);
+    return NextResponse.json(
+      {
+        error: "auth_failed",
+        details: message,
+        hint: "This usually means CLERK_SECRET_KEY (server-side) is missing/invalid in Vercel.",
+      },
+      { status: 500 }
+    );
+  }
+
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const { getHoldByRequestId, releaseCreditHold } = await import("@/lib/db-access");
 
   const body = await req.json();
   const requestId =
@@ -25,7 +57,11 @@ export async function POST(req: NextRequest) {
 
   const hold = await getHoldByRequestId(requestId);
   if (!hold) {
-    return NextResponse.json({ ok: true, status: "not_found" });
+    const res = NextResponse.json({ ok: true, status: "not_found" });
+    res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
+    res.headers.set("X-Request-Id", requestId);
+    res.headers.set("X-ChangeRoom-Request-Id", requestId);
+    return res;
   }
 
   if (hold.user_id !== userId) {
@@ -34,9 +70,12 @@ export async function POST(req: NextRequest) {
 
   const released = await releaseCreditHold(requestId, "user_cancelled");
 
-  return NextResponse.json({
+  const res = NextResponse.json({
     ok: true,
     status: released?.status || hold.status,
   });
+  res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
+  res.headers.set("X-Request-Id", requestId);
+  res.headers.set("X-ChangeRoom-Request-Id", requestId);
+  return res;
 }
-
