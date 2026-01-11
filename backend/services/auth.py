@@ -2,9 +2,14 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+import logging
 import httpx
 from fastapi import HTTPException, Request
 from jose import JWTError, jwt
+
+# Silence httpx INFO logs to avoid leaking API keys in URL query params.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 _AUTH_MODE_VALUES = {"none", "off", "disabled", "clerk", "api_key"}
 

@@ -10,6 +10,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Silence httpx INFO logs to avoid leaking API keys in URL query params.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 DEFAULT_GEMINI_MODEL_CANDIDATES: List[str] = [
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",

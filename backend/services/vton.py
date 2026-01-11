@@ -12,6 +12,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Silence httpx INFO logs to avoid leaking API keys in URL query params.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 # This module uses direct REST API calls to Gemini API with API key authentication.
 # No SDKs or OAuth2 are required - just set GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable.
 
