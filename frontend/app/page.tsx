@@ -568,10 +568,15 @@ function HomeContent() {
     const fileMeta = entry.file as FileWithMetadata;
     const analysisMeta = entry.analysis?.analysis;
     const baseDescription =
-      (analysisMeta?.description ||
+      (
+        analysisMeta?.description ||
         analysisMeta?.short_description ||
         fileMeta.detailed_description ||
-        '')
+        (typeof fileMeta.metadata?.description === 'string'
+          ? fileMeta.metadata.description
+          : '') ||
+        ''
+      )
         .toString()
         .trim();
 
@@ -652,6 +657,21 @@ function HomeContent() {
         }
 
         let updatedAnalysis = prevEntry.analysis;
+        const fallbackItemType =
+          typeof updatedMetadata.item_type === 'string'
+            ? updatedMetadata.item_type
+            : analysisMeta?.item_type ||
+              (updatedDescription
+                ? updatedDescription.split(/\s+/).slice(0, 4).join(' ')
+                : '');
+        const normalizedTags = Array.isArray(updatedMetadata.tags)
+          ? updatedMetadata.tags.filter((tag): tag is string => typeof tag === 'string')
+          : analysisMeta?.tags || [];
+        const nextCategory =
+          typeof updatedMetadata.category === 'string'
+            ? updatedMetadata.category
+            : analysisMeta?.category || analysisMeta?.body_region || 'unknown';
+
         if (updatedAnalysis?.analysis) {
           const analysis = { ...updatedAnalysis.analysis };
           if (updatedDescription) {
@@ -662,12 +682,48 @@ function HomeContent() {
           if (typeof updatedMetadata.color === 'string') analysis.color = updatedMetadata.color;
           if (typeof updatedMetadata.style === 'string') analysis.style = updatedMetadata.style;
           if (typeof updatedMetadata.brand === 'string') analysis.brand = updatedMetadata.brand;
-          if (typeof updatedMetadata.item_type === 'string') analysis.item_type = updatedMetadata.item_type;
-          if (Array.isArray(updatedMetadata.tags)) {
-            analysis.tags = updatedMetadata.tags.filter((tag): tag is string => typeof tag === 'string');
-          }
+          if (fallbackItemType) analysis.item_type = fallbackItemType;
+          analysis.category = nextCategory;
+          analysis.body_region = analysis.body_region || nextCategory;
+          analysis.tags = normalizedTags;
           analysis.metadata = { ...(analysis.metadata || {}), ...updatedMetadata };
-          updatedAnalysis = { ...updatedAnalysis, analysis };
+          updatedAnalysis = { ...updatedAnalysis, analysis, status: 'success' };
+        } else {
+          updatedAnalysis = {
+            index,
+            original_filename:
+              prevEntry.analysis?.original_filename || prevEntry.file.name,
+            analysis: {
+              body_region: nextCategory,
+              category: nextCategory,
+              item_type: fallbackItemType || undefined,
+              brand:
+                typeof updatedMetadata.brand === 'string'
+                  ? updatedMetadata.brand
+                  : analysisMeta?.brand || undefined,
+              short_description: updatedDescription || undefined,
+              description: updatedDescription || undefined,
+              detailed_description: updatedDescription || undefined,
+              suggested_filename:
+                prevEntry.analysis?.analysis?.suggested_filename ||
+                prevEntry.analysis?.saved_filename ||
+                prevEntry.file.name,
+              color:
+                typeof updatedMetadata.color === 'string'
+                  ? updatedMetadata.color
+                  : analysisMeta?.color || undefined,
+              style:
+                typeof updatedMetadata.style === 'string'
+                  ? updatedMetadata.style
+                  : analysisMeta?.style || undefined,
+              tags: normalizedTags,
+              metadata: { ...updatedMetadata },
+            },
+            file_url: prevEntry.analysis?.file_url,
+            saved_filename: prevEntry.analysis?.saved_filename,
+            storage_path: prevEntry.analysis?.storage_path,
+            status: 'success',
+          };
         }
 
         next[index] = { ...prevEntry, file: nextFile, analysis: updatedAnalysis };
