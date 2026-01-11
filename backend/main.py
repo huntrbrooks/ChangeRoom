@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request, Dep
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import uvicorn
 import os
 import sys
@@ -10,6 +10,7 @@ import logging
 import json
 import json as json_lib
 import asyncio
+import httpx
 from pathlib import Path
 from dotenv import load_dotenv
 import time
@@ -572,6 +573,102 @@ async def try_on(
         # Log full error details for debugging (this will appear in Render logs)
         logger.error(f"Full error details - Type: {error_type}, Message: {error_detail}, Exception: {repr(e)}")
         raise HTTPException(status_code=500, detail=error_detail)
+
+@app.post("/api/clothing/adjust-description", dependencies=[Depends(require_backend_auth)])
+async def adjust_description(request: Request):
+    """
+    Rewrite clothing metadata + description to a more modest, safety-compliant version.
+    This is used when try-on is blocked by safety filters and the user requests a rewrite.
+    """
+    try:
+        ip = get_client_ip(request)
+        if not check_rate_limit(f"adjust-description:{ip}", limit=30, window_seconds=60):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
+
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Invalid payload.")
+
+        raw_meta = payload.get("metadata")
+        metadata = raw_meta if isinstance(raw_meta, dict) else {}
+        description = payload.get("description") or metadata.get("description") or ""
+        if not isinstance(description, str):
+            description = str(description)
+        description = description.strip()
+        if not description:
+            description = "clothing item"
+
+        strictness = str(payload.get("strictness") or "moderate").lower()
+        if strictness not in ("low", "moderate", "max"):
+            strictness = "moderate"
+
+        last_failure = payload.get("last_failure")
+        if not isinstance(last_failure, dict):
+            last_failure = {"reason": "user_requested_adjustment"}
+
+        # Ensure description is included in metadata for sanitization.
+        if "description" not in metadata:
+            metadata = {**metadata, "description": description}
+
+        prompt_additions = ""
+        summary = ""
+        strategy = "heuristic"
+        updated_meta: Dict[str, Any] = metadata
+
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
+        if api_key:
+            try:
+                async with httpx.AsyncClient() as client:
+                    new_meta, prompt_additions, summary = await vton.rewrite_for_modesty_gemini(
+                        client,
+                        api_key=api_key,
+                        metadata=metadata,
+                        prompt=description,
+                        last_failure=last_failure,
+                        strictness=strictness,
+                    )
+                if "description" not in new_meta and description:
+                    new_meta = {**new_meta, "description": description}
+                updated_meta, _safe_prompt, heur_summary = vton.rewrite_for_modesty_heuristic(
+                    new_meta,
+                    prompt_additions or description,
+                    strictness=strictness,
+                )
+                summary = f"{summary}; {heur_summary}" if summary else heur_summary
+                strategy = "gemini_rewrite"
+            except Exception as e:
+                logger.warning(f"Adjust description gemini rewrite failed; falling back to heuristic: {e}")
+                updated_meta, _safe_prompt, summary = vton.rewrite_for_modesty_heuristic(
+                    metadata,
+                    description,
+                    strictness=strictness,
+                )
+                strategy = "heuristic_fallback"
+        else:
+            updated_meta, _safe_prompt, summary = vton.rewrite_for_modesty_heuristic(
+                metadata,
+                description,
+                strictness=strictness,
+            )
+
+        updated_description = updated_meta.get("description") if isinstance(updated_meta, dict) else ""
+        if not isinstance(updated_description, str) or not updated_description.strip():
+            updated_description = description
+        if isinstance(updated_meta, dict):
+            updated_meta["description"] = updated_description
+
+        return {
+            "metadata": updated_meta,
+            "description": updated_description,
+            "prompt_additions": prompt_additions,
+            "strategy": strategy,
+            "summary": summary,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in adjust-description endpoint: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/identify-products", dependencies=[Depends(require_backend_auth)])
 async def identify_products(

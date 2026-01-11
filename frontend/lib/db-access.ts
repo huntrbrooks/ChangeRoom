@@ -2035,6 +2035,109 @@ export async function insertClothingItems(
 }
 
 /**
+ * Update a clothing item (user-scoped)
+ */
+export async function updateClothingItem(
+  userId: string,
+  clothingItemId: string,
+  updates: {
+    description?: string | null;
+    category?: string | null;
+    subcategory?: string | null;
+    color?: string | null;
+    style?: string | null;
+    brand?: string | null;
+    tags?: string[] | null;
+    wearing_style?: string | null;
+  }
+): Promise<ClothingItem | null> {
+  return withClothingItemsTable(async () => {
+    const existingResult = await sql`
+      SELECT * FROM clothing_items
+      WHERE id = ${clothingItemId} AND user_id = ${userId}
+      LIMIT 1
+    `;
+    if (existingResult.rowCount === 0) {
+      return null;
+    }
+
+    const existing = existingResult.rows[0] as ClothingItem;
+    const nextDescription =
+      "description" in updates
+        ? (updates.description || "").toString().trim() || existing.description
+        : existing.description;
+
+    const nextTags =
+      "tags" in updates
+        ? Array.isArray(updates.tags)
+          ? updates.tags.filter((tag): tag is string => typeof tag === "string")
+          : []
+        : existing.tags || [];
+
+    const nextCategory =
+      "category" in updates
+        ? (updates.category || "").toString().trim() || existing.category
+        : existing.category;
+
+    const nextSubcategory =
+      "subcategory" in updates
+        ? updates.subcategory === undefined
+          ? existing.subcategory
+          : updates.subcategory
+        : existing.subcategory;
+
+    const nextColor =
+      "color" in updates
+        ? updates.color === undefined
+          ? existing.color
+          : updates.color
+        : existing.color;
+
+    const nextStyle =
+      "style" in updates
+        ? updates.style === undefined
+          ? existing.style
+          : updates.style
+        : existing.style;
+
+    const nextBrand =
+      "brand" in updates
+        ? updates.brand === undefined
+          ? existing.brand
+          : updates.brand
+        : existing.brand;
+
+    const nextWearingStyle =
+      "wearing_style" in updates
+        ? updates.wearing_style === undefined
+          ? existing.wearing_style
+          : updates.wearing_style
+        : existing.wearing_style;
+
+    const result = await sql`
+      UPDATE clothing_items
+      SET
+        category = ${nextCategory},
+        subcategory = ${nextSubcategory},
+        color = ${nextColor},
+        style = ${nextStyle},
+        brand = ${nextBrand},
+        description = ${nextDescription},
+        tags = ${JSON.stringify(nextTags)}::jsonb,
+        wearing_style = ${nextWearingStyle}
+      WHERE id = ${clothingItemId} AND user_id = ${userId}
+      RETURNING *
+    `;
+
+    if (result.rowCount === 0) {
+      return null;
+    }
+
+    return result.rows[0] as ClothingItem;
+  });
+}
+
+/**
  * Insert person image
  */
 export async function insertPersonImage(

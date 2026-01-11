@@ -69,6 +69,12 @@ interface BulkUploadZoneProps {
   onFilesUploaded: (files: File[], analyses: AnalyzedItem[], shouldReplace?: boolean) => void;
   onItemRemove?: (index: number) => void;
   onItemReplace?: (index: number, file: File, analysis: AnalyzedItem) => void;
+  blockedItemIndices?: Set<number> | number[];
+  adjustingItemIndices?: Set<number> | number[];
+  adjustDescriptionFeedback?:
+    | Map<number, { tone: 'success' | 'warning' | 'error'; message: string }>
+    | Record<number, { tone: 'success' | 'warning' | 'error'; message: string }>;
+  onAdjustDescription?: (index: number) => void;
   API_URL?: string;
   /**
    * When false, uploads are blocked and a login prompt can be shown.
@@ -89,6 +95,10 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
   onFilesUploaded,
   onItemRemove,
   onItemReplace,
+  blockedItemIndices,
+  adjustingItemIndices,
+  adjustDescriptionFeedback,
+  onAdjustDescription,
   API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
   isAuthenticated = true,
   onAuthRequired,
@@ -681,6 +691,24 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             const isSuccess = item?.status === 'success' && item.analysis;
             const isError = item?.status === 'error' || item?.error;
             const isAnalyzing = item?.status === 'analyzing';
+            const isBlocked =
+              blockedItemIndices instanceof Set
+                ? blockedItemIndices.has(idx)
+                : Array.isArray(blockedItemIndices)
+                ? blockedItemIndices.includes(idx)
+                : false;
+            const isAdjustingDescription =
+              adjustingItemIndices instanceof Set
+                ? adjustingItemIndices.has(idx)
+                : Array.isArray(adjustingItemIndices)
+                ? adjustingItemIndices.includes(idx)
+                : false;
+            const feedback =
+              adjustDescriptionFeedback instanceof Map
+                ? adjustDescriptionFeedback.get(idx)
+                : adjustDescriptionFeedback && idx in adjustDescriptionFeedback
+                ? adjustDescriptionFeedback[idx]
+                : undefined;
             
             // Compute wearing style options outside of JSX to avoid hydration issues
             const rawCategory = item?.analysis?.category || item?.analysis?.body_region || '';
@@ -856,6 +884,39 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                         <p className="text-red-400 mt-0.5 sm:mt-1 font-medium text-[10px] sm:text-xs">✗ Failed</p>
                       )}
                     </div>
+
+                    {isBlocked && onAdjustDescription && (
+                      <div className="mt-1.5 sm:mt-2">
+                        <p className="text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide text-red-600">
+                          Safety blocked
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => onAdjustDescription(idx)}
+                          disabled={uploadsBlocked || isAdjustingDescription}
+                          className={`mt-1 w-full rounded border px-2 py-1 text-[9px] sm:text-[10px] font-semibold uppercase tracking-wide transition-colors ${
+                            isAdjustingDescription || uploadsBlocked
+                              ? 'border-black/20 bg-black/10 text-black/40 cursor-not-allowed'
+                              : 'border-black bg-black text-white hover:bg-black/80'
+                          }`}
+                        >
+                          {isAdjustingDescription ? 'Adjusting...' : 'Adjust Description'}
+                        </button>
+                        {feedback?.message && (
+                          <p
+                            className={`mt-1 text-[9px] sm:text-[10px] font-medium ${
+                              feedback.tone === 'error'
+                                ? 'text-red-600'
+                                : feedback.tone === 'warning'
+                                ? 'text-amber-600'
+                                : 'text-green-700'
+                            }`}
+                          >
+                            {feedback.message}
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     {/* Wearing Style Dropdown */}
                     {isSuccess && hasWearingOptions && styleOptions.length > 0 && (
