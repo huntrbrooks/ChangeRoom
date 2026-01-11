@@ -584,6 +584,115 @@ export async function cleanupStaleCreditHoldsForUser(
 }
 
 /**
+ * Reconcile credits_available with ledger entries to fix discrepancies.
+ * This ensures credits are never "lost" due to race conditions or bugs.
+ * Only runs if there are ledger entries (to avoid unnecessary work for new users).
+ */
+async function reconcileCreditsFromLedger(userId: string): Promise<{
+  corrected: boolean;
+  oldBalance: number;
+  newBalance: number;
+} | null> {
+  await ensureCreditTables();
+  
+  // Quick check: if no ledger entries exist, skip reconciliation
+  const hasLedgerEntries = await sql`
+    SELECT 1 FROM credit_ledger_entries WHERE user_id = ${userId} LIMIT 1
+  `;
+  if (hasLedgerEntries.rows.length === 0) {
+    return null;
+  }
+
+  return runTransaction(async (tx) => {
+    // Calculate net credits from ledger
+    const ledgerResult = await tx`
+      SELECT 
+        SUM(CASE 
+          WHEN entry_type = 'grant' THEN credits_change
+          WHEN entry_type = 'debit' THEN 0  -- debits are 0 (hold already deducted)
+          WHEN entry_type = 'hold' THEN credits_change  -- holds are negative
+          WHEN entry_type = 'release' THEN credits_change  -- releases are positive (refund)
+          WHEN entry_type = 'refund' THEN credits_change
+          WHEN entry_type = 'adjustment' THEN credits_change
+          ELSE 0
+        END) as net_credits
+      FROM credit_ledger_entries
+      WHERE user_id = ${userId}
+    `;
+    const netCreditsFromLedger = Number(ledgerResult.rows[0]?.net_credits ?? 0) || 0;
+
+    // Subtract any active holds (they're already in the ledger as negative, but credits_available reflects them)
+    const activeHoldsResult = await tx`
+      SELECT COALESCE(SUM(amount), 0) as active_holds_total
+      FROM credit_holds
+      WHERE user_id = ${userId} AND status = 'active'
+    `;
+    const activeHoldsTotal = Number(activeHoldsResult.rows[0]?.active_holds_total ?? 0) || 0;
+    
+    // Expected balance = ledger net - active holds (since active holds are already deducted from credits_available)
+    const expectedBalance = netCreditsFromLedger - activeHoldsTotal;
+
+    // Get current billing balance
+    const billing = await ensureUserBillingWithLock(tx, userId);
+    const currentBalance = billing.credits_available;
+
+    // If there's a discrepancy, fix it
+    if (Math.abs(currentBalance - expectedBalance) > 0.01) {
+      console.warn(
+        `credit_reconciliation: fixing discrepancy for user ${userId}: ` +
+        `billing=${currentBalance}, expected=${expectedBalance} (ledger=${netCreditsFromLedger}, active_holds=${activeHoldsTotal}), diff=${expectedBalance - currentBalance}`
+      );
+
+      // Update billing to match expected balance
+      const updated = await tx`
+        UPDATE users_billing
+        SET 
+          credits_available = ${expectedBalance},
+          updated_at = now()
+        WHERE user_id = ${userId}
+        RETURNING *
+      `;
+
+      // Log the reconciliation as an adjustment entry
+      await tx`
+        INSERT INTO credit_ledger_entries (
+          id,
+          user_id,
+          request_id,
+          entry_type,
+          credits_change,
+          balance_after,
+          metadata
+        )
+        VALUES (
+          ${generateUuid()},
+          ${userId},
+          NULL,
+          'adjustment',
+          ${expectedBalance - currentBalance},
+          ${expectedBalance},
+          ${JSON.stringify({
+            reason: "reconciliation",
+            old_balance: currentBalance,
+            calculated_from_ledger: netCreditsFromLedger,
+            active_holds: activeHoldsTotal,
+            expected_balance: expectedBalance,
+          })}
+        )
+      `;
+
+      return {
+        corrected: true,
+        oldBalance: currentBalance,
+        newBalance: expectedBalance,
+      };
+    }
+
+    return null;
+  });
+}
+
+/**
  * Get or create user billing record
  * Creates with free plan and default credits if doesn't exist
  */
@@ -596,6 +705,14 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
     } catch (e) {
       // Do not block billing reads if cleanup fails; just log.
       console.warn("billing: failed to cleanup stale holds (non-fatal)", e);
+    }
+
+    // Reconcile credits from ledger to fix any discrepancies
+    try {
+      await reconcileCreditsFromLedger(userId);
+    } catch (e) {
+      // Do not block billing reads if reconciliation fails; just log.
+      console.warn("billing: failed to reconcile credits (non-fatal)", e);
     }
 
     // First try to get existing record
