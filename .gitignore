@@ -12,3 +12,4 @@ build/
 .cursor/debug.log
 .cursor/plans/
 .vercel
+.vscode/
