@@ -87,18 +87,47 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Payment bypass for specific email
-    const user = await currentUser();
-    const userEmail = user?.emailAddresses?.[0]?.emailAddress;
-    const isVerifiedEmail =
-      user?.emailAddresses?.some((e) => e.verification?.status === "verified") ||
-      false;
+    // Payment bypass for specific email (best-effort; do not fail the hold if Clerk user fetch fails)
+    let userEmail: string | null = null;
+    let isVerifiedEmail = false;
+    try {
+      const user = await currentUser();
+      userEmail = user?.emailAddresses?.[0]?.emailAddress || null;
+      isVerifiedEmail =
+        user?.emailAddresses?.some((e) => e.verification?.status === "verified") ||
+        false;
+    } catch (err: unknown) {
+      // Log but don't fail - email is only needed for bypass check
+      const errMessage = err instanceof Error ? err.message : String(err);
+      console.warn("try-on hold: currentUser() failed, continuing without email context", {
+        error: errMessage,
+        // Don't log full error object to avoid exposing sensitive info
+      });
+    }
     const shouldBypassPayment = isBypassUser(userEmail);
 
     const creditCost = quality === "hd" ? 2 : 1;
 
     // Ensure billing exists and check freeze
-    let billing = await getOrCreateUserBilling(userId);
+    // Wrap in try-catch to provide better error messages for database issues
+    let billing;
+    try {
+      billing = await getOrCreateUserBilling(userId);
+    } catch (dbErr: unknown) {
+      const dbMessage = dbErr instanceof Error ? dbErr.message : String(dbErr);
+      console.error("try-on hold: getOrCreateUserBilling failed", {
+        userId,
+        error: dbMessage,
+      });
+      // Re-throw with more context
+      const enhancedError = new Error(
+        `Database error while fetching billing: ${dbMessage}`
+      );
+      if (dbErr instanceof Error && dbErr.stack) {
+        enhancedError.stack = dbErr.stack;
+      }
+      throw enhancedError;
+    }
     if (billing.is_frozen) {
       return NextResponse.json(
         {
@@ -152,16 +181,28 @@ export async function POST(req: NextRequest) {
       return res;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
+      console.error("try-on hold: createCreditHold failed", {
+        userId,
+        requestId: currentRequestId,
+        error: message,
+      });
+      
       if (message === "insufficient_credits") {
-        const freshBilling = await getOrCreateUserBilling(userId);
-        const res = NextResponse.json(
-          { error: "no_credits", creditsAvailable: freshBilling.credits_available },
-          { status: 402 }
-        );
-        res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
-        res.headers.set("X-Request-Id", currentRequestId);
-        res.headers.set("X-ChangeRoom-Request-Id", currentRequestId);
-        return res;
+        try {
+          const freshBilling = await getOrCreateUserBilling(userId);
+          const res = NextResponse.json(
+            { error: "no_credits", creditsAvailable: freshBilling.credits_available },
+            { status: 402 }
+          );
+          res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
+          res.headers.set("X-Request-Id", currentRequestId);
+          res.headers.set("X-ChangeRoom-Request-Id", currentRequestId);
+          return res;
+        } catch (dbErr: unknown) {
+          // If we can't even fetch billing, it's a database issue
+          console.error("try-on hold: failed to fetch billing after insufficient_credits", dbErr);
+          throw new Error(`Database error: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
+        }
       }
       if (message === "account_frozen") {
         const res = NextResponse.json(
@@ -179,40 +220,60 @@ export async function POST(req: NextRequest) {
       throw e;
     }
   } catch (err: unknown) {
-    console.error("try-on hold error:", err);
+    // Extract error information safely
     const error = err instanceof Error ? err : new Error(String(err));
     const message = error.message;
+    const stack = error.stack;
+
+    // Log full error details for debugging (server-side only)
+    console.error("try-on hold error:", {
+      message,
+      stack: stack?.split('\n').slice(0, 5).join('\n'), // First 5 lines of stack
+      userId: userId || 'unknown',
+      requestId: currentRequestId || 'unknown',
+    });
 
     // Categorize errors for better client-side handling
     let errorCode = "hold_failed";
     let statusCode = 500;
+    let retryable = false;
 
+    const lowerMessage = message.toLowerCase();
+    
+    // Database connectivity issues - may be temporary
     if (
-      message.includes("database_pool_unavailable") ||
-      message.includes("database_connection_failed") ||
-      message.includes("database_client_invalid")
+      lowerMessage.includes("database_pool_unavailable") ||
+      lowerMessage.includes("database_connection_failed") ||
+      lowerMessage.includes("database_client_invalid") ||
+      lowerMessage.includes("econnrefused") ||
+      lowerMessage.includes("etimedout") ||
+      lowerMessage.includes("connection") ||
+      lowerMessage.includes("postgres") ||
+      lowerMessage.includes("neon") ||
+      lowerMessage.includes("vercel postgres")
     ) {
-      // Database connectivity issues - may be temporary
       errorCode = "database_error";
+      retryable = true;
       console.error(
         "Database error in try-on hold - this may be a transient issue:",
         message
       );
     } else if (
-      message.includes("ECONNREFUSED") ||
-      message.includes("ETIMEDOUT") ||
-      message.includes("connection")
+      lowerMessage.includes("auth_failed") ||
+      lowerMessage.includes("clerk") ||
+      lowerMessage.includes("unauthorized")
     ) {
-      // Network/connection issues
-      errorCode = "database_error";
-      console.error("Database connection error in try-on hold:", message);
+      // Auth errors should return 401, not 500
+      errorCode = "auth_failed";
+      statusCode = 401;
+      console.error("Authentication error in try-on hold:", message);
     }
 
     const res = NextResponse.json(
       {
         error: errorCode,
         details: message,
-        retryable: errorCode === "database_error", // Client can retry on transient DB errors
+        retryable, // Client can retry on transient DB errors
       },
       { status: statusCode }
     );

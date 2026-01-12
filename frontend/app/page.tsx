@@ -640,8 +640,11 @@ function HomeContent() {
         if (!prev[index]) return prev;
         const next = [...prev];
         const prevEntry = prev[index];
-        const nextFile = prevEntry.file as FileWithMetadata;
-
+        const prevFile = prevEntry.file as FileWithMetadata;
+        
+        // Create a new file object with updated metadata (File objects can't be cloned, so we mutate the existing one)
+        // but create a new entry object to ensure React detects the change
+        const nextFile = prevFile;
         nextFile.metadata = { ...updatedMetadata };
         if (updatedDescription) {
           nextFile.detailed_description = updatedDescription;
@@ -656,7 +659,6 @@ function HomeContent() {
           nextFile.brand = updatedMetadata.brand;
         }
 
-        let updatedAnalysis = prevEntry.analysis;
         const fallbackItemType =
           typeof updatedMetadata.item_type === 'string'
             ? updatedMetadata.item_type
@@ -672,22 +674,32 @@ function HomeContent() {
             ? updatedMetadata.category
             : analysisMeta?.category || analysisMeta?.body_region || 'unknown';
 
-        if (updatedAnalysis?.analysis) {
-          const analysis = { ...updatedAnalysis.analysis };
+        let updatedAnalysis: AnalyzedItem;
+        if (prevEntry.analysis?.analysis) {
+          // Create a new analysis object with updated fields
+          const newAnalysis = { 
+            ...prevEntry.analysis.analysis,
+          };
+          // Always update description fields when updatedDescription is provided
           if (updatedDescription) {
-            analysis.description = updatedDescription;
-            analysis.short_description = updatedDescription;
-            analysis.detailed_description = updatedDescription;
+            newAnalysis.description = updatedDescription;
+            newAnalysis.short_description = updatedDescription;
+            newAnalysis.detailed_description = updatedDescription;
           }
-          if (typeof updatedMetadata.color === 'string') analysis.color = updatedMetadata.color;
-          if (typeof updatedMetadata.style === 'string') analysis.style = updatedMetadata.style;
-          if (typeof updatedMetadata.brand === 'string') analysis.brand = updatedMetadata.brand;
-          if (fallbackItemType) analysis.item_type = fallbackItemType;
-          analysis.category = nextCategory;
-          analysis.body_region = analysis.body_region || nextCategory;
-          analysis.tags = normalizedTags;
-          analysis.metadata = { ...(analysis.metadata || {}), ...updatedMetadata };
-          updatedAnalysis = { ...updatedAnalysis, analysis, status: 'success' };
+          if (fallbackItemType) newAnalysis.item_type = fallbackItemType;
+          newAnalysis.category = nextCategory;
+          newAnalysis.body_region = newAnalysis.body_region || nextCategory;
+          newAnalysis.tags = normalizedTags;
+          newAnalysis.metadata = { ...(newAnalysis.metadata || {}), ...updatedMetadata };
+          if (typeof updatedMetadata.color === 'string') newAnalysis.color = updatedMetadata.color;
+          if (typeof updatedMetadata.style === 'string') newAnalysis.style = updatedMetadata.style;
+          if (typeof updatedMetadata.brand === 'string') newAnalysis.brand = updatedMetadata.brand;
+          
+          updatedAnalysis = { 
+            ...prevEntry.analysis, 
+            analysis: newAnalysis, 
+            status: 'success' as const 
+          };
         } else {
           updatedAnalysis = {
             index,
@@ -722,11 +734,16 @@ function HomeContent() {
             file_url: prevEntry.analysis?.file_url,
             saved_filename: prevEntry.analysis?.saved_filename,
             storage_path: prevEntry.analysis?.storage_path,
-            status: 'success',
+            status: 'success' as const,
           };
         }
 
-        next[index] = { ...prevEntry, file: nextFile, analysis: updatedAnalysis };
+        // Create a completely new entry object to ensure React detects the change
+        next[index] = { 
+          file: nextFile, 
+          analysis: updatedAnalysis,
+          clothingItemId: prevEntry.clothingItemId
+        };
         return next;
       });
 
