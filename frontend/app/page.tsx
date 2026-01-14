@@ -2032,6 +2032,30 @@ function HomeContent() {
           </div>
         </div>
         
+        {/* Admin Billing Diagnostics (bypass users only) */}
+        {isBypass && billingStatus === 'error' && (
+          <div className="bg-red-500/10 border border-red-500/30 text-red-700 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_15px_rgba(255,0,0,0.15)]">
+            <div className="flex items-start gap-2 sm:gap-3 flex-1">
+              <CreditCard size={18} className="sm:w-5 sm:h-5 text-red-600 flex-shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="font-semibold text-sm sm:text-base">Billing diagnostics (admin)</p>
+                <p className="text-xs sm:text-sm text-red-600 mt-0.5">
+                  {billingError || 'Billing lookup failed. Check CLERK_SECRET_KEY and DATABASE_URL in Vercel.'}
+                </p>
+                <p className="text-[11px] sm:text-xs text-red-600/80 mt-1">
+                  This panel is visible only to bypass users.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => fetchBilling()}
+              className="px-3 py-1.5 rounded-md bg-red-600 text-white text-xs font-semibold hover:bg-red-700 transition-colors"
+            >
+              Retry billing
+            </button>
+          </div>
+        )}
+
         {/* Free Trial Banner */}
         {isLoaded && user && billing && isOnTrial && (
           <div className="bg-gradient-to-r from-[#8B5CF6]/20 to-[#8B5CF6]/20 border border-black/30 text-black p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_20px_rgba(0,0,0,0.3)]">
