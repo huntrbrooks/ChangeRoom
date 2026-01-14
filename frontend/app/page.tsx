@@ -160,6 +160,10 @@ function HomeContent() {
   }, []);
 
   const backendApi = useMemo(() => resolveBackendApiUrl(), []);
+  const adminDiagnosticsEnabled = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('admin') === '1';
+  }, []);
 
   const getBackendAuthHeaders = useCallback(async (): Promise<Record<string, string>> => {
     try {
@@ -2033,7 +2037,7 @@ function HomeContent() {
         </div>
         
         {/* Admin Billing Diagnostics (bypass users only) */}
-        {isBypass && billingStatus === 'error' && (
+        {isBypass && adminDiagnosticsEnabled && billingStatus === 'error' && (
           <div className="bg-red-500/10 border border-red-500/30 text-red-700 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_15px_rgba(255,0,0,0.15)]">
             <div className="flex items-start gap-2 sm:gap-3 flex-1">
               <CreditCard size={18} className="sm:w-5 sm:h-5 text-red-600 flex-shrink-0 mt-0.5" />
