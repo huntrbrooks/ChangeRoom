@@ -12,6 +12,7 @@ import {
   needsConversionToOptimal,
 } from '@/lib/imageConversion';
 import { fetchWithRequestId } from '@/lib/fetchWithRequestId';
+import { resolveBackendApiUrl } from '@/lib/backend-url';
 
 function normalizeCategory(raw: string | undefined | null): string {
   const v = (raw || '').toLowerCase().trim();
@@ -99,7 +100,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
   adjustingItemIndices,
   adjustDescriptionFeedback,
   onAdjustDescription,
-  API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+  API_URL,
   isAuthenticated = true,
   onAuthRequired,
   blockedMessage = 'Please sign in to upload clothing items.',
@@ -113,6 +114,8 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
   const [wearingStyles, setWearingStyles] = useState<Map<number, string>>(new Map());
   const [objectUrls, setObjectUrls] = useState<Map<number, string>>(new Map());
   const uploadsBlocked = !isAuthenticated;
+  const backendUrl = resolveBackendApiUrl(API_URL);
+  const resolvedApiUrl = backendUrl.apiUrl;
 
   const requireAuth = useCallback(() => {
     if (isAuthenticated) {
@@ -225,7 +228,11 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
     });
 
     try {
-      const API_URL_FETCH = API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      if (!resolvedApiUrl) {
+        setAnalysisProgress(`Backend unavailable. ${backendUrl.reason ?? ''}`.trim());
+        setIsAnalyzing(false);
+        return { files: [], analyses: [] };
+      }
       const effectiveFiles = await maybeConvertFiles(filesToAnalyze);
       // Update progress to reflect upload step
       setProgressPercent(10);
@@ -239,7 +246,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
 
       // Call the new batch preprocessing endpoint
       const authHeaders = getBackendAuthHeaders ? await getBackendAuthHeaders() : {};
-      const response = await fetchWithRequestId(`${API_URL_FETCH}/api/preprocess-clothing`, {
+      const response = await fetchWithRequestId(`${resolvedApiUrl}/api/preprocess-clothing`, {
         method: 'POST',
         body: formData,
         headers: authHeaders,
@@ -381,7 +388,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
 
       // Process files for parent component
       const processedFiles: File[] = [];
-      const API_URL_PROCESS = API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const API_URL_PROCESS = resolvedApiUrl || '';
       
       for (let idx = 0; idx < effectiveFiles.length; idx++) {
         const file = effectiveFiles[idx];
@@ -495,7 +502,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
     } finally {
       setIsAnalyzing(false);
     }
-  }, [API_URL, getBackendAuthHeaders, maybeConvertFiles, requireAuth]);
+  }, [backendUrl.reason, resolvedApiUrl, getBackendAuthHeaders, maybeConvertFiles, requireAuth]);
 
   const handleBulkUpload = useCallback(async (files: File[], shouldReplace: boolean = false) => {
     if (files.length === 0) return;
@@ -795,9 +802,9 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                       <img
                         src={
                           item?.file_url 
-                            ? (item.file_url.startsWith('http') 
-                                ? item.file_url 
-                                : `${API_URL}${item.file_url}`)
+                            ? (item.file_url.startsWith('http')
+                                ? item.file_url
+                                : `${resolvedApiUrl || ''}${item.file_url}`)
                             : objectUrls.get(idx) || ''
                         }
                         alt={item?.saved_filename || item?.analysis?.suggested_filename || item?.original_filename || file.name}

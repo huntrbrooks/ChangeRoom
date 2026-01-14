@@ -19,6 +19,7 @@ import { Sparkles, Search, Loader2, CreditCard, Zap, Shirt } from 'lucide-react'
 import { getWearingStylePromptText } from '@/lib/wearingStyles';
 import { isBypassUser } from '@/lib/bypass-config';
 import { ensureAbsoluteUrl } from '@/lib/url';
+import { resolveBackendApiUrl } from '@/lib/backend-url';
 import { ANALYTICS_EVENTS, captureEvent } from '@/lib/analytics';
 import { trackTrialConsumed, trackOutfitGenerated } from '@/lib/userEvents';
 
@@ -86,6 +87,7 @@ function HomeContent() {
   const [isPreviewResult, setIsPreviewResult] = useState(false);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [billingStatus, setBillingStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [billingError, setBillingError] = useState<string | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
   const [lastRequestId, setLastRequestId] = useState<string | null>(null);
   const [hasShownPaywallAfterResult, setHasShownPaywallAfterResult] = useState(false);
@@ -157,6 +159,8 @@ function HomeContent() {
     window.scrollTo({ top: clamped, behavior: 'smooth' });
   }, []);
 
+  const backendApi = useMemo(() => resolveBackendApiUrl(), []);
+
   const getBackendAuthHeaders = useCallback(async (): Promise<Record<string, string>> => {
     try {
       const token = await getToken({ template: 'backend' });
@@ -178,6 +182,18 @@ function HomeContent() {
 
     return {} as Record<string, string>;
   }, [getToken]);
+
+  const getBackendApiUrl = useCallback(
+    (context: string) => {
+      if (backendApi.apiUrl) {
+        return backendApi.apiUrl;
+      }
+      const reason = backendApi.reason ? ` ${backendApi.reason}` : '';
+      setError(`${context} is unavailable.${reason} Please set NEXT_PUBLIC_API_URL.`);
+      return null;
+    },
+    [backendApi.apiUrl, backendApi.reason, setError]
+  );
 
   const handleLoaderStageChange = useCallback((stageId: number) => {
     console.info('try-on-stage', { stageId, ts: Date.now() });
@@ -258,6 +274,7 @@ function HomeContent() {
   const fetchBilling = async () => {
     try {
       setBillingStatus('loading');
+      setBillingError(null);
       const response = await httpClient.get('/api/my/billing');
       setBilling({
         ...response.data,
@@ -269,6 +286,16 @@ function HomeContent() {
       // Only log error if it's not a 401 (unauthorized) - that's expected when not logged in
       if (error.response?.status !== 401) {
         console.error('Error fetching billing:', error.response?.data || error.message);
+      }
+      if (error.response?.status !== 401) {
+        const data = error.response?.data;
+        const detail =
+          (typeof data?.hint === 'string' && data.hint) ||
+          (typeof data?.details === 'string' && data.details) ||
+          (typeof data?.error === 'string' && data.error) ||
+          (typeof error.message === 'string' && error.message) ||
+          'Billing is temporarily unavailable.';
+        setBillingError(detail);
       }
       setBillingStatus('error');
     }
@@ -606,7 +633,10 @@ function HomeContent() {
 
     try {
       const backendAuthHeaders = await getBackendAuthHeaders();
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const API_URL = getBackendApiUrl('Description adjustments');
+      if (!API_URL) {
+        return;
+      }
       const response = await httpClient.post(
         `${API_URL}/api/clothing/adjust-description`,
         {
@@ -1226,8 +1256,14 @@ function HomeContent() {
           body: JSON.stringify(payload),
         }).catch(() => {});
       };
-      // Get API URL from environment or default to localhost
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      // Get API URL from environment or fail with guidance
+      const API_URL = getBackendApiUrl('Try-on');
+      if (!API_URL) {
+        setIsTryOnLoading(false);
+        setIsGenerating(false);
+        console.error = originalError;
+        return;
+      }
       console.log("Using API URL:", API_URL);
       
       // Wake up Render service first (health check)
@@ -1863,26 +1899,41 @@ function HomeContent() {
             />
           </div>
           <nav className="flex items-center gap-2 sm:gap-4 md:gap-6 text-xs sm:text-sm font-medium flex-shrink-0 text-white">
-            {isLoaded && user && billing && (
+            {isLoaded && user && (
               <>
-                {isBypass ? (
-                  <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-white/10 border border-white/20 rounded-lg text-white min-h-[36px] sm:min-h-[40px]">
-                    <Zap size={14} className="sm:w-4 sm:h-4 flex-shrink-0 text-white" />
-                    <span className="hidden sm:inline whitespace-nowrap font-semibold">Unlimited Access</span>
-                    <span className="sm:hidden font-semibold">∞</span>
-                  </div>
-                ) : (
-                  <Link 
-                    href="/pricing" 
+                {billing ? (
+                  <>
+                    {isBypass ? (
+                      <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-white/10 border border-white/20 rounded-lg text-white min-h-[36px] sm:min-h-[40px]">
+                        <Zap size={14} className="sm:w-4 sm:h-4 flex-shrink-0 text-white" />
+                        <span className="hidden sm:inline whitespace-nowrap font-semibold">Unlimited Access</span>
+                        <span className="sm:hidden font-semibold">∞</span>
+                      </div>
+                    ) : (
+                      <Link 
+                        href="/pricing" 
+                        className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-white/10 hover:bg-white/20 border border-white/30 rounded-lg transition-colors text-white min-h-[36px] sm:min-h-[40px] touch-manipulation"
+                      >
+                        <CreditCard size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
+                        <span className="hidden sm:inline whitespace-nowrap">
+                          {isOnTrial ? 'Free Trial' : `${billing.creditsAvailable} credits`}
+                        </span>
+                        <span className="sm:hidden font-semibold">{billing.creditsAvailable}</span>
+                      </Link>
+                    )}
+                  </>
+                ) : billingStatus === 'error' ? (
+                  <Link
+                    href="/billing"
+                    onClick={() => fetchBilling()}
+                    title={billingError || 'Billing is temporarily unavailable.'}
                     className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-white/10 hover:bg-white/20 border border-white/30 rounded-lg transition-colors text-white min-h-[36px] sm:min-h-[40px] touch-manipulation"
                   >
                     <CreditCard size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
-                    <span className="hidden sm:inline whitespace-nowrap">
-                      {isOnTrial ? 'Free Trial' : `${billing.creditsAvailable} credits`}
-                    </span>
-                    <span className="sm:hidden font-semibold">{billing.creditsAvailable}</span>
+                    <span className="hidden sm:inline whitespace-nowrap">Credits unavailable</span>
+                    <span className="sm:hidden font-semibold">--</span>
                   </Link>
-                )}
+                ) : null}
               </>
             )}
             <div className="hidden md:flex items-center gap-6">

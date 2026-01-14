@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { UploadZone } from './UploadZone';
 import { Upload, Loader2 } from 'lucide-react';
 import { httpClient } from '@/lib/httpClient';
+import { resolveBackendApiUrl } from '@/lib/backend-url';
 
 interface FileWithMetadata extends File {
   metadata?: Record<string, unknown>;
@@ -35,11 +36,13 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
   items, 
   onItemSelect, 
   onBulkUpload,
-  API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+  API_URL,
   getBackendAuthHeaders
 }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<string>('');
+  const backendUrl = resolveBackendApiUrl(API_URL);
+  const resolvedApiUrl = backendUrl.apiUrl;
 
   const handleBulkUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -57,6 +60,11 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
     setAnalysisProgress('Uploading and analyzing clothing items...');
 
     try {
+      if (!resolvedApiUrl) {
+        setAnalysisProgress(`Backend unavailable. ${backendUrl.reason ?? ''}`.trim());
+        setIsAnalyzing(false);
+        return;
+      }
       // Create FormData with all files
       const formData = new FormData();
       selectedFiles.forEach((file) => {
@@ -65,7 +73,7 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
 
       // Send to analysis endpoint
       const authHeaders = getBackendAuthHeaders ? await getBackendAuthHeaders() : {};
-      const response = await httpClient.post(`${API_URL}/api/analyze-clothing`, formData, {
+      const response = await httpClient.post(`${resolvedApiUrl}/api/analyze-clothing`, formData, {
         headers: { 'Content-Type': 'multipart/form-data', ...authHeaders },
         timeout: 300000, // 5 minutes for analysis
       });
@@ -128,7 +136,7 @@ export const WardrobeSelector: React.FC<WardrobeSelectorProps> = ({
       // Reset file input
       e.target.value = '';
     }
-  }, [onItemSelect, onBulkUpload, items.length, API_URL, getBackendAuthHeaders]);
+  }, [onItemSelect, onBulkUpload, items.length, resolvedApiUrl, backendUrl.reason, getBackendAuthHeaders]);
 
   const handleBulkDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
