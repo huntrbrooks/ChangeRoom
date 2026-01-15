@@ -26,6 +26,12 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  const url = new URL(request.url);
+  const isApiRoute = url.pathname.startsWith('/api/');
+  if (isApiRoute) {
+    return;
+  }
+
   const isNavigation = request.mode === 'navigate';
 
   event.respondWith(

@@ -5,7 +5,10 @@ import { ensureRequestId } from "./requestId";
  * Shared axios instance for browser-side calls.
  * Automatically injects X-Request-Id / X-ChangeRoom-Request-Id unless already provided.
  */
-export const httpClient: AxiosInstance = axios.create();
+export const httpClient: AxiosInstance = axios.create({
+  // Ensure Clerk session cookies are sent on API calls.
+  withCredentials: true,
+});
 
 httpClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const current =

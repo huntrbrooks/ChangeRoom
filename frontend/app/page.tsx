@@ -60,7 +60,7 @@ const formatCurrency = (value?: number | null, currency?: string | null) => {
 
 function HomeContent() {
   const { user, isLoaded } = useUser();
-  const { getToken } = useAuth();
+  const { getToken, isSignedIn, isLoaded: isAuthLoaded } = useAuth();
   const router = useRouter();
   const [userImages, setUserImages] = useState<File[]>([]);
   
@@ -216,12 +216,20 @@ function HomeContent() {
     router.prefetch('/billing');
   }, [router]);
 
-  // Fetch billing info on mount and when user changes
+  const isSignedInReady = isAuthLoaded && isSignedIn;
+
+  // Fetch billing info on mount and when auth changes
   useEffect(() => {
-    if (isLoaded && user) {
+    if (isSignedInReady) {
       fetchBilling();
+      return;
     }
-  }, [isLoaded, user]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (isAuthLoaded && !isSignedIn) {
+      setBilling(null);
+      setBillingStatus('idle');
+      setBillingError(null);
+    }
+  }, [isAuthLoaded, isSignedIn, isSignedInReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (
@@ -251,7 +259,7 @@ function HomeContent() {
 
   // Check for Stripe checkout session completion
   useEffect(() => {
-    if (typeof window !== 'undefined' && isLoaded && user) {
+    if (typeof window !== 'undefined' && isSignedInReady) {
       const params = new URLSearchParams(window.location.search);
       const sessionId = params.get('session_id');
       if (sessionId) {
@@ -273,7 +281,7 @@ function HomeContent() {
         })();
       }
     }
-  }, [isLoaded, user]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isSignedInReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchBilling = async () => {
     try {
@@ -291,6 +299,11 @@ function HomeContent() {
       if (error.response?.status !== 401) {
         console.error('Error fetching billing:', error.response?.data || error.message);
       }
+      if (error.response?.status === 401 && !isSignedInReady) {
+        setBillingStatus('idle');
+        setBillingError(null);
+        return;
+      }
       if (error.response?.status !== 401) {
         const data = error.response?.data;
         const detail =
@@ -300,6 +313,10 @@ function HomeContent() {
           (typeof error.message === 'string' && error.message) ||
           'Billing is temporarily unavailable.';
         setBillingError(detail);
+      } else if (isSignedInReady) {
+        setBillingError(
+          'Unauthorized while signed in. Check Clerk publishable/secret key pairing in Vercel.'
+        );
       }
       setBillingStatus('error');
     }
@@ -313,7 +330,7 @@ function HomeContent() {
   }, [router]);
 
   const isOnTrial = billing && !billing.trialUsed && !isBypass;
-  const isAuthenticated = isLoaded && !!user;
+  const isAuthenticated = isAuthLoaded ? isSignedIn : isLoaded && !!user;
   const hasCreditsAvailable = billing ? billing.creditsAvailable > 0 : false;
   const hasPaidPlan = billing ? billing.plan !== 'free' : false;
   const hasPaidAccess = Boolean(billing?.hasPurchase || hasPaidPlan);
@@ -341,12 +358,12 @@ function HomeContent() {
   const canAttemptTryOn = isAuthenticated && !isGenerating;
 
   const requireAuth = useCallback(() => {
-    if (!isLoaded || !user) {
+    if (!isAuthLoaded || !isSignedIn) {
       setError('Please sign in to upload images.');
       return false;
     }
     return true;
-  }, [isLoaded, setError, user]);
+  }, [isAuthLoaded, isSignedIn, setError]);
 
   const handleMyOutfitsTab = useCallback(() => {
     if (shouldLockMyOutfits) {
@@ -1605,7 +1622,7 @@ function HomeContent() {
           trackOutfitGenerated(requestId || '', preparedTryOnFiles.length);
 
           // Refresh billing info after successful try-on
-          if (isLoaded && user) {
+          if (isSignedInReady) {
             fetchBilling();
           }
         } else {
@@ -1695,7 +1712,7 @@ function HomeContent() {
                 setBilling((prev) => (prev ? { ...prev, creditsAvailable } : prev));
               } else {
                 // Fallback to a refresh
-                if (isLoaded && user) fetchBilling();
+                if (isSignedInReady) fetchBilling();
               }
             }
             setError(
@@ -1903,7 +1920,7 @@ function HomeContent() {
             />
           </div>
           <nav className="flex items-center gap-2 sm:gap-4 md:gap-6 text-xs sm:text-sm font-medium flex-shrink-0 text-white">
-            {isLoaded && user && (
+            {isAuthenticated && (
               <>
                 {billing ? (
                   <>
@@ -2036,6 +2053,26 @@ function HomeContent() {
           </div>
         </div>
         
+        {/* Admin Auth Diagnostics */}
+        {adminDiagnosticsEnabled && (
+          <div className="bg-slate-900/5 border border-slate-900/10 text-slate-900 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col gap-2 shadow-[0_0_15px_rgba(0,0,0,0.08)]">
+            <p className="font-semibold text-sm sm:text-base">Auth diagnostics (admin)</p>
+            <p className="text-xs sm:text-sm text-slate-700">
+              Clerk loaded: {isAuthLoaded ? 'yes' : 'no'} · Signed in:{' '}
+              {isSignedIn ? 'yes' : 'no'} · User ID: {user?.id ?? 'none'}
+            </p>
+            <p className="text-[11px] sm:text-xs text-slate-600">
+              Billing status: {billingStatus} · Billing error: {billingError ?? 'none'}
+            </p>
+            {isSignedIn && billingStatus === 'error' && (
+              <p className="text-[11px] sm:text-xs text-slate-600">
+                If signed in but billing is 401, confirm CLERK_SECRET_KEY matches the
+                publishable key in Vercel.
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Admin Billing Diagnostics (bypass users only) */}
         {isBypass && adminDiagnosticsEnabled && billingStatus === 'error' && (
           <div className="bg-red-500/10 border border-red-500/30 text-red-700 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_15px_rgba(255,0,0,0.15)]">
@@ -2061,7 +2098,7 @@ function HomeContent() {
         )}
 
         {/* Free Trial Banner */}
-        {isLoaded && user && billing && isOnTrial && (
+        {isAuthenticated && billing && isOnTrial && (
           <div className="bg-gradient-to-r from-[#8B5CF6]/20 to-[#8B5CF6]/20 border border-black/30 text-black p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_20px_rgba(0,0,0,0.3)]">
             <div className="flex items-center gap-2 sm:gap-3 flex-1">
               <Zap size={18} className="sm:w-5 sm:h-5 text-black flex-shrink-0" />
@@ -2082,7 +2119,7 @@ function HomeContent() {
         )}
 
         {/* Low Credits Warning */}
-        {isLoaded && user && billing && !isOnTrial && billing.creditsAvailable <= 3 && billing.creditsAvailable > 0 && (
+        {isAuthenticated && billing && !isOnTrial && billing.creditsAvailable <= 3 && billing.creditsAvailable > 0 && (
           <div className="bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_15px_rgba(255,255,0,0.2)]">
             <div className="flex items-center gap-2 sm:gap-3 flex-1">
               <CreditCard size={18} className="sm:w-5 sm:h-5 text-yellow-400 flex-shrink-0" />
@@ -2103,7 +2140,7 @@ function HomeContent() {
         )}
 
         {/* No Credits Warning */}
-        {isLoaded && user && billing && !isOnTrial && billing.creditsAvailable === 0 && (
+        {isAuthenticated && billing && !isOnTrial && billing.creditsAvailable === 0 && (
           <div className="bg-orange-500/10 border border-orange-500/30 text-orange-700 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_15px_rgba(255,165,0,0.2)]">
             <div className="flex items-center gap-2 sm:gap-3 flex-1">
               <CreditCard size={18} className="sm:w-5 sm:h-5 text-orange-500 flex-shrink-0" />
