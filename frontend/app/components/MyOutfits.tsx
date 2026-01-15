@@ -31,6 +31,7 @@ export const MyOutfits: React.FC<MyOutfitsProps> = ({ onSelectOutfit }) => {
   const [selectedOutfit, setSelectedOutfit] = useState<Outfit | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [upgradeRequired, setUpgradeRequired] = useState(false);
 
   // Load outfits from API on mount and when component is visible
   useEffect(() => {
@@ -51,14 +52,30 @@ export const MyOutfits: React.FC<MyOutfitsProps> = ({ onSelectOutfit }) => {
   const loadOutfits = async () => {
     setIsLoading(true);
     setError(null);
+    setUpgradeRequired(false);
     try {
       const response = await httpClient.get('/api/my/outfits');
+      const data = response.data;
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        const record = data as { upgradeRequired?: boolean; outfits?: Outfit[] };
+        if (record.upgradeRequired) {
+          setUpgradeRequired(true);
+          setOutfits([]);
+          return;
+        }
+        setOutfits(record.outfits || []);
+        return;
+      }
       // Outfits are already sorted by created_at DESC from the API
-      setOutfits(response.data || []);
+      setOutfits(data || []);
     } catch (error: any) {
-      console.error('Error loading outfits:', error);
+      const status = error?.response?.status;
+      // Only log unexpected errors; 401 is handled gracefully in the UI
+      if (status !== 401) {
+        console.error('Error loading outfits:', error);
+      }
       // Only set error if it's not a 401 (unauthorized) - that's expected when not logged in
-      if (error.response?.status !== 401) {
+      if (status !== 401) {
         setError('Failed to load outfits. Please try again.');
       }
       setOutfits([]);
@@ -159,6 +176,29 @@ export const MyOutfits: React.FC<MyOutfitsProps> = ({ onSelectOutfit }) => {
           className="px-4 py-2 bg-black text-white rounded-lg hover:bg-[gray-900] transition-colors"
         >
           Try Again
+        </button>
+      </div>
+    );
+  }
+
+  if (upgradeRequired) {
+    return (
+      <div className="w-full py-12 sm:py-16 flex flex-col items-center justify-center text-center px-4">
+        <ImageIcon className="w-16 h-16 sm:w-20 sm:h-20 text-black/30 mb-4" />
+        <h3 className="text-lg sm:text-xl font-bold text-black mb-2">
+          Upgrade Required
+        </h3>
+        <p className="text-sm sm:text-base text-gray-600 max-w-md mb-4">
+          My Outfits is available after a purchase. Visit pricing to upgrade and
+          access your saved looks.
+        </p>
+        <button
+          onClick={() => {
+            window.location.href = '/pricing';
+          }}
+          className="px-4 py-2 bg-black text-white rounded-lg hover:bg-[gray-900] transition-colors"
+        >
+          View Pricing
         </button>
       </div>
     );

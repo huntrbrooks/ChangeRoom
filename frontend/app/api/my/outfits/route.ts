@@ -62,10 +62,10 @@ export async function GET(_req: NextRequest) {
     const hasPurchase = billing.plan !== "free" || (await hasPaidCreditGrant(userId));
     // Gate access until a purchase/paid grant exists (credits alone not sufficient)
     if (!hasPurchase) {
-      return NextResponse.json(
-        { error: "upgrade_required" },
-        { status: 402 }
-      );
+      return NextResponse.json({
+        upgradeRequired: true,
+        outfits: [],
+      });
     }
 
     const outfits = await getUserOutfits(userId);
