@@ -22,7 +22,21 @@ function getStripe() {
  * Body: { sessionId: string }
  */
 export async function POST(req: NextRequest) {
-  const { userId } = await auth();
+  let userId: string | null = null;
+  try {
+    ({ userId } = await auth());
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("verify-checkout: auth() failed", err);
+    return NextResponse.json(
+      {
+        error: "auth_failed",
+        details: message,
+        hint: "Check Vercel env vars: CLERK_SECRET_KEY must be set for server-side auth.",
+      },
+      { status: 500 }
+    );
+  }
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

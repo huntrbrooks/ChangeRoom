@@ -16,13 +16,27 @@ function getStripe() {
  * Creates a Stripe Billing Portal session for managing subscription
  */
 export async function POST(_req: NextRequest) {
-  const { userId } = await auth();
-
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   try {
+    let userId: string | null = null;
+    try {
+      ({ userId } = await auth());
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("billing-portal: auth() failed", err);
+      return NextResponse.json(
+        {
+          error: "auth_failed",
+          details: message,
+          hint: "Check Vercel env vars: CLERK_SECRET_KEY must be set for server-side auth.",
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { getOrCreateUserBilling } = await import("@/lib/db-access");
     const ip =
       _req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||

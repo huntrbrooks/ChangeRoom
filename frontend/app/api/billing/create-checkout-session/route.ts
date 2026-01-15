@@ -18,13 +18,27 @@ function getStripe() {
  * Body: { priceId: string, mode: "subscription" | "payment", startTrial?: boolean }
  */
 export async function POST(req: NextRequest) {
-  const { userId } = await auth();
-
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   try {
+    let userId: string | null = null;
+    try {
+      ({ userId } = await auth());
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("checkout-session: auth() failed", err);
+      return NextResponse.json(
+        {
+          error: "auth_failed",
+          details: message,
+          hint: "Check Vercel env vars: CLERK_SECRET_KEY must be set for server-side auth.",
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { getOrCreateUserBilling, updateUserBillingPlan, isUserOnFreeTrial } = await import(
       "@/lib/db-access"
     );
