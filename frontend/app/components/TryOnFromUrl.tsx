@@ -222,7 +222,7 @@ export const TryOnFromUrl: React.FC<TryOnFromUrlProps> = ({
                 alt={scrapedProduct.title || 'Product'}
                 className="w-full h-full object-cover"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).src = '/placeholder-clothing.png';
+                  (e.target as HTMLImageElement).src = '/placeholder-clothing.svg';
                 }}
               />
             </div>

@@ -195,7 +195,7 @@ export const MyOutfits: React.FC<MyOutfitsProps> = ({ onSelectOutfit }) => {
             {/* Outfit Image */}
             <div className="relative aspect-[3/4] bg-gray-100 overflow-hidden">
               <Image
-                src={outfit.imageUrl || '/placeholder-outfit.png'}
+                src={outfit.imageUrl || '/placeholder-outfit.svg'}
                 alt="Saved outfit"
                 fill
                 sizes="(min-width: 1024px) 320px, 260px"
