@@ -1,8 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import {
   ClerkProvider,
-  SignInButton,
-  SignUpButton,
   SignedIn,
   SignedOut,
   UserButton,
@@ -14,6 +12,7 @@ import PwaRegister from "./components/PwaRegister";
 import { PostHogClientProvider } from "./providers/PostHogProvider";
 import { AnalyticsUserSync } from "./components/AnalyticsUserSync";
 import { GlobalErrorGuards } from "./components/GlobalErrorGuards";
+import Link from "next/link";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -151,12 +150,18 @@ export default function RootLayout({
             )}
             <header className="flex justify-end items-center p-4 gap-4 h-16 bg-[#FAF9F6] border-b border-[#8B5CF6]/20">
               <SignedOut>
-                <SignInButton signInUrl="/sign-in" />
-                <SignUpButton signUpUrl="/sign-up">
-                  <button className="bg-black text-white rounded-none font-semibold text-xs sm:text-sm h-10 sm:h-12 px-6 sm:px-8 cursor-pointer hover:bg-gray-900 transition-colors uppercase tracking-wider">
-                    Sign Up
-                  </button>
-                </SignUpButton>
+                <Link
+                  href="/sign-in"
+                  className="text-xs sm:text-sm h-10 sm:h-12 px-4 sm:px-6 inline-flex items-center justify-center font-semibold uppercase tracking-wider text-black hover:text-gray-800 transition-colors"
+                >
+                  Sign in
+                </Link>
+                <Link
+                  href="/sign-up"
+                  className="bg-black text-white rounded-none font-semibold text-xs sm:text-sm h-10 sm:h-12 px-6 sm:px-8 inline-flex items-center justify-center hover:bg-gray-900 transition-colors uppercase tracking-wider"
+                >
+                  Sign Up
+                </Link>
               </SignedOut>
               <SignedIn>
                 <UserButton />
