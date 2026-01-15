@@ -18,11 +18,12 @@ interface ProductCardProps {
 }
 
 export const ProductCard: React.FC<ProductCardProps> = ({ product, loading = false }) => {
+  const productLink = product?.link ?? '';
   // Convert product link to affiliate link for revenue
   const affiliateLink = useMemo(() => {
-    if (!product?.link) return '';
-    return convertToAffiliateLink(product.link);
-  }, [product?.link]);
+    if (!productLink) return '';
+    return convertToAffiliateLink(productLink);
+  }, [productLink]);
 
   // Track affiliate click for analytics
   const handleClick = useCallback(() => {
