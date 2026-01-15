@@ -28,9 +28,12 @@ type TransactionSql = typeof sql;
 type SqlRow = Record<string, unknown>;
 type DbClient = {
   query: (queryText: string) => Promise<unknown>;
-  sql: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
+  sql: typeof sql;
   release: () => void;
 };
+type SqlValues = Parameters<typeof sql> extends [TemplateStringsArray, ...infer V]
+  ? V
+  : never;
 
 const asRow = (row: unknown): SqlRow =>
   row && typeof row === "object" ? (row as SqlRow) : {};
@@ -345,7 +348,7 @@ async function withCreditTables<T>(operation: () => Promise<T>): Promise<T> {
  */
 const runTransaction = async <T>(fn: (tx: typeof sql) => Promise<T>): Promise<T> => {
   // Validate that sql.connect exists (defensive check for @vercel/postgres API)
-  const sqlWithConnect = sql as typeof sql & { connect?: () => Promise<DbClient> };
+  const sqlWithConnect = sql as typeof sql & { connect?: () => Promise<unknown> };
   if (typeof sqlWithConnect.connect !== "function") {
     console.error("Database pool connect method not available. Check @vercel/postgres version.");
     throw new Error("database_pool_unavailable: sql.connect is not a function");
@@ -354,7 +357,8 @@ const runTransaction = async <T>(fn: (tx: typeof sql) => Promise<T>): Promise<T>
   // Get a dedicated client from the pool for transaction isolation
   let client: DbClient | null = null;
   try {
-    client = await sqlWithConnect.connect();
+    const connected = await sqlWithConnect.connect();
+    client = connected as unknown as DbClient;
   } catch (connectError) {
     console.error("Failed to acquire database connection for transaction:", connectError);
     throw new Error(
@@ -375,7 +379,7 @@ const runTransaction = async <T>(fn: (tx: typeof sql) => Promise<T>): Promise<T>
 
     // Create a wrapper that uses the connected client's sql method
     // but preserves the same type signature as the global sql
-    const txSql = ((strings: TemplateStringsArray, ...values: unknown[]) => {
+    const txSql = ((strings: TemplateStringsArray, ...values: SqlValues) => {
       return client.sql(strings, ...values);
     }) as typeof sql;
 

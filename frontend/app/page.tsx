@@ -245,10 +245,14 @@ function HomeContent() {
       }
       if (response?.status !== 401) {
         const data = response?.data;
+        const dataObj =
+          typeof data === 'object' && data !== null
+            ? (data as Record<string, unknown>)
+            : null;
         const detail =
-          (typeof data?.hint === 'string' && data.hint) ||
-          (typeof data?.details === 'string' && data.details) ||
-          (typeof data?.error === 'string' && data.error) ||
+          (typeof dataObj?.hint === 'string' && dataObj.hint) ||
+          (typeof dataObj?.details === 'string' && dataObj.details) ||
+          (typeof dataObj?.error === 'string' && dataObj.error) ||
           (typeof err.message === 'string' && err.message) ||
           'Billing is temporarily unavailable.';
         setBillingError(detail);

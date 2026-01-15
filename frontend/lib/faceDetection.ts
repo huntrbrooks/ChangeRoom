@@ -54,10 +54,18 @@ async function getMediaPipeDetector() {
             ?.detections;
           const faceCount = Array.isArray(detections) ? detections.length : 0;
           const first = Array.isArray(detections) ? detections[0] : null;
+          const firstData =
+            first && typeof first === "object"
+              ? (first as {
+                  boundingBox?: { width?: number; height?: number };
+                  bounding_box?: { width?: number; height?: number };
+                  locationData?: { relativeBoundingBox?: { width?: number; height?: number } };
+                })
+              : null;
           const box =
-            first?.boundingBox ||
-            first?.bounding_box ||
-            first?.locationData?.relativeBoundingBox ||
+            firstData?.boundingBox ||
+            firstData?.bounding_box ||
+            firstData?.locationData?.relativeBoundingBox ||
             null;
           return {
             faceCount,
@@ -93,7 +101,11 @@ export async function detectFacesBestEffort(
       if (Array.isArray(faces)) {
         const faceCount = faces.length;
         const first = faces[0];
-        const box = first?.boundingBox;
+        const firstData =
+          first && typeof first === "object"
+            ? (first as { boundingBox?: { width?: number; height?: number } })
+            : null;
+        const box = firstData?.boundingBox || null;
         return {
           faceCount,
           faceAreaRatio: safeBoxAreaRatio(box, image.width, image.height),
