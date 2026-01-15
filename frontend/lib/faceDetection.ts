@@ -50,8 +50,8 @@ async function getMediaPipeDetector() {
       detect: async (image: ImageBitmap): Promise<FaceDetectionResult> => {
         try {
           const res = detector.detect(image);
-          const detections = (res as unknown as { detections?: any[] })
-            .detections;
+          const detections = (res as { detections?: unknown[] } | null)
+            ?.detections;
           const faceCount = Array.isArray(detections) ? detections.length : 0;
           const first = Array.isArray(detections) ? detections[0] : null;
           const box =
@@ -78,7 +78,11 @@ export async function detectFacesBestEffort(
 ): Promise<FaceDetectionResult> {
   // 1) Prefer built-in Shape Detection API if available (fast, no downloads).
   try {
-    const FaceDetectorCtor = (window as unknown as { FaceDetector?: any })
+    type FaceDetectorLike = new (opts: {
+      fastMode?: boolean;
+      maxDetectedFaces?: number;
+    }) => { detect: (image: ImageBitmap) => Promise<unknown[]> };
+    const FaceDetectorCtor = (window as unknown as { FaceDetector?: FaceDetectorLike })
       .FaceDetector;
     if (FaceDetectorCtor) {
       const detector = new FaceDetectorCtor({

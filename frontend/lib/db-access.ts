@@ -25,6 +25,26 @@ const DEFAULT_CREDIT_HOLD_TTL_MS =
 
 // Transaction-scoped SQL tag type used by runTransaction() helpers.
 type TransactionSql = typeof sql;
+type SqlRow = Record<string, unknown>;
+type DbClient = {
+  query: (queryText: string) => Promise<unknown>;
+  sql: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
+  release: () => void;
+};
+
+const asRow = (row: unknown): SqlRow =>
+  row && typeof row === "object" ? (row as SqlRow) : {};
+
+const toNumber = (value: unknown, fallback = 0): number => {
+  const num = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+
+const toOptionalNumber = (value: unknown): number | null => {
+  if (value === null || value === undefined) return null;
+  const num = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(num) ? num : null;
+};
 
 // Types
 export type Plan = "free" | "standard" | "pro";
@@ -325,15 +345,16 @@ async function withCreditTables<T>(operation: () => Promise<T>): Promise<T> {
  */
 const runTransaction = async <T>(fn: (tx: typeof sql) => Promise<T>): Promise<T> => {
   // Validate that sql.connect exists (defensive check for @vercel/postgres API)
-  if (typeof (sql as unknown as { connect?: unknown }).connect !== "function") {
+  const sqlWithConnect = sql as typeof sql & { connect?: () => Promise<DbClient> };
+  if (typeof sqlWithConnect.connect !== "function") {
     console.error("Database pool connect method not available. Check @vercel/postgres version.");
     throw new Error("database_pool_unavailable: sql.connect is not a function");
   }
 
   // Get a dedicated client from the pool for transaction isolation
-  let client: any;
+  let client: DbClient | null = null;
   try {
-    client = await (sql as any).connect();
+    client = await sqlWithConnect.connect();
   } catch (connectError) {
     console.error("Failed to acquire database connection for transaction:", connectError);
     throw new Error(
@@ -342,9 +363,9 @@ const runTransaction = async <T>(fn: (tx: typeof sql) => Promise<T>): Promise<T>
   }
 
   // Validate that client has required methods
-  if (typeof client.query !== "function" || typeof client.sql !== "function") {
+  if (!client || typeof client.query !== "function" || typeof client.sql !== "function") {
     console.error("Database client missing required methods. Check @vercel/postgres version.");
-    client.release();
+    client?.release();
     throw new Error("database_client_invalid: client missing query or sql methods");
   }
 
@@ -354,8 +375,7 @@ const runTransaction = async <T>(fn: (tx: typeof sql) => Promise<T>): Promise<T>
 
     // Create a wrapper that uses the connected client's sql method
     // but preserves the same type signature as the global sql
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const txSql = ((strings: TemplateStringsArray, ...values: any[]) => {
+    const txSql = ((strings: TemplateStringsArray, ...values: unknown[]) => {
       return client.sql(strings, ...values);
     }) as typeof sql;
 
@@ -545,11 +565,15 @@ async function releaseStaleActiveHoldsInTx(
     FOR UPDATE
   `;
 
-  if (stale.rows.length === 0) {
+  const staleRows = Array.isArray(stale.rows) ? stale.rows : [];
+  if (staleRows.length === 0) {
     return { releasedCount: 0, refundedAmount: 0 };
   }
 
-  const refundedAmount = stale.rows.reduce((sum, r) => sum + Number((r as any).amount || 0), 0);
+  const refundedAmount = staleRows.reduce(
+    (sum, row) => sum + toNumber(asRow(row).amount, 0),
+    0
+  );
 
   // Refund credits back to the user.
   const updatedBilling = await tx`
@@ -576,11 +600,12 @@ async function releaseStaleActiveHoldsInTx(
 
   // Ledger entries (idempotent): only insert if a release entry doesn't already exist.
   // balance_after is set to the post-refund balance for visibility.
-  const balanceAfter = (updatedBilling.rows[0] as any)?.credits_available ?? null;
-  for (const row of stale.rows as any[]) {
-    const requestId = String(row.request_id);
-    const amount = Number(row.amount || 0);
-    const holdId = String(row.id);
+  const balanceAfter = toOptionalNumber(asRow(updatedBilling.rows[0]).credits_available);
+  for (const row of staleRows) {
+    const rowData = asRow(row);
+    const requestId = String(rowData.request_id ?? "");
+    const amount = toNumber(rowData.amount, 0);
+    const holdId = String(rowData.id ?? "");
 
     const existingRelease = await tx`
       SELECT id FROM credit_ledger_entries
@@ -613,7 +638,7 @@ async function releaseStaleActiveHoldsInTx(
     }
   }
 
-  return { releasedCount: (stale.rows as any[]).length, refundedAmount };
+  return { releasedCount: staleRows.length, refundedAmount };
 }
 
 /**
@@ -725,7 +750,7 @@ async function reconcileCreditsFromLedger(userId: string): Promise<{
       );
 
       // Update billing to match expected balance
-      const updated = await tx`
+      await tx`
         UPDATE users_billing
         SET 
           credits_available = ${expectedBalance},
@@ -989,6 +1014,10 @@ export async function createCreditHold(params: {
     // (we check for existing hold at the start of the transaction).
     // The partial unique index on (request_id, entry_type) WHERE request_id IS NOT NULL
     // cannot be used with ON CONFLICT directly in PostgreSQL.
+    const updatedCredits = toNumber(
+      asRow(updatedBilling.rows[0]).credits_available,
+      0
+    );
     await tx`
       INSERT INTO credit_ledger_entries (
         id,
@@ -1007,7 +1036,7 @@ export async function createCreditHold(params: {
         ${holdResult.rows[0].id},
         'hold',
         ${-amount},
-        ${(updatedBilling.rows[0] as any).credits_available},
+        ${updatedCredits},
         ${JSON.stringify({ reason })}
       )
     `;
@@ -1144,6 +1173,10 @@ export async function releaseCreditHold(
             RETURNING *
           `
         : { rows: [billing] };
+    const updatedCredits = toNumber(
+      asRow(updatedBilling.rows[0]).credits_available,
+      0
+    );
 
     const updatedHold = await tx`
       UPDATE credit_holds
@@ -1177,7 +1210,7 @@ export async function releaseCreditHold(
           ${hold.id},
           'release',
           ${hold.status === "active" ? hold.amount : 0},
-          ${(updatedBilling.rows[0] as any).credits_available},
+          ${updatedCredits},
           ${JSON.stringify({ reason })}
         )
       `;
@@ -1269,6 +1302,7 @@ export async function grantCredits(
       RETURNING *
     `;
 
+    const updatedCredits = toNumber(asRow(updated.rows[0]).credits_available, 0);
     // If requestId wasn't provided, we still write an audit ledger row (non-idempotent by design).
     if (!requestId || !requestId.trim()) {
       await tx`
@@ -1287,7 +1321,7 @@ export async function grantCredits(
           NULL,
           'grant',
           ${amount},
-          ${(updated.rows[0] as any).credits_available},
+          ${updatedCredits},
           ${JSON.stringify(metadata)}
         )
       `;
@@ -1295,7 +1329,7 @@ export async function grantCredits(
       // Fill in balance_after for the inserted ledger row
       await tx`
         UPDATE credit_ledger_entries
-        SET balance_after = ${(updated.rows[0] as any).credits_available}
+        SET balance_after = ${updatedCredits}
         WHERE id = ${insertedLedgerId}
       `;
     }
@@ -1346,7 +1380,7 @@ export async function getLedgerEntries(
       ORDER BY created_at DESC
       LIMIT ${limit}
     `;
-    return result.rows.map((r) => coerceLedgerEntry(r as any));
+    return result.rows.map((r) => coerceLedgerEntry(asRow(r)));
   });
 }
 
@@ -1397,11 +1431,14 @@ export async function getCreditDiagnostics(
       ORDER BY entry_type
     `;
 
-    const ledgerSummary: CreditDiagnosticsSummary[] = ledgerSummaryRows.rows.map((row) => ({
-      entryType: String((row as any).entry_type),
-      count: Number((row as any).count || 0),
-      creditsChange: Number((row as any).total || 0),
-    }));
+    const ledgerSummary: CreditDiagnosticsSummary[] = ledgerSummaryRows.rows.map((row) => {
+      const rowData = asRow(row);
+      return {
+        entryType: String(rowData.entry_type ?? ""),
+        count: toNumber(rowData.count, 0),
+        creditsChange: toNumber(rowData.total, 0),
+      };
+    });
 
     const ledgerEntriesResult = await tx`
       SELECT
@@ -1418,15 +1455,18 @@ export async function getCreditDiagnostics(
       LIMIT ${entryLimit}
     `;
 
-    const recentEntries: CreditDiagnosticsEntry[] = ledgerEntriesResult.rows.map((row) => ({
-      id: String((row as any).id),
-      request_id: (row as any).request_id ? String((row as any).request_id) : null,
-      entry_type: (row as any).entry_type as CreditLedgerEntryType,
-      credits_change: Number((row as any).credits_change || 0),
-      balance_after: (row as any).balance_after ?? null,
-      reason: (row as any).reason ? String((row as any).reason) : null,
-      created_at: (row as any).created_at as Date,
-    }));
+    const recentEntries: CreditDiagnosticsEntry[] = ledgerEntriesResult.rows.map((row) => {
+      const rowData = asRow(row);
+      return {
+        id: String(rowData.id ?? ""),
+        request_id: rowData.request_id ? String(rowData.request_id) : null,
+        entry_type: rowData.entry_type as CreditLedgerEntryType,
+        credits_change: toNumber(rowData.credits_change, 0),
+        balance_after: toOptionalNumber(rowData.balance_after),
+        reason: rowData.reason ? String(rowData.reason) : null,
+        created_at: rowData.created_at as Date,
+      };
+    });
 
     const holdsSummaryRows = await tx`
       SELECT status, COUNT(*)::int as count, COALESCE(SUM(amount), 0)::int as total
@@ -1436,11 +1476,14 @@ export async function getCreditDiagnostics(
       ORDER BY status
     `;
 
-    const holdsSummary: CreditDiagnosticsSummary[] = holdsSummaryRows.rows.map((row) => ({
-      entryType: String((row as any).status),
-      count: Number((row as any).count || 0),
-      creditsChange: Number((row as any).total || 0),
-    }));
+    const holdsSummary: CreditDiagnosticsSummary[] = holdsSummaryRows.rows.map((row) => {
+      const rowData = asRow(row);
+      return {
+        entryType: String(rowData.status ?? ""),
+        count: toNumber(rowData.count, 0),
+        creditsChange: toNumber(rowData.total, 0),
+      };
+    });
 
     const activeHoldsRows = await tx`
       SELECT id, request_id, amount, status, reason, expires_at, created_at
@@ -1464,15 +1507,18 @@ export async function getCreditDiagnostics(
       LIMIT ${holdLimit}
     `;
 
-    const mapHold = (row: any): CreditDiagnosticsHold => ({
-      id: String(row.id),
-      request_id: String(row.request_id),
-      amount: Number(row.amount || 0),
-      status: String(row.status),
-      reason: row.reason ? String(row.reason) : null,
-      expires_at: row.expires_at ?? null,
-      created_at: row.created_at as Date,
-    });
+    const mapHold = (row: unknown): CreditDiagnosticsHold => {
+      const rowData = asRow(row);
+      return {
+        id: String(rowData.id ?? ""),
+        request_id: String(rowData.request_id ?? ""),
+        amount: toNumber(rowData.amount, 0),
+        status: String(rowData.status ?? ""),
+        reason: rowData.reason ? String(rowData.reason) : null,
+        expires_at: (rowData.expires_at as Date | null) ?? null,
+        created_at: rowData.created_at as Date,
+      };
+    };
 
     const discrepancy =
       billing === null
@@ -1752,6 +1798,10 @@ export async function grantFreeTrialOnce(
       return { granted: false, billing: refreshed };
     }
 
+    const updatedCredits = toNumber(
+      asRow(updatedBilling.rows[0]).credits_available,
+      0
+    );
     await tx`
       INSERT INTO credit_ledger_entries (
         id,
@@ -1766,7 +1816,7 @@ export async function grantFreeTrialOnce(
         ${userId},
         'grant',
         ${grantAmount},
-        ${(updatedBilling.rows[0] as any).credits_available},
+        ${updatedCredits},
         ${JSON.stringify({ reason: "free_trial" })}
       )
     `;
@@ -2210,7 +2260,7 @@ export async function getUserClothingItems(
 ): Promise<ClothingItem[]> {
   return withClothingItemsTable(async () => {
     // Build single query with all conditions
-    let result: any;
+    let result: { rows: unknown[] } | null = null;
     const sinceValue =
       filters?.since instanceof Date && !Number.isNaN(filters.since.getTime())
         ? filters.since.toISOString()
@@ -2286,7 +2336,8 @@ export async function getUserClothingItems(
       }
     }
 
-    let items = result.rows as ClothingItem[];
+    const rows = result?.rows ?? [];
+    let items = rows as ClothingItem[];
 
     // Apply limit after query if needed
     if (filters?.limit) {
@@ -2323,7 +2374,10 @@ export async function getSavedClothingItemIds(userId: string): Promise<string[]>
       WHERE user_id = ${userId}
       ORDER BY saved_at DESC
     `;
-    return result.rows.map((row: any) => row.clothing_item_id as string);
+    return result.rows.map((row) => {
+      const rowData = asRow(row);
+      return String(rowData.clothing_item_id ?? "");
+    });
   });
 }
 
@@ -2667,7 +2721,7 @@ export async function getClothingItemOffers(
 ): Promise<ClothingItemOffer[]> {
   return withClothingItemOffersTable(() =>
     withClothingItemsTable(async () => {
-      let result: any;
+      let result: { rows: unknown[] } | null = null;
 
       if (limit) {
         result = await sql`
@@ -2688,7 +2742,7 @@ export async function getClothingItemOffers(
         `;
       }
 
-      return result.rows as ClothingItemOffer[];
+      return (result?.rows ?? []) as ClothingItemOffer[];
     })
   );
 }
@@ -3073,7 +3127,7 @@ export async function getUserOutfits(
   limit?: number
 ): Promise<UserOutfit[]> {
   return withUserOutfitsTable(async () => {
-    let result: any;
+    let result: { rows: unknown[] } | null = null;
 
     if (limit) {
       result = await sql`
@@ -3090,7 +3144,7 @@ export async function getUserOutfits(
       `;
     }
 
-    return result.rows as UserOutfit[];
+    return (result?.rows ?? []) as UserOutfit[];
   });
 }
 

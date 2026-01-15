@@ -189,9 +189,11 @@ export function getAffiliateInfo(url: string): { name: string; hasAffiliate: boo
   };
 }
 
-export default {
+const affiliateLinks = {
   convertToAffiliateLink,
   trackAffiliateClick,
   getAffiliateInfo,
 };
+
+export default affiliateLinks;
 

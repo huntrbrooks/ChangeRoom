@@ -161,8 +161,11 @@ export async function extractProductImages(url: string): Promise<string[]> {
       ],
     });
 
-    if (result?.json && typeof result.json === "object" && (result.json as any).imageUrls) {
-      return (result.json as any).imageUrls as string[];
+    if (result?.json && typeof result.json === "object") {
+      const json = result.json as { imageUrls?: unknown };
+      if (Array.isArray(json.imageUrls)) {
+        return json.imageUrls.filter((url): url is string => typeof url === "string");
+      }
     }
 
     return [];

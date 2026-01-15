@@ -55,22 +55,12 @@ const DEFAULTS: Required<Omit<OptimizeImageOptions, 'preferredMimeType'>> & {
   absoluteMinDimension: 720,
 };
 
-const readFileAsDataURL = (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error || new Error('Unable to read file.'));
-    reader.readAsDataURL(file);
-  });
-};
-
 function isAbortError(err: unknown): boolean {
   return (
     typeof err === "object" &&
     err !== null &&
     "name" in err &&
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (err as any).name === "AbortError"
+    (err as { name?: string }).name === "AbortError"
   );
 }
 
@@ -96,7 +86,6 @@ async function withRetries<T>(
         break;
       }
       const delay = options.baseDelayMs * Math.pow(2, attempt);
-      // eslint-disable-next-line no-console
       console.warn(`[imageOptimization] ${options.label} failed (attempt ${attempt + 1}/${options.retries + 1})`, err);
       await sleep(delay);
     }
@@ -154,7 +143,6 @@ async function decodeToDrawable(
       };
     } catch (err) {
       // Some formats (e.g. HEIC on Chrome) aren't supported by createImageBitmap
-      // eslint-disable-next-line no-console
       console.info("[imageOptimization] createImageBitmap failed; falling back to HTMLImageElement decode.", err);
     }
   }
@@ -271,12 +259,9 @@ export const optimizeImageFile = async (
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
   };
 
-  const srcW =
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (image as any).width || decoded.width || 1;
-  const srcH =
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (image as any).height || decoded.height || 1;
+  const sizedImage = image as { width?: number; height?: number };
+  const srcW = sizedImage.width || decoded.width || 1;
+  const srcH = sizedImage.height || decoded.height || 1;
 
   const originalLongestSide = Math.max(srcW, srcH);
   const scale =

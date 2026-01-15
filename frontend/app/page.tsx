@@ -218,6 +218,49 @@ function HomeContent() {
 
   const isSignedInReady = isAuthLoaded && isSignedIn;
 
+  const fetchBilling = useCallback(async () => {
+    try {
+      setBillingStatus('loading');
+      setBillingError(null);
+      const response = await httpClient.get('/api/my/billing');
+      setBilling({
+        ...response.data,
+        hasPurchase: Boolean(response.data?.hasPurchase),
+      });
+      setBillingStatus('ready');
+    } catch (error: unknown) {
+      const err =
+        typeof error === 'object' && error !== null
+          ? (error as { response?: { status?: number; data?: unknown }; message?: string })
+          : { message: String(error) };
+      const response = err.response;
+      // Only log error if it's not a 401 (unauthorized) - that's expected when not logged in
+      if (response?.status !== 401) {
+        console.error('Error fetching billing:', response?.data || err.message);
+      }
+      if (response?.status === 401 && !isSignedInReady) {
+        setBillingStatus('idle');
+        setBillingError(null);
+        return;
+      }
+      if (response?.status !== 401) {
+        const data = response?.data;
+        const detail =
+          (typeof data?.hint === 'string' && data.hint) ||
+          (typeof data?.details === 'string' && data.details) ||
+          (typeof data?.error === 'string' && data.error) ||
+          (typeof err.message === 'string' && err.message) ||
+          'Billing is temporarily unavailable.';
+        setBillingError(detail);
+      } else if (isSignedInReady) {
+        setBillingError(
+          'Unauthorized while signed in. Check Clerk publishable/secret key pairing in Vercel.'
+        );
+      }
+      setBillingStatus('error');
+    }
+  }, [isSignedInReady]);
+
   // Fetch billing info on mount and when auth changes
   useEffect(() => {
     if (isSignedInReady) {
@@ -229,7 +272,7 @@ function HomeContent() {
       setBillingStatus('idle');
       setBillingError(null);
     }
-  }, [isAuthLoaded, isSignedIn, isSignedInReady]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchBilling, isAuthLoaded, isSignedIn, isSignedInReady]);
 
   useEffect(() => {
     if (
@@ -269,7 +312,6 @@ function HomeContent() {
             await httpClient.post('/api/billing/verify-checkout-session', { sessionId });
           } catch (error) {
             // Verification is a best-effort fallback (webhook is primary)
-            // eslint-disable-next-line no-console
             console.warn('verify-checkout-session failed', error);
           } finally {
             // Always refresh billing and clean URL
@@ -281,46 +323,8 @@ function HomeContent() {
         })();
       }
     }
-  }, [isSignedInReady]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchBilling, isSignedInReady]);
 
-  const fetchBilling = async () => {
-    try {
-      setBillingStatus('loading');
-      setBillingError(null);
-      const response = await httpClient.get('/api/my/billing');
-      setBilling({
-        ...response.data,
-        hasPurchase: Boolean(response.data?.hasPurchase),
-      });
-      setBillingStatus('ready');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
-      // Only log error if it's not a 401 (unauthorized) - that's expected when not logged in
-      if (error.response?.status !== 401) {
-        console.error('Error fetching billing:', error.response?.data || error.message);
-      }
-      if (error.response?.status === 401 && !isSignedInReady) {
-        setBillingStatus('idle');
-        setBillingError(null);
-        return;
-      }
-      if (error.response?.status !== 401) {
-        const data = error.response?.data;
-        const detail =
-          (typeof data?.hint === 'string' && data.hint) ||
-          (typeof data?.details === 'string' && data.details) ||
-          (typeof data?.error === 'string' && data.error) ||
-          (typeof error.message === 'string' && error.message) ||
-          'Billing is temporarily unavailable.';
-        setBillingError(detail);
-      } else if (isSignedInReady) {
-        setBillingError(
-          'Unauthorized while signed in. Check Clerk publishable/secret key pairing in Vercel.'
-        );
-      }
-      setBillingStatus('error');
-    }
-  };
 
   // Check if user email is in bypass list
   const userEmail = user?.emailAddresses?.[0]?.emailAddress;
@@ -877,7 +881,7 @@ function HomeContent() {
         return next;
       });
     }
-  }, [getBackendAuthHeaders, lastSafetyBlockDetail, requireAuth, wardrobeItems]);
+  }, [getBackendApiUrl, getBackendAuthHeaders, lastSafetyBlockDetail, requireAuth, wardrobeItems]);
 
   // Handler for "Try On Any URL" feature - when a product is scraped from a URL
   const handleProductScraped = useCallback(async (
@@ -1148,11 +1152,14 @@ function HomeContent() {
       }
       
       console.log('Outfit saved to My Outfits:', response.data);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
-      console.error('Error saving outfit to My Outfits:', error);
+    } catch (error: unknown) {
+      const err =
+        typeof error === 'object' && error !== null
+          ? (error as { response?: { status?: number }; message?: string })
+          : { message: String(error) };
+      console.error('Error saving outfit to My Outfits:', err.message || err);
       // Don't throw - this is non-critical, but log for debugging
-      if (error.response?.status === 401) {
+      if (err.response?.status === 401) {
         console.warn('User not authenticated, outfit not saved');
       }
     }

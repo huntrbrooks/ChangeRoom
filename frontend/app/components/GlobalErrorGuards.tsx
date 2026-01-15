@@ -32,7 +32,6 @@ export function GlobalErrorGuards() {
         event.preventDefault();
         return;
       }
-      // eslint-disable-next-line no-console
       console.warn("[global] unhandledrejection", event.reason);
     };
 

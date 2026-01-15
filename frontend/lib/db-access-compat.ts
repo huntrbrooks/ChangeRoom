@@ -364,7 +364,6 @@ export async function getClothingItemsByIds(
   }
 
   // Avoid ANY()/array casting pitfalls; keep it explicit.
-  const clauses = ids.map((id) => sql`id = ${id}`);
   // @vercel/postgres doesn't support joining template fragments directly; use OR cases.
   if (ids.length === 2) {
     const result = await sql`
