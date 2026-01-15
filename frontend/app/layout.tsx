@@ -128,6 +128,8 @@ export default function RootLayout({
   return (
     <ClerkProvider 
       publishableKey={publishableKey}
+      signInUrl="/sign-in"
+      signUpUrl="/sign-up"
       appearance={{
         elements: {
           formButtonPrimary: 'bg-black hover:bg-gray-900 text-white uppercase font-semibold tracking-wider',
@@ -149,8 +151,8 @@ export default function RootLayout({
             )}
             <header className="flex justify-end items-center p-4 gap-4 h-16 bg-[#FAF9F6] border-b border-[#8B5CF6]/20">
               <SignedOut>
-                <SignInButton />
-                <SignUpButton>
+                <SignInButton signInUrl="/sign-in" />
+                <SignUpButton signUpUrl="/sign-up">
                   <button className="bg-black text-white rounded-none font-semibold text-xs sm:text-sm h-10 sm:h-12 px-6 sm:px-8 cursor-pointer hover:bg-gray-900 transition-colors uppercase tracking-wider">
                     Sign Up
                   </button>
