@@ -12,7 +12,8 @@ export default function SignUpPage() {
               formButtonPrimary: "bg-[#6c47ff] hover:bg-[#5a3ae6] text-white",
             }
           }}
-          routing="hash"
+          routing="path"
+          path="/sign-up"
           fallbackRedirectUrl="/"
           signInUrl="/sign-in"
         />
