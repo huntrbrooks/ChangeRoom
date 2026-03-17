@@ -46,8 +46,7 @@ def test_pick_best_tryon_model_prefers_stronger_available_image_model():
 
     selected = _pick_best_tryon_model(
         [
-            "gemini-2.0-flash-image",
-            "gemini-2.5-flash-image-preview",
+            "gemini-2.5-flash-image",
             "gemini-3-pro-image-preview",
         ],
         configured_model="auto",
@@ -61,13 +60,13 @@ def test_pick_best_tryon_model_respects_explicit_config_when_available():
 
     selected = _pick_best_tryon_model(
         [
-            "gemini-2.0-flash-image",
+            "gemini-2.5-flash-image",
             "gemini-3-pro-image-preview",
         ],
-        configured_model="gemini-2.0-flash-image",
+        configured_model="gemini-2.5-flash-image",
     )
 
-    assert selected == "gemini-2.0-flash-image"
+    assert selected == "gemini-2.5-flash-image"
 
 
 @pytest.mark.asyncio

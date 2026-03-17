@@ -15,56 +15,47 @@ GEMINI_TASKS = {
         env_keys=("GEMINI_TRYON_MODEL", "GEMINI_IMAGE_MODEL"),
         default_model="gemini-3-pro-image-preview",
         fallback_models=(
-            "gemini-3.1-flash-image-preview",
-            "gemini-3-flash-preview",
-            "gemini-3.1-flash-lite-preview",
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-lite",
-            "gemini-1.5-flash",
+            "gemini-2.5-flash-image",
         ),
     ),
     "garment_analysis": TaskModelConfig(
         env_keys=("GEMINI_GARMENT_ANALYZE_MODEL", "GEMINI_VISION_MODEL", "GEMINI_TEXT_MODEL"),
         default_model="gemini-3-flash-preview",
         fallback_models=(
-            "gemini-3.1-flash-lite-preview",
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-lite",
-            "gemini-1.5-flash",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
             "gemini-3-pro-image-preview",
+            "gemini-3-pro-preview",
         ),
     ),
     "user_analysis": TaskModelConfig(
         env_keys=("GEMINI_USER_ANALYZE_MODEL", "GEMINI_VISION_MODEL", "GEMINI_TEXT_MODEL"),
         default_model="gemini-3-flash-preview",
         fallback_models=(
-            "gemini-3.1-flash-lite-preview",
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-lite",
-            "gemini-1.5-flash",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
             "gemini-3-pro-image-preview",
+            "gemini-3-pro-preview",
         ),
     ),
     "rewrite": TaskModelConfig(
         env_keys=("GEMINI_REWRITE_MODEL", "GEMINI_TEXT_MODEL"),
         default_model="gemini-3-flash-preview",
         fallback_models=(
-            "gemini-3.1-flash-lite-preview",
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-lite",
-            "gemini-1.5-flash",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
             "gemini-3-pro-image-preview",
+            "gemini-3-pro-preview",
         ),
     ),
     "intimate_detect": TaskModelConfig(
         env_keys=("GEMINI_INTIMATE_DETECT_MODEL", "GEMINI_VISION_MODEL", "GEMINI_TEXT_MODEL"),
         default_model="gemini-3-flash-preview",
         fallback_models=(
-            "gemini-3.1-flash-lite-preview",
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-lite",
-            "gemini-1.5-flash",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
             "gemini-3-pro-image-preview",
+            "gemini-3-pro-preview",
         ),
     ),
 }
@@ -73,11 +64,11 @@ GEMINI_TASKS = {
 OPENAI_TASKS = {
     "clothing_analysis": TaskModelConfig(
         env_keys=("OPENAI_CLOTHING_ANALYZE_MODEL", "OPENAI_VISION_MODEL", "OPENAI_MODEL"),
-        default_model="gpt-4o",
+        default_model="gpt-5.4",
     ),
     "clothing_preprocess": TaskModelConfig(
         env_keys=("OPENAI_PREPROCESS_CLOTHING_MODEL", "OPENAI_VISION_MODEL", "OPENAI_MODEL"),
-        default_model="gpt-4o-mini",
+        default_model="gpt-5-mini-2025-08-07",
     ),
 }
 
