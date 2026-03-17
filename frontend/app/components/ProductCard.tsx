@@ -1,0 +1,92 @@
+'use client';
+
+import React, { useMemo, useCallback } from 'react';
+import { ShoppingCart } from 'lucide-react';
+import { convertToAffiliateLink, trackAffiliateClick } from '@/lib/affiliateLinks';
+
+interface Product {
+  title: string;
+  price: string;
+  link: string;
+  thumbnail: string;
+  source: string;
+}
+
+interface ProductCardProps {
+  product?: Product;
+  loading?: boolean;
+}
+
+export const ProductCard: React.FC<ProductCardProps> = ({ product, loading = false }) => {
+  const productLink = product?.link ?? '';
+  // Convert product link to affiliate link for revenue
+  const affiliateLink = useMemo(() => {
+    if (!productLink) return '';
+    return convertToAffiliateLink(productLink);
+  }, [productLink]);
+
+  // Track affiliate click for analytics
+  const handleClick = useCallback(() => {
+    if (!product) return;
+    trackAffiliateClick(
+      product.link,
+      affiliateLink,
+      product.title,
+      product.source
+    );
+  }, [product, affiliateLink]);
+
+  if (loading || !product) {
+    return (
+      <div className="border border-black/10 rounded-none overflow-hidden bg-white animate-pulse">
+        <div className="aspect-square bg-gray-200" />
+        <div className="p-3 sm:p-4 space-y-3">
+          <div className="h-4 w-3/4 bg-gray-200" />
+          <div className="flex items-center justify-between">
+            <div className="h-4 w-16 bg-gray-200" />
+            <div className="h-3 w-12 bg-gray-200" />
+          </div>
+          <div className="h-10 w-full bg-gray-200" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border border-black/10 rounded-none overflow-hidden hover:border-black/30 transition-all bg-white">
+      <div className="aspect-square relative overflow-hidden bg-gray-100">
+        {product.thumbnail && (
+          // Use <img> instead of next/image because shopping thumbnails can come from many hosts.
+          // This avoids brittle remote-host allowlists and prevents silent "no image" failures.
+          <img
+            src={product.thumbnail}
+            alt={product.title}
+            className="absolute inset-0 h-full w-full object-cover"
+            loading="lazy"
+            referrerPolicy="no-referrer"
+          />
+        )}
+      </div>
+      <div className="p-3 sm:p-4">
+        <h3 className="font-semibold text-xs sm:text-sm line-clamp-2 mb-2 min-h-[2.5rem] sm:h-10 text-black uppercase tracking-wide" title={product.title}>
+          {product.title}
+        </h3>
+        <div className="flex items-center justify-between mt-2">
+          <span className="font-bold text-base sm:text-lg text-black">{product.price}</span>
+          <span className="text-[10px] sm:text-xs text-black/60 uppercase tracking-wider">{product.source}</span>
+        </div>
+        <a
+          href={affiliateLink}
+          onClick={handleClick}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-3 w-full flex items-center justify-center gap-2 bg-black text-white py-2.5 sm:py-2 rounded-none hover:bg-gray-900 active:bg-gray-800 transition-colors text-xs sm:text-sm font-semibold uppercase tracking-wider min-h-[44px] touch-manipulation"
+        >
+          <ShoppingCart size={14} className="sm:w-4 sm:h-4" />
+          Buy Now
+        </a>
+      </div>
+    </div>
+  );
+};
+

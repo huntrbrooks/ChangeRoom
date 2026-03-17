@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: change-room-backend
+    runtime: python
+    repo: https://github.com/huntrbrooks/ChangeRoom
+    plan: free
+    # pillow-heif may need libheif headers/libs at build/runtime on Render.
+    # Installing these makes HEIC/HEIF decoding reliable for iPhone uploads.
+    buildCommand: |
+      if command -v apt-get >/dev/null 2>&1; then
+        apt-get update
+        apt-get install -y --no-install-recommends libheif-dev libde265-dev pkg-config
+      fi
+      pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --timeout-keep-alive 600 --timeout-graceful-shutdown 30
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.0
+  - type: web
+    name: yolo-backend
+    runtime: docker
+    repo: https://github.com/huntrbrooks/ChangeRoom
+    plan: starter
+    dockerContext: my-yolov8-app/backend
+    dockerfilePath: Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: YOLO_ALLOWED_ORIGINS
+        value: https://yolo-frontend.onrender.com
+      - key: YOLO_ENVIRONMENT
+        value: production
+      - key: PORT
+        value: "5000"

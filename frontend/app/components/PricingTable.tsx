@@ -1,0 +1,542 @@
+'use client';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+import React from 'react';
+import { Check, Zap, Crown, Sparkles } from 'lucide-react';
+import { getAllProducts, ProductFeatures, PlanType } from '@/lib/products';
+import { useUser } from '@clerk/nextjs';
+import { trackProductView, trackFeatureClick, trackCheckoutInitiated } from '@/lib/clerk-tracking';
+import { ANALYTICS_EVENTS, captureEvent } from '@/lib/analytics';
+import { stripePublicConfig } from '@/lib/config';
+
+interface PricingTableProps {
+  currentPlan?: PlanType;
+  onPlanSelect?: (plan: PlanType) => void;
+  showCreditPacks?: boolean;
+  compact?: boolean;
+}
+
+export function PricingTable({
+  currentPlan,
+  onPlanSelect,
+  showCreditPacks = false,
+  compact = false,
+}: PricingTableProps) {
+  const { user } = useUser();
+  const [loading, setLoading] = React.useState<string | null>(null);
+  const products = getAllProducts().filter(p => p.plan !== 'free' || !compact);
+
+  const redirectToSignIn = () => {
+    if (typeof window === 'undefined') return;
+    const returnTo = `${window.location.pathname}${window.location.search}`;
+    window.location.href = `/sign-in?redirect_url=${encodeURIComponent(returnTo)}`;
+  };
+
+  const startCheckout = async (params: {
+    priceId: string;
+    mode: 'payment' | 'subscription';
+    source: string;
+  }) => {
+    if (!user) {
+      redirectToSignIn();
+      return;
+    }
+
+    if (!params.priceId || !params.priceId.startsWith('price_')) {
+      console.error('Missing/invalid Stripe priceId', params);
+      alert('Payment configuration error. Please contact support.');
+      return;
+    }
+
+    captureEvent(ANALYTICS_EVENTS.CHECKOUT_STARTED, {
+      mode: params.mode,
+      source: params.source,
+      user_id: user.id,
+      price_id: params.priceId,
+    });
+
+    // Track checkout initiation (without leaking any secret Stripe URLs)
+    await trackCheckoutInitiated(user, 'credit-pack', `price:${params.priceId}`);
+
+    const response = await fetch('/api/billing/create-checkout-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        priceId: params.priceId,
+        mode: params.mode,
+      }),
+    });
+    const data = (await response.json()) as { url?: string; error?: string; details?: string };
+    if (!response.ok || !data.url) {
+      const message = data?.error || data?.details || 'Failed to start checkout';
+      throw new Error(message);
+    }
+    window.location.href = data.url;
+  };
+
+  React.useEffect(() => {
+    // Track pricing table view
+    if (user) {
+      trackProductView(user, 'standard');
+    }
+  }, [user]);
+
+  const handlePlanClick = async (product: ProductFeatures) => {
+    if (product.plan === 'free') return;
+
+    // Track product view
+    if (user) {
+      await trackProductView(user, product.plan);
+    }
+
+    if (onPlanSelect) {
+      onPlanSelect(product.plan);
+      return;
+    }
+
+    // Default: initiate checkout
+    setLoading(product.plan);
+    try {
+      // Product table plans here are one-time credit packs (not subscriptions)
+      const priceId =
+        product.plan === 'standard'
+          ? (stripePublicConfig.starterXmasPriceId || stripePublicConfig.starterPriceId)
+          : product.plan === 'pro'
+            ? stripePublicConfig.proPriceId
+            : '';
+
+      await startCheckout({
+        priceId,
+        mode: 'payment',
+        source: 'pricing_table_main',
+      });
+    } catch (error: any) {
+      console.error('Checkout error:', error);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
+      alert(errorMessage);
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const handleFeatureHover = async (featureId: string, plan: PlanType) => {
+    if (user) {
+      await trackFeatureClick(user, featureId, plan);
+    }
+  };
+
+  const formatPrice = (product: ProductFeatures) => {
+    if (product.price.amount === 0) return 'Free';
+    const formatter = new Intl.NumberFormat('en-AU', {
+      style: 'currency',
+      currency: product.price.currency || 'AUD',
+      maximumFractionDigits: 2,
+    });
+    const suffix = product.price.period === 'month' ? '/mo' : '';
+    return `${formatter.format(product.price.amount)}${suffix}`;
+  };
+
+  const calculatePricePerCredit = (product: ProductFeatures) => {
+    if (product.credits === 0) return null;
+    const perCredit = product.price.amount / product.credits;
+    const formatter = new Intl.NumberFormat('en-AU', {
+      style: 'currency',
+      currency: product.price.currency || 'AUD',
+      maximumFractionDigits: 2,
+    });
+    return `${formatter.format(perCredit)} per try-on`;
+  };
+
+  return (
+    <div className="w-full">
+      {/* Desktop: Table Layout */}
+      <div className="hidden md:block overflow-x-auto">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="border-b-2 border-black/30">
+              <th className="text-left p-4 text-black font-semibold">Features</th>
+              {products.map((product) => (
+                <th
+                  key={product.plan}
+                  className={`text-center p-4 ${
+                    product.popular
+                      ? 'bg-gradient-to-b from-[black]/20 to-transparent border-x-2 border-black/30'
+                      : ''
+                  }`}
+                >
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="flex items-center gap-2">
+                      {product.plan === 'standard' && <Zap className="w-5 h-5 text-black" />}
+                      {product.plan === 'pro' && <Crown className="w-5 h-5 text-black" />}
+                      <span className="text-xl font-bold text-black">{product.name}</span>
+                      {product.badge && (
+                        <span className="bg-black/20 text-black text-xs font-semibold px-2 py-1 rounded border border-black/30">
+                          {product.badge}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-3xl font-bold text-black">{formatPrice(product)}</div>
+                    <div className="text-sm text-black/70">{product.description}</div>
+                    {product.credits > 0 && (
+                      <div className="text-xs text-black/60">
+                        {product.credits} credits/month
+                      </div>
+                    )}
+                    {calculatePricePerCredit(product) && (
+                      <div className="text-xs text-black/50">
+                        {calculatePricePerCredit(product)}
+                      </div>
+                    )}
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {/* Get all unique features across all products */}
+            {(() => {
+              const allFeatureIds = new Set<string>();
+              products.forEach((p) => {
+                p.features.forEach((f) => allFeatureIds.add(f.id));
+              });
+              return Array.from(allFeatureIds);
+            })().map((featureId) => {
+              const feature = products
+                .flatMap((p) => p.features)
+                .find((f) => f.id === featureId);
+              if (!feature) return null;
+
+              return (
+                <tr
+                  key={featureId}
+                  className="border-b border-black/10 hover:bg-black/5 transition-colors"
+                >
+                  <td className="p-4 text-black">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{feature.name}</span>
+                      {feature.description && (
+                        <span className="text-xs text-black/60 hidden lg:inline">
+                          - {feature.description}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  {products.map((product) => {
+                    const hasFeature = product.features.some((f) => f.id === featureId);
+                    return (
+                      <td
+                        key={`${product.plan}-${featureId}`}
+                        className={`text-center p-4 ${
+                          product.popular
+                            ? 'bg-gradient-to-b from-[black]/10 to-transparent border-x border-black/20'
+                            : ''
+                        }`}
+                        onMouseEnter={() => handleFeatureHover(featureId, product.plan)}
+                      >
+                        {hasFeature ? (
+                          <Check className="w-5 h-5 text-black mx-auto" />
+                        ) : (
+                          <span className="text-black/30">—</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td className="p-4"></td>
+              {products.map((product) => (
+                <td
+                  key={`action-${product.plan}`}
+                  className={`text-center p-4 ${
+                    product.popular
+                      ? 'bg-gradient-to-b from-[black]/10 to-transparent border-x border-black/20'
+                      : ''
+                  }`}
+                >
+                  {product.plan !== 'free' && (
+                    <button
+                      onClick={() => handlePlanClick(product)}
+                      disabled={loading !== null || currentPlan === product.plan}
+                      className={`w-full py-3 px-6 rounded-lg font-semibold transition-colors min-h-[44px] touch-manipulation ${
+                        product.popular
+                          ? 'bg-black text-white hover:bg-black shadow-[0_0_20px_rgba(0,0,0,0.4)]'
+                          : 'bg-black/20 text-black hover:bg-black/30 border border-black/30'
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      {loading === product.plan
+                        ? 'Loading...'
+                        : currentPlan === product.plan
+                          ? 'Current Plan'
+                          : currentPlan === 'free'
+                            ? 'Start Free Trial'
+                            : 'Upgrade'}
+                    </button>
+                  )}
+                </td>
+              ))}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      {/* Mobile: Card Layout */}
+      <div className="md:hidden space-y-4">
+        {products.map((product) => (
+          <div
+            key={product.plan}
+            className={`border-2 rounded-xl p-6 ${
+              product.popular
+                ? 'border-black bg-gradient-to-br from-[black]/10 to-gray-800/50 shadow-[0_0_20px_rgba(0,0,0,0.2)]'
+                : 'border-black/20 bg-gray-100/50'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                {product.plan === 'standard' && <Zap className="w-5 h-5 text-black" />}
+                {product.plan === 'pro' && <Crown className="w-5 h-5 text-black" />}
+                <h3 className="text-xl font-bold text-black">{product.name}</h3>
+                {product.badge && (
+                  <span className="bg-black/20 text-black text-xs font-semibold px-2 py-1 rounded border border-black/30">
+                    {product.badge}
+                  </span>
+                )}
+              </div>
+              <div className="text-right">
+                <div className="text-2xl font-bold text-black">{formatPrice(product)}</div>
+                {product.credits > 0 && (
+                  <div className="text-xs text-black/60">{product.credits} credits/month</div>
+                )}
+              </div>
+            </div>
+
+            <p className="text-sm text-black/70 mb-4">{product.description}</p>
+
+            {calculatePricePerCredit(product) && (
+              <p className="text-xs text-black/50 mb-4">{calculatePricePerCredit(product)}</p>
+            )}
+
+            <ul className="space-y-2 mb-6">
+              {product.features.map((feature) => (
+                <li
+                  key={feature.id}
+                  className="flex items-start gap-2 text-sm text-black"
+                  onMouseEnter={() => handleFeatureHover(feature.id, product.plan)}
+                >
+                  <Check className="w-4 h-4 text-black mt-0.5 flex-shrink-0" />
+                  <div>
+                    <span className="font-medium">{feature.name}</span>
+                    {feature.description && (
+                      <span className="text-black/60 text-xs block mt-0.5">
+                        {feature.description}
+                      </span>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            {product.plan !== 'free' && (
+              <button
+                onClick={() => handlePlanClick(product)}
+                disabled={loading !== null || currentPlan === product.plan}
+                className={`w-full py-3 px-6 rounded-lg font-semibold transition-colors min-h-[44px] touch-manipulation ${
+                  product.popular
+                    ? 'bg-black text-white hover:bg-black shadow-[0_0_20px_rgba(0,0,0,0.4)]'
+                    : 'bg-black/20 text-black hover:bg-black/30 border border-black/30'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                {loading === product.plan
+                  ? 'Loading...'
+                  : currentPlan === product.plan
+                    ? 'Current Plan'
+                    : currentPlan === 'free'
+                      ? 'Start Free Trial'
+                      : 'Upgrade'}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Credit Packs Section */}
+      {showCreditPacks && (
+        <div className="mt-8 pt-8 border-t border-black/20">
+          <h3 className="text-lg font-semibold text-black mb-4">Or Buy Credits</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Starter Pack */}
+            <div className="border border-black/20 rounded-lg p-4 bg-gray-100/30">
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles className="w-4 h-4 text-black" />
+                <h4 className="font-semibold text-black">Starter Pack</h4>
+              </div>
+              <div className="text-2xl font-bold text-black mb-2">10 credits</div>
+              <div className="text-sm text-black/60 mb-4">A$14.99 one-time</div>
+              <button
+                onClick={async () => {
+                  setLoading('small-pack');
+                  try {
+                    await startCheckout({
+                      priceId: stripePublicConfig.starterPriceId,
+                      mode: 'payment',
+                      source: 'pricing_table_small_pack',
+                    });
+                  } catch (error: any) {
+                    console.error('Checkout error:', error);
+                    const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
+                    alert(errorMessage);
+                  } finally {
+                    setLoading(null);
+                  }
+                }}
+                disabled={loading !== null}
+                className="w-full py-2 bg-black/20 text-black rounded-lg font-semibold hover:bg-black/30 transition-colors disabled:opacity-50 border border-black/30"
+              >
+                {loading === 'small-pack' ? 'Loading...' : 'Buy Now'}
+              </button>
+            </div>
+
+            {/* Value Pack */}
+            <div className="border border-black/20 rounded-lg p-4 bg-gray-100/30">
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles className="w-4 h-4 text-black" />
+                <h4 className="font-semibold text-black">Value Pack</h4>
+              </div>
+              <div className="text-2xl font-bold text-black mb-2">30 credits</div>
+              <div className="text-sm text-black/60 mb-4">A$34.99 one-time</div>
+              <button
+                onClick={async () => {
+                  setLoading('value-pack');
+                  try {
+                    await startCheckout({
+                      priceId: stripePublicConfig.valuePriceId,
+                      mode: 'payment',
+                      source: 'pricing_table_value_pack',
+                    });
+                  } catch (error: any) {
+                    console.error('Checkout error:', error);
+                    const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
+                    alert(errorMessage);
+                  } finally {
+                    setLoading(null);
+                  }
+                }}
+                disabled={loading !== null}
+                className="w-full py-2 bg-black/20 text-black rounded-lg font-semibold hover:bg-black/30 transition-colors disabled:opacity-50 border border-black/30"
+              >
+                {loading === 'value-pack' ? 'Loading...' : 'Buy Now'}
+              </button>
+            </div>
+
+            {/* Pro Pack */}
+            <div className="border border-black/20 rounded-lg p-4 bg-gray-100/30">
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles className="w-4 h-4 text-black" />
+                <h4 className="font-semibold text-black">Pro Pack</h4>
+              </div>
+              <div className="text-2xl font-bold text-black mb-2">100 credits</div>
+              <div className="text-sm text-black/60 mb-4">A$89.99 one-time</div>
+              <button
+                onClick={async () => {
+                  setLoading('large-pack');
+                  try {
+                    await startCheckout({
+                      priceId: stripePublicConfig.proPriceId,
+                      mode: 'payment',
+                      source: 'pricing_table_large_pack',
+                    });
+                  } catch (error: any) {
+                    console.error('Checkout error:', error);
+                    const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
+                    alert(errorMessage);
+                  } finally {
+                    setLoading(null);
+                  }
+                }}
+                disabled={loading !== null}
+                className="w-full py-2 bg-black/20 text-black rounded-lg font-semibold hover:bg-black/30 transition-colors disabled:opacity-50 border border-black/30"
+              >
+                {loading === 'large-pack' ? 'Loading...' : 'Buy Now'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Subscriptions */}
+      <div className="mt-10 pt-8 border-t border-black/20">
+        <h3 className="text-lg font-semibold text-black mb-4">Subscriptions</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Creator Subscription */}
+          <div className="border border-black/20 rounded-lg p-4 bg-gray-100/30">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="w-4 h-4 text-black" />
+              <h4 className="font-semibold text-black">Creator Subscription</h4>
+            </div>
+            <div className="text-2xl font-bold text-black mb-1">A$24.99 / month</div>
+            <div className="text-sm text-black/60 mb-4">25 credits per month</div>
+            <button
+              onClick={async () => {
+                setLoading('creator-sub');
+                try {
+                  await startCheckout({
+                    priceId: stripePublicConfig.creatorPriceId,
+                    mode: 'subscription',
+                    source: 'pricing_table_creator_subscription',
+                  });
+                } catch (error: any) {
+                  console.error('Checkout error:', error);
+                  const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
+                  alert(errorMessage);
+                } finally {
+                  setLoading(null);
+                }
+              }}
+              disabled={loading !== null}
+              className="w-full py-2 bg-black/20 text-black rounded-lg font-semibold hover:bg-black/30 transition-colors disabled:opacity-50 border border-black/30"
+            >
+              {loading === 'creator-sub' ? 'Loading...' : 'Subscribe'}
+            </button>
+          </div>
+
+          {/* Power Subscription */}
+          <div className="border border-black/20 rounded-lg p-4 bg-gray-100/30">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="w-4 h-4 text-black" />
+              <h4 className="font-semibold text-black">Power Subscription</h4>
+            </div>
+            <div className="text-2xl font-bold text-black mb-1">A$49.99 / month</div>
+            <div className="text-sm text-black/60 mb-4">70 credits per month</div>
+            <button
+              onClick={async () => {
+                setLoading('power-sub');
+                try {
+                  await startCheckout({
+                    priceId: stripePublicConfig.powerPriceId,
+                    mode: 'subscription',
+                    source: 'pricing_table_power_subscription',
+                  });
+                } catch (error: any) {
+                  console.error('Checkout error:', error);
+                  const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
+                  alert(errorMessage);
+                } finally {
+                  setLoading(null);
+                }
+              }}
+              disabled={loading !== null}
+              className="w-full py-2 bg-black/20 text-black rounded-lg font-semibold hover:bg-black/30 transition-colors disabled:opacity-50 border border-black/30"
+            >
+              {loading === 'power-sub' ? 'Loading...' : 'Subscribe'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+

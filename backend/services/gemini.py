@@ -1,0 +1,173 @@
+import os
+import base64
+import io
+import json
+import re
+import logging
+from typing import List, Optional, Tuple
+from PIL import Image
+import httpx
+from .model_registry import gemini_generate_content_endpoints, get_gemini_model_candidates
+
+logger = logging.getLogger(__name__)
+
+# Silence httpx INFO logs to avoid leaking API keys in URL query params.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+async def analyze_garment(image_bytes):
+    """
+    Uses Gemini API directly via REST to analyze a garment image.
+    Returns a dictionary with search terms and estimated price.
+
+    This function uses direct REST API calls to Gemini API with API key authentication.
+    No SDKs or OAuth2 are required - just set GEMINI_API_KEY environment variable.
+
+    API Endpoint: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+    Authentication: API key passed as query parameter (?key={api_key})
+    Request Format: JSON with image as base64 inline_data + text prompt
+
+    Args:
+        image_bytes: Raw bytes of the clothing image to analyze
+
+    Returns:
+        dict: Contains search_query, estimated_price, and description
+    """
+    # Get API key from environment (prefer GEMINI_API_KEY, fallback to GOOGLE_API_KEY)
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        logger.warning("GEMINI_API_KEY or GOOGLE_API_KEY not set. Returning mock data.")
+        return {
+            "search_query": "blue denim jacket",
+            "estimated_price": "50.00",
+            "description": "A classic blue denim jacket.",
+        }
+
+    try:
+        # Convert image to base64 for API request
+        # Gemini API requires images as base64-encoded inline_data
+        image = Image.open(io.BytesIO(image_bytes))
+        buffer = io.BytesIO()
+        # Save as PNG for consistency (Gemini handles PNG well)
+        image.save(buffer, format="PNG")
+        image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+        prompt = """
+        Analyze this clothing item. Provide:
+        1. A specific search query to find this exact or very similar item online (include color, style, material, potential brand if visible).
+        2. An estimated price range in USD.
+        3. A short description.
+
+        Return the response in JSON format:
+        {
+            "search_query": "...",
+            "estimated_price": "...",
+            "description": "..."
+        }
+        """
+
+        preferred_model = (
+            os.getenv("GEMINI_GARMENT_ANALYZE_MODEL")
+            or os.getenv("GEMINI_VISION_MODEL")
+            or os.getenv("GEMINI_TEXT_MODEL")
+        )
+        model_candidates = get_gemini_model_candidates(
+            "garment_analysis",
+            extra_models=[preferred_model],
+        )
+
+        # Try models + API versions. Newer accounts may not have older model aliases (404 NOT_FOUND).
+        attempts: List[Tuple[str, str]] = []
+        for m in model_candidates:
+            for endpoint in gemini_generate_content_endpoints(m):
+                attempts.append((m, endpoint))
+
+        # Make async HTTP request using httpx (no SDK required)
+        # Try different API versions / models if one fails
+        last_error = None
+        response = None
+        used_model = None
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for model_name, endpoint in attempts:
+                try:
+                    response = await client.post(
+                        f"{endpoint}?key={api_key}",
+                        headers={
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "contents": [
+                                {
+                                    "role": "user",
+                                    "parts": [
+                                        {"text": prompt},
+                                        {
+                                            "inline_data": {
+                                                "mime_type": "image/png",
+                                                "data": image_base64,
+                                            }
+                                        },
+                                    ],
+                                }
+                            ]
+                        },
+                    )
+
+                    if not response.is_success:
+                        error_text = response.text
+                        logger.warning(
+                            f"Gemini API error (model={model_name}) {response.status_code} - {error_text}"
+                        )
+                        last_error = {
+                            "error": f"Gemini API error: {response.status_code}",
+                            "details": error_text,
+                        }
+                        response = None  # Reset response so we know it failed
+                        continue
+
+                    # Success - break out of loop
+                    last_error = None
+                    used_model = model_name
+                    break
+                except Exception as e:
+                    logger.warning(f"Error calling Gemini API (model={model_name}): {e}")
+                    last_error = {"error": str(e)}
+                    response = None  # Reset response so we know it failed
+                    continue
+
+            # If all endpoints failed, return error
+            if not response:
+                logger.error(f"All Gemini API endpoints failed. Last error: {last_error}")
+                return last_error if last_error else {"error": "All Gemini API endpoints failed"}
+            if used_model and preferred_model and used_model != preferred_model:
+                logger.info(
+                    f"Gemini analyze_garment fell back to model={used_model} (preferred={preferred_model})"
+                )
+
+            data = response.json()
+
+            # Extract text from response
+            parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+            text = ""
+            for part in parts:
+                if "text" in part:
+                    text = part["text"]
+                    break
+
+            if not text:
+                logger.warning(
+                    f"No text in Gemini response. Response: {json.dumps(data, indent=2)}"
+                )
+                return {"error": "No text returned from Gemini", "raw": data}
+
+            # Parse JSON from response
+            match = re.search(r"\{.*\}", text, re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
+            else:
+                logger.warning(f"Could not parse Gemini response as JSON. Raw: {text}")
+                return {"error": "Could not parse Gemini response", "raw": text}
+
+    except Exception as e:
+        logger.error(f"Error analyzing garment: {e}", exc_info=True)
+        return {"error": str(e)}

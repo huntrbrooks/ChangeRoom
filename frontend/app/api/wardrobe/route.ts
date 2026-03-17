@@ -1,0 +1,33 @@
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
+
+// GET /api/wardrobe - Fetch user's clothing items and person images
+export async function GET(_req: NextRequest) {
+  const { userId } = await auth();
+
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const { getUserClothingItems, getUserPersonImages } = await import("@/lib/db-access");
+    const [clothingItems, personImages] = await Promise.all([
+      getUserClothingItems(userId),
+      getUserPersonImages(userId),
+    ]);
+
+    return NextResponse.json({
+      clothingItems,
+      personImages,
+    });
+  } catch (err: unknown) {
+    console.error("wardrobe fetch error:", err);
+    return NextResponse.json(
+      {
+        error: "Failed to fetch wardrobe",
+      },
+      { status: 500 }
+    );
+  }
+}
+
