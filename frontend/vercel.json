@@ -2,9 +2,7 @@
   "crons": [
     {
       "path": "/api/metrics-email",
-      "schedule": "0 9 * * 1",
-      "timezone": "Australia/Sydney"
+      "schedule": "0 9 * * 1"
     }
   ]
 }
-
