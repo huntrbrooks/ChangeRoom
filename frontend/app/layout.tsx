@@ -7,6 +7,7 @@ import { auth } from '@clerk/nextjs/server';
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Footer } from "./components/Footer";
+import { GoogleTagManagerBody, GoogleTagManagerHead } from "./components/GoogleTagManager";
 import PwaRegister from "./components/PwaRegister";
 import { PostHogClientProvider } from "./providers/PostHogProvider";
 import { AnalyticsUserSync } from "./components/AnalyticsUserSync";
@@ -106,7 +107,11 @@ export default async function RootLayout({
   if (!hasValidKey || !publishableKey) {
     return (
       <html lang="en">
+        <head>
+          <GoogleTagManagerHead />
+        </head>
         <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-black flex flex-col min-h-screen`}>
+          <GoogleTagManagerBody />
           <PwaRegister />
           <GlobalErrorGuards />
           <PostHogClientProvider>
@@ -142,9 +147,13 @@ export default async function RootLayout({
       }}
     >
       <html lang="en">
+        <head>
+          <GoogleTagManagerHead />
+        </head>
         <body
           className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#FAF9F6] text-black flex flex-col min-h-screen`}
         >
+          <GoogleTagManagerBody />
           <PwaRegister />
           <GlobalErrorGuards />
           <PostHogClientProvider>
