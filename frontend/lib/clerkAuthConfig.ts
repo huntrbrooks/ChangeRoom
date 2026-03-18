@@ -1,8 +1,7 @@
 import { CANONICAL_ORIGIN } from "@/lib/domainRouting";
 
 export function getClerkProxyUrl(): string | undefined {
-  const explicitProxyUrl = process.env.NEXT_PUBLIC_CLERK_PROXY_URL?.trim();
-  return explicitProxyUrl || undefined;
+  return undefined;
 }
 
 export function getAllowedRedirectOrigins(): string[] {

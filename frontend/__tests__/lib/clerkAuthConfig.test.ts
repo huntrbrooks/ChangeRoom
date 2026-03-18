@@ -9,13 +9,6 @@ describe("clerkAuthConfig", () => {
     expect(getClerkProxyUrl()).toBeUndefined();
   });
 
-  it("respects an explicit Clerk proxy override", async () => {
-    process.env.NEXT_PUBLIC_CLERK_PROXY_URL = "https://igetdressed.online/custom-clerk/";
-    const { getClerkProxyUrl } = await import("@/lib/clerkAuthConfig");
-
-    expect(getClerkProxyUrl()).toBe("https://igetdressed.online/custom-clerk/");
-  });
-
   it("keeps current and legacy redirect origins together", async () => {
     const { getAllowedRedirectOrigins } = await import("@/lib/clerkAuthConfig");
 
