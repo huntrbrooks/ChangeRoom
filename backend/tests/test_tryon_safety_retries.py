@@ -34,9 +34,11 @@ def test_heuristic_rewrite_sanitizes_and_adds_defaults():
     assert isinstance(new_meta, dict)
     assert "intimate" in str(new_meta).lower() or "delicate" in str(new_meta).lower()
     assert new_meta.get("background") is not None
+    assert new_meta.get("background") == "neutral_seamless_studio"
     assert "safety compliance" in new_prompt.lower()
     assert "overlay-only" in new_prompt.lower() or "overlay only" in new_prompt.lower()
-    assert "do not change background" in new_prompt.lower()
+    assert "neutral seamless studio setting" in new_prompt.lower()
+    assert "do not use background changes to disguise" in new_prompt.lower()
     assert "do not redesign" in new_prompt.lower()
     assert "heuristic_rewrite" in summary
 
@@ -71,9 +73,11 @@ async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_byt
 
     openrouter_calls = {"n": 0}
     rewrite_calls = {"n": 0}
+    captured_payloads = []
 
     async def fake_openrouter_post(_client, *, url, headers, payload):
         openrouter_calls["n"] += 1
+        captured_payloads.append(payload)
         if openrouter_calls["n"] <= 2:
             return DummyResponse(
                 ok=True,
@@ -148,6 +152,15 @@ async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_byt
     assert any(s in ("preflight_heuristic", "heuristic", "gemini_rewrite") for s in strategies)
     assert openrouter_calls["n"] == 3
     assert rewrite_calls["n"] >= 1
+    first_messages = captured_payloads[0]["messages"]
+    assert first_messages[0]["role"] == "system"
+    assert "real body" in first_messages[0]["content"][0]["text"]
+    assert "neutral, seamless studio environment" in first_messages[0]["content"][0]["text"]
+    assert first_messages[1]["role"] == "user"
+    first_user_prompt = first_messages[1]["content"][0]["text"]
+    assert "BODY FIDELITY IS PARAMOUNT" in first_user_prompt
+    assert "Do not reuse the original background" in first_user_prompt
+    assert "Do not slim, enlarge, lengthen, shorten" in first_user_prompt
 
 
 def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeypatch):

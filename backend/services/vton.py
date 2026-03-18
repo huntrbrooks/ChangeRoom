@@ -60,6 +60,16 @@ INTIMATE_KEYWORDS = [
     "fishnet",
 ]
 
+TRYON_SYSTEM_PROMPT = (
+    "You are a premium fashion virtual try-on renderer. "
+    "Your highest priority is preserving the person's real identity and real body. "
+    "Do not slim, widen, lengthen, shorten, sculpt, beautify, de-age, or otherwise alter the person's true body size, proportions, silhouette, facial structure, skin texture, or identity. "
+    "The garment may drape naturally, but the body underneath must remain realistic and unchanged. "
+    "Render the person in a neutral, seamless studio environment with soft, even, flattering commercial lighting. "
+    "Do not reuse the original background from the reference image. "
+    "Keep the output photorealistic, tasteful, and suitable for a premium ecommerce experience."
+)
+
 def is_content_rejection(
     *,
     finish_reason: Optional[str] = None,
@@ -153,25 +163,26 @@ def rewrite_for_modesty_heuristic(
 
     safe_meta = sanitize_value(safe_meta)
 
-    # Encourage conservative framing; do not overwrite explicit user intent, only set if missing.
-    # IMPORTANT: We prefer fidelity. Do not force a new background/pose/camera; instead preserve the user's reference image.
-    safe_meta.setdefault("framing", "match_main_reference")
-    safe_meta.setdefault("background", "match_main_reference")
-    safe_meta.setdefault("camera", "match_main_reference")
-    safe_meta.setdefault("pose", "match_main_reference")
+    # Encourage neutral studio presentation while preserving body/identity fidelity.
+    safe_meta.setdefault("framing", "full_or_three_quarter_studio")
+    safe_meta.setdefault("background", "neutral_seamless_studio")
+    safe_meta.setdefault("lighting", "soft_even_studio")
+    safe_meta.setdefault("camera", "natural_fashion_editorial")
+    safe_meta.setdefault("pose", "natural_reference_pose")
     safe_meta.setdefault("content_policy", "general_audience")
 
     guidance = (
         "\n\nSAFETY COMPLIANCE (MANDATORY): Create a general-audience fashion image while preserving fidelity. "
         "PRESERVE FIDELITY: Keep the person identical to the user reference (face, hair, skin tone, body shape, tattoos, accessories), "
         "and keep the new garment identical to the clothing image (design, color, texture, logos, prints). "
-        "DO NOT change background, lighting, camera angle, framing, or pose unless explicitly instructed. "
+        "STUDIO SETTING: Place the person in a neutral seamless studio setting with soft, even lighting instead of reusing the original background. "
+        "Do not use background changes to disguise or alter the person's apparent size, shape, or identity. "
         "OVERLAY-ONLY MODE: If needed to satisfy safety policies, ONLY add a thin opaque lining/underlayer or increase fabric opacity "
         "(e.g., a seamless lining, modesty panel, or built-in lining). Do NOT redesign the garment, do NOT add new garments, and do NOT change fit/style."
     )
     if strictness == "max":
         guidance += (
-            " If safety remains uncertain, prefer slightly higher opacity/lining, but still keep the garment/person/background unchanged."
+            " If safety remains uncertain, prefer slightly higher opacity/lining, but still keep the garment and person unchanged inside the neutral studio setup."
         )
 
     safe_prompt = sanitize_text(prompt) + guidance
@@ -795,17 +806,17 @@ async def _generate_with_openrouter(user_image_files, garment_image_files, categ
                 local_meta = _sanitize_metadata_value(meta_for_prompt)  # type: ignore
 
             text_prompt = (
-                "You are a fashion virtual try-on engine. "
                 f"Use the {user_refs} as the person reference. These images define the person's identity (face, hair, eyes), body shape, stature/height impression, and overall appearance. "
                 f"The FIRST user image (index {main_index + 1}) is the Main Reference Image for preserving any non-conflicting garments. "
                 f"Use the subsequent {garment_img_count} images as new garments that must be worn by that same person. "
                 "Generate one photorealistic image of the person wearing all provided NEW clothing items. "
                 "OUTFIT PRESERVATION: For any clothing or accessories NOT provided in the new garments list, faithfully reproduce them from the Main Reference Image. "
                 "Replace ONLY the garments that conflict with the new items (e.g., new top replaces the old top, but keep the original pants/shoes if not replaced; a dress replaces both top and bottom). "
-                "EDITING INSTRUCTION: Treat the Main Reference Image as the base to edit. Make the result look as close to the Main Reference as possible. "
-                "BACKGROUND & POSE: Preserve the Main Reference background, lighting, camera angle, framing, and pose as closely as possible. "
+                "BACKGROUND & LIGHTING: Reimagine the person in a neutral, seamless studio space with soft, even, premium fashion lighting. Do not reuse the original background. "
+                "BODY FIDELITY IS PARAMOUNT: Preserve the person's real body size, proportions, silhouette, stance, and facial structure exactly as represented in the user images. "
+                "Do not slim, enlarge, lengthen, shorten, smooth, beautify, or otherwise idealize the body or face. Only the garment should change, with natural fabric drape. "
                 "IDENTITY FIDELITY: All user images must be used to perfectly maintain the same face, hair, eyes, skin tone, and body shape/height impression in the final image. "
-                "MINIMAL CHANGE: Do not beautify, restyle, or change facial features, body, age, hair, or makeup. Do not change tattoos or accessories. "
+                "MINIMAL CHANGE: Do not restyle or change facial features, body, age, hair, makeup, tattoos, or accessories except where a garment must realistically cover part of them. "
                 "Every user-specified wearing style or positioning instruction is mandatory and overrides any defaults. "
                 "Do not ignore, soften, or reinterpret those directives under any circumstance.\n\n"
             )
@@ -980,6 +991,15 @@ async def _generate_with_openrouter(user_image_files, garment_image_files, categ
                     },
                 })
             return [
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": TRYON_SYSTEM_PROMPT,
+                        }
+                    ],
+                },
                 {
                     "role": "user",
                     "content": content_blocks,
