@@ -3,10 +3,10 @@ describe("clerkAuthConfig", () => {
     delete process.env.NEXT_PUBLIC_CLERK_PROXY_URL;
   });
 
-  it("defaults the Clerk proxy url to the canonical proxy path", async () => {
+  it("defaults the Clerk proxy url to undefined when proxying is disabled", async () => {
     const { getClerkProxyUrl } = await import("@/lib/clerkAuthConfig");
 
-    expect(getClerkProxyUrl()).toBe("https://igetdressed.online/__clerk/");
+    expect(getClerkProxyUrl()).toBeUndefined();
   });
 
   it("respects an explicit Clerk proxy override", async () => {
