@@ -13,7 +13,7 @@ import { AnalyticsUserSync } from "./components/AnalyticsUserSync";
 import { GlobalErrorGuards } from "./components/GlobalErrorGuards";
 import Link from "next/link";
 import { CANONICAL_ORIGIN } from "@/lib/domainRouting";
-import { getAllowedRedirectOrigins, getClerkProxyUrl } from "@/lib/clerkAuthConfig";
+import { getAllowedRedirectOrigins } from "@/lib/clerkAuthConfig";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -99,7 +99,6 @@ export default async function RootLayout({
     /^pk_[a-zA-Z0-9_\-=.]+$/.test(publishableKey); // Allow dots, equals for base64 padding
   
   const statusMessage = process.env.NEXT_PUBLIC_STATUS_BANNER;
-  const clerkProxyUrl = getClerkProxyUrl();
   const allowedRedirectOrigins = getAllowedRedirectOrigins();
 
   // If key is invalid or missing, skip ClerkProvider entirely (especially during build)
@@ -132,7 +131,6 @@ export default async function RootLayout({
   return (
     <ClerkProvider 
       publishableKey={publishableKey}
-      proxyUrl={clerkProxyUrl}
       signInUrl="/sign-in"
       signUpUrl="/sign-up"
       allowedRedirectOrigins={allowedRedirectOrigins}

@@ -1,7 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse, type NextRequest, type NextMiddleware, type NextFetchEvent } from 'next/server';
 import { buildCanonicalUrl, shouldRedirectToCanonicalHost } from '@/lib/domainRouting';
-import { CLERK_PROXY_PATH, getClerkFrontendApiHost } from '@/lib/clerkProxy';
 
 // Define public routes that don't require authentication
 const isPublicRoute = createRouteMatcher([
@@ -48,36 +47,6 @@ function fallbackHandler(_req: NextRequest) {
   return NextResponse.next();
 }
 
-function buildClerkProxyTarget(req: NextRequest): URL {
-  const proxyUrl = req.nextUrl.clone();
-  proxyUrl.protocol = 'https:';
-  proxyUrl.host = getClerkFrontendApiHost();
-  proxyUrl.pathname = proxyUrl.pathname.replace(CLERK_PROXY_PATH, '') || '/';
-  return proxyUrl;
-}
-
-function proxyClerkFrontendApi(req: NextRequest) {
-  const proxyUrl = buildClerkProxyTarget(req);
-  const requestHeaders = new Headers(req.headers);
-  requestHeaders.delete('host');
-  requestHeaders.set('Clerk-Proxy-Url', req.nextUrl.origin + CLERK_PROXY_PATH);
-  requestHeaders.set('Clerk-Secret-Key', process.env.CLERK_SECRET_KEY || '');
-  requestHeaders.set('X-Forwarded-Host', req.headers.get('host') || req.nextUrl.host);
-  requestHeaders.set('X-Forwarded-Proto', 'https');
-  requestHeaders.set(
-    'X-Forwarded-For',
-    req.headers.get('x-forwarded-for') || req.headers.get('cf-connecting-ip') || ''
-  );
-
-  const response = NextResponse.rewrite(proxyUrl, {
-    request: {
-      headers: requestHeaders,
-    },
-  });
-  response.headers.set('Cache-Control', 'private, no-store, max-age=0');
-  return response;
-}
-
 // Create Clerk middleware with error handling
 let clerkAuthMiddleware: NextMiddleware | null = null;
 
@@ -111,10 +80,6 @@ export default function proxy(req: NextRequest, event?: NextFetchEvent) {
     return NextResponse.redirect(buildCanonicalUrl(req.nextUrl), 308);
   }
 
-  if (req.nextUrl.pathname.startsWith(CLERK_PROXY_PATH)) {
-    return proxyClerkFrontendApi(req);
-  }
-
   if (clerkAuthMiddleware) {
     try {
       const fetchEvent =
@@ -142,7 +107,6 @@ export default function proxy(req: NextRequest, event?: NextFetchEvent) {
 
 export const config = {
   matcher: [
-    '/__clerk(.*)',
     '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
     '/(api|trpc)(.*)',
   ],

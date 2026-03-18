@@ -1,14 +1,4 @@
 describe("clerkAuthConfig", () => {
-  beforeEach(() => {
-    delete process.env.NEXT_PUBLIC_CLERK_PROXY_URL;
-  });
-
-  it("defaults the Clerk proxy url to undefined when proxying is disabled", async () => {
-    const { getClerkProxyUrl } = await import("@/lib/clerkAuthConfig");
-
-    expect(getClerkProxyUrl()).toBeUndefined();
-  });
-
   it("keeps current and legacy redirect origins together", async () => {
     const { getAllowedRedirectOrigins } = await import("@/lib/clerkAuthConfig");
 
