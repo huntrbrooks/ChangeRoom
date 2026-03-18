@@ -5,11 +5,11 @@ describe('clerkProxy', () => {
     expect(CLERK_PROXY_PATH).toBe('/__clerk');
   });
 
-  it('defaults the Clerk frontend API host to the hosted proxy domain', () => {
+  it("defaults the Clerk frontend API host to Clerk's hosted frontend API", () => {
     delete process.env.NEXT_PUBLIC_CLERK_FRONTEND_API;
     delete process.env.CLERK_FRONTEND_API;
 
-    expect(getClerkFrontendApiHost()).toBe('frontend-api.clerk.dev');
+    expect(getClerkFrontendApiHost()).toBe('clerk.igetdressed.online');
   });
 
   it('uses the configured Clerk frontend API host when set', () => {

@@ -17,6 +17,6 @@ function normalizeClerkHost(value: string | undefined, fallback: string): string
 export function getClerkFrontendApiHost(): string {
   return normalizeClerkHost(
     process.env.NEXT_PUBLIC_CLERK_FRONTEND_API || process.env.CLERK_FRONTEND_API,
-    'frontend-api.clerk.dev'
+    'clerk.igetdressed.online'
   );
 }
