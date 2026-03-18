@@ -12,9 +12,8 @@ from PIL import Image, ImageOps
 import httpx
 from .model_registry import (
     gemini_generate_content_endpoints,
-    get_gemini_configured_model,
     get_gemini_model_candidates,
-    get_task_config,
+    get_openrouter_configured_model,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,8 +22,8 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-# This module uses direct REST API calls to Gemini API with API key authentication.
-# No SDKs or OAuth2 are required - just set GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable.
+# This module uses direct REST API calls for try-on generation plus Gemini REST calls for
+# rewrite/safety helpers. No SDKs or OAuth2 are required.
 
 CONTENT_REJECTION_FINISH_REASONS = {"IMAGE_SAFETY", "SAFETY", "CONTENT_FILTER", "PROHIBITED_CONTENT"}
 CONTENT_REJECTION_KEYWORDS = [
@@ -61,109 +60,6 @@ INTIMATE_KEYWORDS = [
     "fishnet",
 ]
 
-_TRYON_MODEL_CACHE: Dict[str, Union[str, float, None]] = {
-    "model": None,
-    "expires_at": 0.0,
-}
-
-
-def _unique_model_names(models: List[Optional[str]]) -> List[str]:
-    unique: List[str] = []
-    seen = set()
-    for model in models:
-        normalized = (model or "").strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        unique.append(normalized)
-    return unique
-
-
-def _score_tryon_model(model_name: str) -> Tuple[int, int, int, int]:
-    normalized = model_name.strip().lower()
-    version_match = re.search(r"gemini-(\d+)(?:\.(\d+))?", normalized)
-    major = int(version_match.group(1)) if version_match else 0
-    minor = int(version_match.group(2) or 0) if version_match else 0
-    tier = 0
-    if "ultra" in normalized:
-        tier += 40
-    if "pro" in normalized:
-        tier += 30
-    if "flash" in normalized:
-        tier += 10
-    if "lite" in normalized:
-        tier -= 20
-    if "image" in normalized:
-        tier += 15
-    if "preview" in normalized:
-        tier += 1
-    return (major, minor, tier, len(normalized))
-
-
-def _pick_best_tryon_model(
-    available_models: List[str],
-    configured_model: Optional[str],
-) -> str:
-    configured = (configured_model or "").strip()
-    normalized_available = list(dict.fromkeys((model or "").strip() for model in available_models if (model or "").strip()))
-    if configured and configured.lower() != "auto" and configured in normalized_available:
-        return configured
-
-    image_models = [
-        model
-        for model in normalized_available
-        if "gemini" in model.lower() and "image" in model.lower()
-    ]
-    if image_models:
-        return max(image_models, key=_score_tryon_model)
-
-    if configured and configured.lower() != "auto":
-        return configured
-
-    return get_task_config("gemini", "tryon_image").default_model
-
-
-async def resolve_tryon_model_name(api_key: str) -> str:
-    configured_model = get_gemini_configured_model("tryon_image").strip()
-
-    if configured_model and configured_model.lower() != "auto" and os.getenv("GEMINI_VERIFY_MODEL", "0") != "1":
-        return configured_model
-
-    now = time.time()
-    cached_model = _TRYON_MODEL_CACHE.get("model")
-    cached_expiry = float(_TRYON_MODEL_CACHE.get("expires_at") or 0.0)
-    if isinstance(cached_model, str) and cached_model and cached_expiry > now:
-        return cached_model
-
-    default_tryon_model = get_task_config("gemini", "tryon_image").default_model
-    selected_model = configured_model if configured_model.lower() != "auto" else default_tryon_model
-    list_endpoint = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as list_client:
-            list_response = await list_client.get(list_endpoint)
-            if list_response.is_success:
-                list_data = list_response.json()
-                available_models = [
-                    model.get("name", "").split("/")[-1]
-                    for model in list_data.get("models", [])
-                    if isinstance(model, dict)
-                ]
-                selected_model = _pick_best_tryon_model(available_models, configured_model)
-                logger.info("Selected try-on model: %s", selected_model)
-            else:
-                logger.warning(
-                    "Could not list Gemini models for try-on selection: status=%s",
-                    list_response.status_code,
-                )
-    except Exception as exc:
-        logger.warning("Could not resolve try-on model automatically: %s", exc)
-
-    ttl_seconds = max(60, int(os.getenv("GEMINI_TRYON_MODEL_CACHE_TTL_SECONDS", "3600")))
-    _TRYON_MODEL_CACHE["model"] = selected_model
-    _TRYON_MODEL_CACHE["expires_at"] = now + ttl_seconds
-    return selected_model
-
-
 def is_content_rejection(
     *,
     finish_reason: Optional[str] = None,
@@ -179,7 +75,7 @@ def is_content_rejection(
     if fr in CONTENT_REJECTION_FINISH_REASONS:
         return True
 
-    # Some Gemini errors return 400/403 with policy text.
+    # Some model APIs return 400/403 with policy text.
     if http_status in (400, 403, 422):
         text = (error_text or "").lower()
         if any(k in text for k in CONTENT_REJECTION_KEYWORDS):
@@ -295,6 +191,64 @@ async def _gemini_post_json(
     return await client.post(url, headers=headers, json=payload)
 
 
+async def _openrouter_post_json(
+    client: httpx.AsyncClient,
+    *,
+    url: str,
+    headers: Dict[str, str],
+    payload: Dict[str, Any],
+) -> httpx.Response:
+    """
+    Thin wrapper for OpenRouter HTTP calls to make retry logic testable (can be monkeypatched).
+    """
+    return await client.post(url, headers=headers, json=payload)
+
+
+def _extract_openrouter_image_url(data: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], List[str]]:
+    choices = (data or {}).get("choices") or []
+    if not choices:
+        return None, None, []
+
+    choice0 = choices[0] or {}
+    finish_reason = choice0.get("finish_reason") or choice0.get("finishReason")
+    message = choice0.get("message") or {}
+
+    images = []
+    if isinstance(message, dict):
+        raw_images = message.get("images") or []
+        if isinstance(raw_images, list):
+            images = raw_images
+
+    for image in images:
+        if not isinstance(image, dict):
+            continue
+        image_url = image.get("image_url") or image.get("imageUrl") or {}
+        if isinstance(image_url, dict):
+            url = image_url.get("url") or image_url.get("data")
+            if isinstance(url, str) and url.strip():
+                mime_type = image.get("mime_type") or image.get("mimeType") or "image/png"
+                return url.strip(), str(mime_type), []
+
+    content = message.get("content") if isinstance(message, dict) else None
+    content_parts: List[str] = []
+    if isinstance(content, str) and content.strip().startswith("data:image/"):
+        return content.strip(), None, content_parts
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "image_url":
+                image_url = part.get("image_url") or {}
+                if isinstance(image_url, dict):
+                    url = image_url.get("url") or image_url.get("data")
+                    if isinstance(url, str) and url.strip():
+                        mime_type = image_url.get("mime_type") or image_url.get("mimeType")
+                        return url.strip(), str(mime_type) if mime_type else None, content_parts
+            if isinstance(part, dict) and part.get("type") == "text" and part.get("text"):
+                content_parts.append(str(part.get("text") or ""))
+    if isinstance(content, str) and content.strip():
+        content_parts.append(content.strip())
+    return None, None, content_parts
+
+
 async def rewrite_for_modesty_gemini(
     client: httpx.AsyncClient,
     *,
@@ -305,7 +259,7 @@ async def rewrite_for_modesty_gemini(
     strictness: str,
 ) -> Tuple[Dict[str, Any], str, str]:
     """
-    Gemini-only rewrite step (text-only) to reduce IMAGE_SAFETY/IMAGE_OTHER blocks.
+    Gemini rewrite step (text-only) to reduce IMAGE_SAFETY/IMAGE_OTHER blocks.
 
     Returns:
       (new_metadata, prompt_additions, summary)
@@ -442,7 +396,7 @@ async def rewrite_for_modesty_gemini(
 
 async def generate_try_on(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None, main_index=0, user_quality_flags=None):
     """
-    Uses Gemini 3 Pro (Nano Banana Pro) image editing to combine person and clothing images.
+    Uses OpenRouter image generation to combine person and clothing images.
     Generates a photorealistic image of the person wearing all clothing items.
     
     Args:
@@ -463,8 +417,8 @@ async def generate_try_on(user_image_files, garment_image_files, category="upper
     if not isinstance(garment_image_files, list):
         garment_image_files = [garment_image_files]
     
-    # Use Gemini 3 Pro for image generation
-    return await _generate_with_gemini(
+    # Use OpenRouter for image generation
+    return await _generate_with_openrouter(
         user_image_files,
         garment_image_files,
         category,
@@ -475,22 +429,22 @@ async def generate_try_on(user_image_files, garment_image_files, category="upper
     )
 
 
-async def _generate_with_gemini(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None, main_index=0, user_quality_flags=None):
+async def _generate_with_openrouter(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None, main_index=0, user_quality_flags=None):
     """
-    Uses Gemini image generation for virtual try-on image generation.
+    Uses OpenRouter image generation for virtual try-on image generation.
     Generates a photorealistic image of the person wearing all clothing items.
     
-    This function uses direct REST API calls to Gemini API with the strongest available
-    configured Gemini image model.
-    No SDKs or OAuth2 are required - just set GEMINI_API_KEY environment variable.
+    This function uses direct REST API calls to OpenRouter with the configured
+    Google Gemini image model via the OpenRouter gateway.
+    No SDKs or OAuth2 are required - just set OPENROUTER_API_KEY environment variable.
     
-    Model: resolved dynamically from GEMINI_TRYON_MODEL / available Gemini image models
+    Model: resolved dynamically from OPENROUTER_TRYON_MODEL / configured OpenRouter model
     - Supports multi-image fusion (base person + clothing images)
-    - Uses responseModalities: ["TEXT", "IMAGE"] for image generation
+    - Uses modalities: ["image", "text"] for image generation
     
-    API Endpoint: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
-    Authentication: API key passed as query parameter (?key={api_key})
-    Request Format: JSON with text prompt + images as base64 inline_data and responseModalities: ["TEXT", "IMAGE"]
+    API Endpoint: https://openrouter.ai/api/v1/chat/completions
+    Authentication: Bearer API key in the Authorization header
+    Request Format: JSON messages with text prompt + images as base64 data URLs
     
     Args:
         user_image_files: List of file-like objects of the person image(s)
@@ -501,17 +455,17 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
     Returns:
         dict: {"image_url": "data:...base64,...", "retry_info": [...]} (retry_info may be empty)
     """
-    # Get API key from environment (prefer GEMINI_API_KEY, fallback to GOOGLE_API_KEY)
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    # Get API key from environment
+    api_key = os.getenv("OPENROUTER_API_KEY")
     # #region agent log
     import json as json_lib
     try:
         with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-            f.write(json_lib.dumps({"location":"vton.py:63","message":"Checking API key","data":{"hasApiKey":api_key is not None,"apiKeyLength":len(api_key) if api_key else 0},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
+            f.write(json_lib.dumps({"location":"vton.py:63","message":"Checking OpenRouter API key","data":{"hasApiKey":api_key is not None,"apiKeyLength":len(api_key) if api_key else 0},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
     except: pass
     # #endregion
     if not api_key:
-        raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY environment variable is required")
+        raise ValueError("OPENROUTER_API_KEY environment variable is required")
     
     try:
         # Read user image bytes
@@ -543,7 +497,7 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
         except: pass
         # #endregion
         
-        # Limit to 5 user images and 5 clothing items (10 total max is safe for Gemini usually, but let's be reasonable)
+        # Limit to 5 user images and 5 clothing items to keep OpenRouter payloads reasonable.
         limited_user_images = user_image_bytes_list[:5]
         if len(user_image_bytes_list) > 5:
             logger.warning(f"Limiting to 5 user images (received {len(user_image_bytes_list)})")
@@ -553,10 +507,10 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
             logger.warning(f"Limiting to 5 clothing items (received {len(garment_image_bytes_list)})")
         
         # Convert images to base64 for API request
-        # Gemini API requires images as base64-encoded inline_data
+        # OpenRouter chat completions uses image_url data URLs for multimodal inputs.
         def image_to_base64(image_bytes, *, max_dim: int, jpeg_quality: int):
             """
-            Convert image bytes to base64 string for Gemini API.
+            Convert image bytes to base64 string for OpenRouter image inputs.
             Detects image format and converts to a size-efficient format:
             - JPEG for non-alpha images (smaller payload, better for mobile photos/screenshots)
             - PNG only when alpha/transparency is present
@@ -826,7 +780,7 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                 return {k: _sanitize_metadata_value(v) for k, v in value.items()}
             return value
 
-        # Build text prompt for Gemini 3 Pro Image
+        # Build text prompt for the OpenRouter image model
         user_img_count = len(limited_user_images)
         garment_img_count = len(limited_garments)
         user_refs = "image" if user_img_count == 1 else f"first {user_img_count} images"
@@ -1008,35 +962,36 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
 
             return text_prompt, local_meta
 
-        def build_parts(text_prompt_value: str):
-            """Construct request parts with a given text prompt."""
-            parts_local = [
-                {
-                    "text": text_prompt_value
-                }
-            ]
+        def build_openrouter_messages(text_prompt_value: str):
+            """Construct OpenRouter chat messages with a given text prompt."""
+            content_blocks = [{"type": "text", "text": text_prompt_value}]
             for item in user_data:
-                parts_local.append({
-                    "inline_data": {
-                        "mime_type": item['mimeType'],
-                        "data": item['base64'],
-                    }
+                content_blocks.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{item['mimeType']};base64,{item['base64']}",
+                    },
                 })
             for item in garment_data:
-                parts_local.append({
-                    "inline_data": {
-                        "mime_type": item['mimeType'],
-                        "data": item['base64'],
-                    }
+                content_blocks.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{item['mimeType']};base64,{item['base64']}",
+                    },
                 })
-            return parts_local
+            return [
+                {
+                    "role": "user",
+                    "content": content_blocks,
+                }
+            ]
 
-        logger.info("🚀 Starting virtual try-on generation with Gemini image model selection")
+        logger.info("🚀 Starting virtual try-on generation with OpenRouter image model selection")
         logger.info(f"   Person images: {len(limited_user_images)}")
         logger.info(f"   Clothing items: {len(limited_garments)}")
         
-        base_url = "https://generativelanguage.googleapis.com/v1beta/models"
-        model_name = await resolve_tryon_model_name(api_key)
+        base_url = "https://openrouter.ai/api/v1/chat/completions"
+        model_name = get_openrouter_configured_model("tryon_image")
         
         max_attempts = 4
         last_failure_details: Dict[str, Any] = {}
@@ -1296,32 +1251,37 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                     retry_suffix = "\n\nRETRY (MAX SAFETY): Overlay-only with fully opaque lining if necessary. Do NOT change pose/background/identity or garment design."
 
                 text_prompt = current_prompt + retry_suffix
-                parts = build_parts(text_prompt)
+                messages = build_openrouter_messages(text_prompt)
 
-                logger.info(f"Attempt {attempt}/{max_attempts} - calling Gemini 3 Pro Image: {model_name}")
+                logger.info(f"Attempt {attempt}/{max_attempts} - calling OpenRouter image model: {model_name}")
                 try:
-                    endpoint = f"{base_url}/{model_name}:generateContent"
                     payload = {
-                        "contents": [
-                            {
-                                "role": "user",
-                                "parts": parts,
-                            }
-                        ],
-                        "generationConfig": {
-                            "responseModalities": ["TEXT", "IMAGE"],
-                        },
-                        "safetySettings": [
-                            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-                            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-                        ],
+                        "model": model_name,
+                        "messages": messages,
+                        "modalities": ["image", "text"],
+                        "temperature": 0.4,
+                        "max_tokens": 1024,
                     }
-                    response = await _gemini_post_json(
+                    headers = {
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {api_key}",
+                    }
+                    app_title = os.getenv("OPENROUTER_APP_TITLE", "IGetDressed.Online")
+                    http_referer = (
+                        os.getenv("OPENROUTER_HTTP_REFERER")
+                        or os.getenv("NEXT_PUBLIC_APP_URL")
+                        or os.getenv("APP_URL")
+                        or ""
+                    ).strip()
+                    if http_referer:
+                        headers["HTTP-Referer"] = http_referer
+                    if app_title:
+                        headers["X-Title"] = app_title
+
+                    response = await _openrouter_post_json(
                         client,
-                        url=f"{endpoint}?key={api_key}",
-                        headers={"Content-Type": "application/json"},
+                        url=base_url,
+                        headers=headers,
                         payload=payload,
                     )
                     
@@ -1330,10 +1290,10 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                         # #region agent log
                         try:
                             with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                                f.write(json_lib.dumps({"location":"vton.py:326","message":"Gemini API request failed","data":{"statusCode":response.status_code,"errorText":error_text[:500],"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
+                                f.write(json_lib.dumps({"location":"vton.py:326","message":"OpenRouter API request failed","data":{"statusCode":response.status_code,"errorText":error_text[:500],"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
                         except: pass
                         # #endregion
-                        logger.error(f"Gemini 3 Pro Image failed (attempt {attempt}): {response.status_code} - {error_text}")
+                        logger.error(f"OpenRouter try-on failed (attempt {attempt}): {response.status_code} - {error_text}")
                         last_failure_details = {
                             "reason": "http_error",
                             "status": response.status_code,
@@ -1443,25 +1403,24 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                                     })
 
                         if attempt == max_attempts:
-                            raise ValueError(f"Gemini API error after {max_attempts} attempts: {response.status_code} - {error_text}")
+                            raise ValueError(f"OpenRouter API error after {max_attempts} attempts: {response.status_code} - {error_text}")
                         continue
                     
                     data = response.json()
                     # #region agent log
                     try:
                         with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                            f.write(json_lib.dumps({"location":"vton.py:331","message":"Gemini API response received","data":{"responseKeys":list(data.keys()) if isinstance(data,dict) else None,"hasCandidates":"candidates" in data if isinstance(data,dict) else False,"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
+                            f.write(json_lib.dumps({"location":"vton.py:331","message":"OpenRouter API response received","data":{"responseKeys":list(data.keys()) if isinstance(data,dict) else None,"hasChoices":"choices" in data if isinstance(data,dict) else False,"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
                     except: pass
                     # #endregion
                     
-                    # Extract image from response
-                    candidates = data.get("candidates", [])
-                    if not candidates:
-                        logger.error(f"No candidates in response (attempt {attempt}). Full response: {json.dumps(data, indent=2)[:1000]}")
-                        last_failure_details = {"reason": "no_candidates", "response": str(data)[:500]}
+                    # Extract image from OpenRouter response
+                    choices = data.get("choices", [])
+                    if not choices:
+                        logger.error(f"No choices in response (attempt {attempt}). Full response: {json.dumps(data, indent=2)[:1000]}")
+                        last_failure_details = {"reason": "no_choices", "response": str(data)[:500]}
                         should_rewrite = is_content_rejection(error_text=str(data))
                         if should_rewrite and attempt < max_attempts:
-                            # Treat as content rejection only if keywords suggest it; otherwise just retry.
                             safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
                                 current_metadata,
                                 build_base_text_prompt(current_metadata)[0],
@@ -1472,15 +1431,31 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                             retry_info.append({
                                 "attempt": attempt + 1,
                                 "strategy": "heuristic",
-                                "reason": "no_candidates",
+                                "reason": "no_choices",
                                 "modificationsSummary": summary,
                             })
                         if attempt == max_attempts:
-                            raise ValueError("No candidates returned from Gemini 3 Pro Image")
+                            raise ValueError("No choices returned from OpenRouter image model")
                         continue
-                    
-                    candidate = candidates[0]
-                    finish_reason, safety_ratings, content_parts, text_parts = summarize_candidate(candidate)
+
+                    choice = choices[0] or {}
+                    finish_reason = choice.get("finish_reason") or choice.get("finishReason")
+                    message = choice.get("message") or {}
+                    safety_ratings = []
+                    content_parts: List[Dict[str, Any]] = []
+                    text_parts: List[str] = []
+                    if isinstance(message, dict):
+                        content_value = message.get("content")
+                        if isinstance(content_value, list):
+                            content_parts = [part for part in content_value if isinstance(part, dict)]
+                            text_parts = [
+                                str(part.get("text") or "")
+                                for part in content_parts
+                                if part.get("text")
+                            ]
+                        elif isinstance(content_value, str):
+                            text_parts = [content_value]
+                            content_parts = [{"text": content_value}]
 
                     if safety_ratings:
                         logger.warning(f"Safety ratings (attempt {attempt}): {safety_ratings}")
@@ -1496,38 +1471,11 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                         if "text" in part:
                             logger.info(f"Part {i} has text: {str(part.get('text', ''))[:100]}")
                     
-                    # Find the first image in the response
-                    image_part = None
-                    for part in content_parts:
-                        # Try snake_case first (Python API format)
-                        if "inline_data" in part:
-                            inline_data = part["inline_data"]
-                            if inline_data.get("data"):
-                                image_part = inline_data
-                                logger.info(f"Found image in part with inline_data (snake_case)")
-                                break
-                        # Try camelCase (JavaScript API format)
-                        elif "inlineData" in part:
-                            inline_data = part["inlineData"]
-                            if inline_data.get("data"):
-                                image_part = inline_data
-                                logger.info(f"Found image in part with inlineData (camelCase)")
-                                break
-                    
-                    if image_part and finish_reason in (None, "STOP"):
-                        image_base64 = image_part.get("data")
-                        mime_type = image_part.get("mime_type") or image_part.get("mimeType") or "image/png"
-                        
-                        if not image_base64:
-                            last_failure_details = {"reason": "empty_image_data", "finish_reason": finish_reason}
-                            if attempt == max_attempts:
-                                raise ValueError("Image data is empty in Gemini response")
-                            continue
-                        
-                        logger.info(f"✅ Successfully generated image using Gemini 3 Pro Image on attempt {attempt}")
-                        logger.info(f"   Image size: {len(image_base64)} characters (base64), MIME type: {mime_type}")
+                    image_url, mime_type, extracted_text_parts = _extract_openrouter_image_url(data)
+                    if image_url and finish_reason in (None, "stop", "STOP", "completed", "SUCCESS"):
+                        logger.info(f"✅ Successfully generated image using OpenRouter on attempt {attempt}")
                         return {
-                            "image_url": f"data:{mime_type};base64,{image_base64}",
+                            "image_url": image_url if image_url.startswith("data:") or image_url.startswith("http") else f"data:{mime_type or 'image/png'};base64,{image_url}",
                             "retry_info": retry_info,
                             "modesty_applied": modesty_applied,
                         }
@@ -1536,8 +1484,8 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                     last_failure_details = {
                         "reason": "no_image_or_finish_reason",
                         "finish_reason": finish_reason,
-                        "text": text_parts[:2] if text_parts else [],
-                        "has_image": bool(image_part),
+                        "text": (text_parts or extracted_text_parts)[:2] if (text_parts or extracted_text_parts) else [],
+                        "has_image": bool(image_url),
                         "attempt": attempt,
                         "safety_ratings": safety_ratings,
                     }
@@ -1551,7 +1499,7 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                     
                     should_rewrite = is_content_rejection(
                         finish_reason=finish_reason,
-                        error_text=(text_parts[0] if text_parts else ""),
+                        error_text=((text_parts or extracted_text_parts)[0] if (text_parts or extracted_text_parts) else ""),
                         safety_ratings=safety_ratings,
                     )
                     if should_rewrite and attempt < max_attempts:
@@ -1647,9 +1595,9 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                                 })
 
                     if attempt == max_attempts:
-                        readable_text = text_parts[0][:300] if text_parts else ""
+                        readable_text = ((text_parts or extracted_text_parts)[0][:300] if (text_parts or extracted_text_parts) else "")
                         safety_hint = ""
-                        if (finish_reason or "").upper() == "IMAGE_SAFETY" or should_rewrite or ((finish_reason or "").upper().startswith("IMAGE_")):
+                        if (str(finish_reason or "").upper() == "IMAGE_SAFETY" or should_rewrite or str(finish_reason or "").upper().startswith("IMAGE_")):
                             safety_hint = " The request was blocked by image safety filters. Please use a less revealing garment description or select a different item."
                         raise ValueError(f"No image generated after {max_attempts} attempts. Finish reason: {finish_reason or 'UNKNOWN'}. Model message: {readable_text}.{safety_hint}")
                     continue
@@ -1658,10 +1606,10 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                     # #region agent log
                     try:
                         with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                            f.write(json_lib.dumps({"location":"vton.py:401","message":"Gemini API timeout","data":{"error":str(e),"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"F"})+"\n")
+                            f.write(json_lib.dumps({"location":"vton.py:401","message":"OpenRouter API timeout","data":{"error":str(e),"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"F"})+"\n")
                     except: pass
                     # #endregion
-                    logger.error(f"Timeout calling Gemini 3 Pro Image on attempt {attempt}: {e}")
+                    logger.error(f"Timeout calling OpenRouter try-on on attempt {attempt}: {e}")
                     last_failure_details = {"reason": "timeout", "error": str(e), "attempt": attempt}
                     if attempt == max_attempts:
                         raise ValueError(f"Request timed out after {max_attempts} attempts. Please try again.")
@@ -1670,10 +1618,10 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                     # #region agent log
                     try:
                         with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                            f.write(json_lib.dumps({"location":"vton.py:404","message":"Gemini API call error","data":{"errorType":type(e).__name__,"errorMessage":str(e),"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
+                            f.write(json_lib.dumps({"location":"vton.py:404","message":"OpenRouter API call error","data":{"errorType":type(e).__name__,"errorMessage":str(e),"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
                     except: pass
                     # #endregion
-                    logger.error(f"Error calling Gemini 3 Pro Image on attempt {attempt}: {e}")
+                    logger.error(f"Error calling OpenRouter try-on on attempt {attempt}: {e}")
                     last_failure_details = {"reason": "exception", "error": str(e), "attempt": attempt}
                     if attempt == max_attempts:
                         raise
@@ -1686,6 +1634,5 @@ async def _generate_with_gemini(user_image_files, garment_image_files, category=
                 f.write(json_lib.dumps({"location":"vton.py:408","message":"vton.generate_try_on error","data":{"errorType":type(e).__name__,"errorMessage":str(e)},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"B"})+"\n")
         except: pass
         # #endregion
-        logger.error(f"Error in Gemini 3 Pro Image generation: {e}", exc_info=True)
+        logger.error(f"Error in OpenRouter try-on generation: {e}", exc_info=True)
         raise e
-

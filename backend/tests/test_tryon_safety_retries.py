@@ -1,8 +1,9 @@
 import io
+
 import pytest
 
 
-class DummyGeminiResponse:
+class DummyResponse:
     def __init__(self, *, ok: bool, status_code: int = 200, text: str = "", data=None):
         self.is_success = ok
         self.status_code = status_code
@@ -34,121 +35,101 @@ def test_heuristic_rewrite_sanitizes_and_adds_defaults():
     assert "intimate" in str(new_meta).lower() or "delicate" in str(new_meta).lower()
     assert new_meta.get("background") is not None
     assert "safety compliance" in new_prompt.lower()
-    # The heuristic layer should be overlay-only (no redesign / no background changes).
     assert "overlay-only" in new_prompt.lower() or "overlay only" in new_prompt.lower()
     assert "do not change background" in new_prompt.lower()
     assert "do not redesign" in new_prompt.lower()
     assert "heuristic_rewrite" in summary
 
 
-def test_pick_best_tryon_model_prefers_stronger_available_image_model():
-    from services.vton import _pick_best_tryon_model
+def test_extract_openrouter_image_url_handles_image_blocks():
+    from services.vton import _extract_openrouter_image_url
 
-    selected = _pick_best_tryon_model(
-        [
-            "gemini-2.5-flash-image",
-            "gemini-3-pro-image-preview",
-        ],
-        configured_model="auto",
+    image_url, mime_type, text_parts = _extract_openrouter_image_url(
+        {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "done"},
+                            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+                        ]
+                    },
+                }
+            ]
+        }
     )
 
-    assert selected == "gemini-3-pro-image-preview"
-
-
-def test_pick_best_tryon_model_respects_explicit_config_when_available():
-    from services.vton import _pick_best_tryon_model
-
-    selected = _pick_best_tryon_model(
-        [
-            "gemini-2.5-flash-image",
-            "gemini-3-pro-image-preview",
-        ],
-        configured_model="gemini-2.5-flash-image",
-    )
-
-    assert selected == "gemini-2.5-flash-image"
+    assert image_url == "data:image/png;base64,AAAA"
+    assert mime_type is None
+    assert text_parts == ["done"]
 
 
 @pytest.mark.asyncio
 async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_bytes):
-    """
-    Stubs Gemini responses: 3 safety blocks then a success.
-    Ensures retry_info captures the progressive rewrite attempts without network calls.
-    """
     from services import vton
 
-    call_count = {"n": 0, "image": 0, "rewrite": 0}
+    openrouter_calls = {"n": 0}
+    rewrite_calls = {"n": 0}
 
-    async def fake_post(_client, *, url, headers, payload):
-        call_count["n"] += 1
-
-        # Detect rewrite calls: text-only (no inline_data images).
-        try:
-            parts = payload["contents"][0]["parts"]
-            has_inline = any(
-                isinstance(p, dict) and ("inline_data" in p or "inlineData" in p) for p in (parts or [])
-            )
-        except Exception:
-            has_inline = True
-
-        if not has_inline:
-            call_count["rewrite"] += 1
-            # Gemini rewrite response (text JSON)
-            return DummyGeminiResponse(
+    async def fake_openrouter_post(_client, *, url, headers, payload):
+        openrouter_calls["n"] += 1
+        if openrouter_calls["n"] <= 2:
+            return DummyResponse(
                 ok=True,
                 data={
-                    "candidates": [
+                    "choices": [
                         {
-                            "finishReason": "STOP",
-                            "content": {
-                                "parts": [
-                                    {
-                                        "text": '{"prompt_additions":"Keep framing conservative, avoid close-ups, add opaque lining if needed.","metadata":{"description":"intimate apparel","framing":"three_quarter"},"changes":["sanitized description","more modest framing"]}'
-                                    }
-                                ]
-                            },
+                            "finish_reason": "content_filter",
+                            "message": {"content": [{"type": "text", "text": "Blocked by policy"}]},
                         }
                     ]
                 },
             )
 
-        # Image generation calls: 1-3 safety block, then success on the final attempt.
-        # Note: with Gemini rewrite enabled on attempt 2 and 3, there will be two extra calls.
-        call_count["image"] += 1
-        if call_count["image"] <= 3:
-            return DummyGeminiResponse(
-                ok=True,
-                data={
-                    "candidates": [
-                        {
-                            "finishReason": "IMAGE_SAFETY",
-                            "safetyRatings": [{"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "probability": "HIGH"}],
-                            "content": {"parts": [{"text": "Blocked by safety filter"}]},
-                        }
-                    ]
-                },
-            )
-
-        # Success with an image part
-        return DummyGeminiResponse(
+        return DummyResponse(
             ok=True,
             data={
-                "candidates": [
+                "choices": [
                     {
-                        "finishReason": "STOP",
-                        "content": {"parts": [{"inline_data": {"data": "AAAA", "mime_type": "image/png"}}]},
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": [
+                                {"type": "text", "text": "ok"},
+                                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+                            ]
+                        },
                     }
                 ]
             },
         )
 
-    monkeypatch.setattr(vton, "_gemini_post_json", fake_post)
-    user_file = io.BytesIO(sample_image_bytes)
-    garment_file = io.BytesIO(sample_image_bytes)
+    async def fake_gemini_post(_client, *, url, headers, payload):
+        rewrite_calls["n"] += 1
+        return DummyResponse(
+            ok=True,
+            data={
+                "candidates": [
+                    {
+                        "finishReason": "STOP",
+                        "content": {
+                            "parts": [
+                                {
+                                    "text": '{"prompt_additions":"Keep framing conservative, avoid close-ups, add opaque lining if needed.","metadata":{"description":"intimate apparel","framing":"three_quarter"},"changes":["sanitized description","more modest framing"]}'
+                                }
+                            ]
+                        },
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(vton, "_openrouter_post_json", fake_openrouter_post)
+    monkeypatch.setattr(vton, "_gemini_post_json", fake_gemini_post)
 
     result = await vton.generate_try_on(
-        [user_file],
-        [garment_file],
+        [io.BytesIO(sample_image_bytes)],
+        [io.BytesIO(sample_image_bytes)],
         category="upper_body",
         garment_metadata={"description": "lingerie"},
         user_attributes=None,
@@ -158,91 +139,80 @@ async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_byt
 
     assert isinstance(result, dict)
     assert result.get("image_url", "").startswith("data:image/")
-    # Intimate items should trigger the modesty pipeline.
     assert result.get("modesty_applied") is True
     retry_info = result.get("retry_info", [])
     assert isinstance(retry_info, list)
-    # The implementation may add a preflight rewrite entry before the first Gemini call
-    # (e.g., when intimate keywords are detected), so allow >=3.
     assert len(retry_info) >= 3
     strategies = [r.get("strategy") for r in retry_info if isinstance(r, dict)]
-    # We should see the modesty preflight contract and at least one rewrite strategy.
     assert "modesty_contract_preflight" in strategies
     assert any(s in ("preflight_heuristic", "heuristic", "gemini_rewrite") for s in strategies)
+    assert openrouter_calls["n"] == 3
+    assert rewrite_calls["n"] >= 1
 
 
 def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeypatch):
-    """
-    Integration-ish: hit POST /api/try-on and ensure retry_info is returned when safety blocks occur.
-    Avoids external calls by stubbing Gemini + user attribute analysis.
-    """
-    from services import vton
     from services import analyze_user
+    from services import vton
 
     async def fake_user_attrs(_files):
         return {}
 
-    call_count = {"n": 0, "image": 0, "rewrite": 0}
+    openrouter_calls = {"n": 0}
 
-    async def fake_post(_client, *, url, headers, payload):
-        call_count["n"] += 1
-
-        # Detect rewrite calls: text-only (no inline_data images).
-        try:
-            parts = payload["contents"][0]["parts"]
-            has_inline = any(
-                isinstance(p, dict) and ("inline_data" in p or "inlineData" in p) for p in (parts or [])
-            )
-        except Exception:
-            has_inline = True
-
-        if not has_inline:
-            call_count["rewrite"] += 1
-            return DummyGeminiResponse(
+    async def fake_openrouter_post(_client, *, url, headers, payload):
+        openrouter_calls["n"] += 1
+        if openrouter_calls["n"] <= 2:
+            return DummyResponse(
                 ok=True,
                 data={
-                    "candidates": [
+                    "choices": [
                         {
-                            "finishReason": "STOP",
-                            "content": {
-                                "parts": [
-                                    {
-                                        "text": '{"prompt_additions":"Keep framing conservative and professional.","metadata":{"framing":"three_quarter"},"changes":["more modest framing"]}'
-                                    }
-                                ]
-                            },
+                            "finish_reason": "content_filter",
+                            "message": {"content": [{"type": "text", "text": "Blocked"}]},
                         }
                     ]
                 },
             )
+        return DummyResponse(
+            ok=True,
+            data={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": [
+                                {"type": "text", "text": "ok"},
+                                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+                            ]
+                        },
+                    }
+                ]
+            },
+        )
 
-        call_count["image"] += 1
-        if call_count["image"] <= 2:
-            return DummyGeminiResponse(
-                ok=True,
-                data={
-                    "candidates": [
-                        {
-                            "finishReason": "IMAGE_SAFETY",
-                            "content": {"parts": [{"text": "Blocked"}]},
-                        }
-                    ]
-                },
-            )
-        return DummyGeminiResponse(
+    async def fake_gemini_post(_client, *, url, headers, payload):
+        return DummyResponse(
             ok=True,
             data={
                 "candidates": [
                     {
                         "finishReason": "STOP",
-                        "content": {"parts": [{"inline_data": {"data": "AAAA", "mime_type": "image/png"}}]},
+                        "content": {
+                            "parts": [
+                                {
+                                    "text": '{"prompt_additions":"Keep framing conservative and professional.","metadata":{"framing":"three_quarter"},"changes":["more modest framing"]}'
+                                }
+                            ]
+                        },
                     }
                 ]
             },
         )
 
     monkeypatch.setattr(analyze_user, "analyze_user_attributes", fake_user_attrs)
-    monkeypatch.setattr(vton, "_gemini_post_json", fake_post)
+    monkeypatch.setattr(vton, "_openrouter_post_json", fake_openrouter_post)
+    monkeypatch.setattr(vton, "_gemini_post_json", fake_gemini_post)
+
     files = {
         "user_image": ("user.png", sample_image_bytes, "image/png"),
         "clothing_image": ("garment.png", sample_image_bytes, "image/png"),

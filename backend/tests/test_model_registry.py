@@ -40,10 +40,21 @@ def test_get_gemini_model_candidates_dedupes_and_respects_override(monkeypatch):
 def test_get_gemini_configured_model_defaults(monkeypatch):
     from services.model_registry import get_gemini_configured_model
 
-    monkeypatch.delenv("GEMINI_TRYON_MODEL", raising=False)
-    monkeypatch.delenv("GEMINI_IMAGE_MODEL", raising=False)
+    monkeypatch.delenv("GEMINI_GARMENT_ANALYZE_MODEL", raising=False)
+    monkeypatch.delenv("GEMINI_VISION_MODEL", raising=False)
+    monkeypatch.delenv("GEMINI_TEXT_MODEL", raising=False)
 
-    assert get_gemini_configured_model("tryon_image") == "gemini-3-pro-image-preview"
+    assert get_gemini_configured_model("garment_analysis") == "gemini-3-flash-preview"
+
+
+def test_get_openrouter_configured_model_defaults(monkeypatch):
+    from services.model_registry import get_openrouter_configured_model
+
+    monkeypatch.delenv("OPENROUTER_TRYON_MODEL", raising=False)
+    monkeypatch.delenv("OPENROUTER_IMAGE_MODEL", raising=False)
+    monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+
+    assert get_openrouter_configured_model("tryon_image") == "google/gemini-3.1-flash-image-preview"
 
 
 def test_unknown_task_raises():

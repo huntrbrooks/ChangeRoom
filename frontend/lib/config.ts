@@ -94,7 +94,6 @@ export const dbConfig = createLazyConfig(() => ({
 // Gemini Configuration - lazy access
 export const geminiConfig = createLazyConfig(() => ({
   apiKey: requireEnv("GEMINI_API_KEY"),
-  tryOnModel: getEnv("NEXT_PUBLIC_GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview"),
 }));
 
 // App Configuration (optional with defaults)
