@@ -1755,69 +1755,6 @@ export async function applyContentBlockPenalty(params: {
   });
 }
 
-/**
- * Atomically mark free trial as used and optionally grant credits once.
- */
-export async function grantFreeTrialOnce(
-  userId: string,
-  grantAmount: number
-): Promise<{ granted: boolean; billing: UserBilling }> {
-  if (grantAmount <= 0) {
-    return { granted: false, billing: await getOrCreateUserBilling(userId) };
-  }
-
-  await ensureUsersBillingTable();
-  await ensureCreditTables();
-  return runTransaction(async (tx) => {
-    const billing = await ensureUserBillingWithLock(tx, userId);
-    if (billing.trial_used) {
-      return { granted: false, billing };
-    }
-
-    const updatedBilling = await tx`
-      UPDATE users_billing
-      SET 
-        trial_used = true,
-        credits_available = credits_available + ${grantAmount},
-        updated_at = now()
-      WHERE user_id = ${userId} AND (trial_used = false OR trial_used IS NULL)
-      RETURNING *
-    `;
-
-    if (updatedBilling.rows.length === 0) {
-      const refreshed = await ensureUserBillingWithLock(tx, userId);
-      return { granted: false, billing: refreshed };
-    }
-
-    const updatedCredits = toNumber(
-      asRow(updatedBilling.rows[0]).credits_available,
-      0
-    );
-    await tx`
-      INSERT INTO credit_ledger_entries (
-        id,
-        user_id,
-        entry_type,
-        credits_change,
-        balance_after,
-        metadata
-      )
-      VALUES (
-        ${generateUuid()},
-        ${userId},
-        'grant',
-        ${grantAmount},
-        ${updatedCredits},
-        ${JSON.stringify({ reason: "free_trial" })}
-      )
-    `;
-
-    return {
-      granted: true,
-      billing: updatedBilling.rows[0] as UserBilling,
-    };
-  });
-}
 
 /**
  * Mark the free trial as used without adjusting credits.

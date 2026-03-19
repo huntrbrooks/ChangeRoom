@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
   let usedFreeTrial = false;
 
   try {
-    const { createCreditHold, getOrCreateUserBilling, grantFreeTrialOnce } =
+    const { createCreditHold, getOrCreateUserBilling, markFreeTrialUsed } =
       await import("@/lib/db-access");
 
     const reqHeaderId =
@@ -138,11 +138,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Give free trial credit only for verified users and standard quality
+    // Use free trial for verified users on standard quality
     if (!shouldBypassPayment && creditCost === 1 && billing.trials_remaining > 0 && isVerifiedEmail) {
-      const trialResult = await grantFreeTrialOnce(userId, creditCost);
-      billing = trialResult.billing;
-      usedFreeTrial = trialResult.granted;
+      billing = await markFreeTrialUsed(userId);
+      usedFreeTrial = true;
     }
 
     if (shouldBypassPayment) {
