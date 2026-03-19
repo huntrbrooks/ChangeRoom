@@ -72,7 +72,6 @@ async function ensureTables() {
       plan TEXT NOT NULL DEFAULT 'free',
       credits_available INTEGER NOT NULL DEFAULT 0,
       credits_refresh_at TIMESTAMPTZ,
-      trial_used BOOLEAN NOT NULL DEFAULT false,
       is_frozen BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -126,8 +125,8 @@ async function grantCreditsIdempotent({ userId, amount, requestId, metadata, dry
 
     // Ensure billing row exists and is locked
     await client.sql`
-      INSERT INTO users_billing (user_id, plan, credits_available, trial_used, is_frozen)
-      VALUES (${userId}, 'free', 0, false, false)
+      INSERT INTO users_billing (user_id, plan, credits_available, is_frozen)
+      VALUES (${userId}, 'free', 0, false)
       ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
     `;
     const locked = await client.sql`

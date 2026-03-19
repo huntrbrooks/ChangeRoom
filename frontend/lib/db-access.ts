@@ -60,7 +60,6 @@ export interface UserBilling {
   credits_available: number;
   credits_refresh_at: Date | null;
   trials_remaining: number;
-  trial_used?: boolean;
   is_frozen: boolean;
   created_at: Date;
   updated_at: Date;
@@ -1979,7 +1978,6 @@ export async function setStripeCustomerIdForUser(
     return {
       ...updated,
       is_frozen: updated.is_frozen ?? false,
-      trial_used: updated.trial_used ?? false,
     };
   });
 }

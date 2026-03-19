@@ -33,7 +33,6 @@ export interface UserBilling {
   plan: Plan;
   credits_available: number;
   credits_refresh_at: Date | null;
-  trial_used: boolean;
   is_frozen: boolean;
   created_at: Date;
   updated_at: Date;
@@ -149,8 +148,8 @@ export async function applyContentBlockPenalty(params: {
 
   // Ensure user row exists (cheap)
   await sql`
-    INSERT INTO users_billing (user_id, plan, credits_available, trial_used, is_frozen)
-    VALUES (${userId}, 'free', ${appConfig.freeCredits}, false, false)
+    INSERT INTO users_billing (user_id, plan, credits_available, is_frozen)
+    VALUES (${userId}, 'free', ${appConfig.freeCredits}, false)
     ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
   `;
 

@@ -17,9 +17,8 @@ SET trials_remaining = CASE
 END
 WHERE trials_remaining = 2; -- Only update rows that still have default value
 
--- Step 3: Drop the old trial_used column (after migration is confirmed working)
--- UNCOMMENT AFTER VERIFYING MIGRATION:
--- ALTER TABLE users_billing DROP COLUMN IF EXISTS trial_used;
+-- Step 3: Drop the old trial_used column
+ALTER TABLE users_billing DROP COLUMN IF EXISTS trial_used;
 
 -- Step 4: Add index for efficient queries
 CREATE INDEX IF NOT EXISTS users_billing_trials_remaining_idx
