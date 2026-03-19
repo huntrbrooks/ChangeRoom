@@ -56,7 +56,7 @@ const handler = createMcpHandler((server) => {
             text: JSON.stringify({
               plan: billing.plan,
               creditsAvailable: billing.credits_available,
-              trialUsed: billing.trial_used,
+              trialsRemaining: billing.trials_remaining,
               isFrozen: billing.is_frozen,
               stripeCustomerId: billing.stripe_customer_id ? "[set]" : null,
               creditsRefreshAt: billing.credits_refresh_at,

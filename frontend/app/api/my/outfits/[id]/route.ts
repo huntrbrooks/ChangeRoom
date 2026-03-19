@@ -33,7 +33,7 @@ export async function DELETE(
     const billing = await getOrCreateUserBilling(userId);
     const hasCredits = (billing.credits_available ?? 0) > 0;
     const hasPurchase = billing.plan !== "free" || (await hasPaidCreditGrant(userId));
-    const usedFreeTrial = billing.trial_used ?? false;
+    const usedFreeTrial = (billing.trials_remaining ?? 2) === 0;
 
     if (usedFreeTrial && !hasCredits && !hasPurchase) {
       return NextResponse.json(

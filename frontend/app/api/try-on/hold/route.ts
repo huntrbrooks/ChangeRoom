@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Give free trial credit only for verified users and standard quality
-    if (!shouldBypassPayment && creditCost === 1 && !billing.trial_used && isVerifiedEmail) {
+    if (!shouldBypassPayment && creditCost === 1 && billing.trials_remaining > 0 && isVerifiedEmail) {
       const trialResult = await grantFreeTrialOnce(userId, creditCost);
       billing = trialResult.billing;
       usedFreeTrial = trialResult.granted;

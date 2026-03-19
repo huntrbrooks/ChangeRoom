@@ -60,6 +60,7 @@ export interface UserBilling {
   credits_available: number;
   credits_refresh_at: Date | null;
   trials_remaining: number;
+  trial_used?: boolean;
   is_frozen: boolean;
   created_at: Date;
   updated_at: Date;
