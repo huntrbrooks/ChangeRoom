@@ -19,7 +19,7 @@ export async function POST(_req: NextRequest) {
       plan: billing.plan,
       creditsAvailable: billing.credits_available,
       creditsRefreshAt: billing.credits_refresh_at,
-      trialUsed: billing.trial_used ?? true,
+      trialsRemaining: billing.trials_remaining,
     });
   } catch (err: unknown) {
     console.error("Error consuming free trial:", err);
@@ -31,7 +31,7 @@ export async function POST(_req: NextRequest) {
         plan: billing.plan,
         creditsAvailable: billing.credits_available,
         creditsRefreshAt: billing.credits_refresh_at,
-        trialUsed: true, // force-consume to avoid client loops
+        trialsRemaining: 0, // force-consume to avoid client loops
         note: "trial consume fallback",
       });
     } catch (fallbackErr) {

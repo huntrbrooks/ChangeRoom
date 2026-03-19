@@ -57,7 +57,7 @@ export async function GET() {
       plan: billing.plan,
       creditsAvailable: billing.credits_available,
       creditsRefreshAt: billing.credits_refresh_at,
-      trialUsed: billing.trial_used ?? false, // Default to false if null/undefined
+      trialsRemaining: billing.trials_remaining,
       hasPurchase,
     });
   } catch (err: unknown) {

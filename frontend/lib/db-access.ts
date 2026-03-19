@@ -59,7 +59,7 @@ export interface UserBilling {
   plan: Plan;
   credits_available: number;
   credits_refresh_at: Date | null;
-  trial_used: boolean;
+  trials_remaining: number;
   is_frozen: boolean;
   created_at: Date;
   updated_at: Date;
@@ -234,7 +234,7 @@ async function createUsersBillingTable(): Promise<void> {
       plan TEXT NOT NULL DEFAULT 'free',
       credits_available INTEGER NOT NULL DEFAULT 0,
       credits_refresh_at TIMESTAMPTZ,
-      trial_used BOOLEAN NOT NULL DEFAULT false,
+      trials_remaining INTEGER NOT NULL DEFAULT 2,
       is_frozen BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -243,7 +243,7 @@ async function createUsersBillingTable(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS users_billing_stripe_customer_idx ON users_billing (stripe_customer_id)`;
   await sql`CREATE INDEX IF NOT EXISTS users_billing_plan_idx ON users_billing (plan)`;
   // Backward-compatible column adds (safe to run repeatedly)
-  await sql`ALTER TABLE users_billing ADD COLUMN IF NOT EXISTS trial_used BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE users_billing ADD COLUMN IF NOT EXISTS trials_remaining INTEGER NOT NULL DEFAULT 2`;
   await sql`ALTER TABLE users_billing ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN NOT NULL DEFAULT false`;
 }
 
@@ -517,14 +517,14 @@ async function ensureUserBillingWithLock(
     const billing = existing.rows[0] as UserBilling;
     return {
       ...billing,
-      trial_used: billing.trial_used ?? false,
+      trials_remaining: billing.trials_remaining ?? 2,
       is_frozen: billing.is_frozen ?? false,
     };
   }
 
   const inserted = await tx`
-    INSERT INTO users_billing (user_id, plan, credits_available, trial_used, is_frozen)
-    VALUES (${userId}, 'free', ${appConfig.freeCredits}, false, false)
+    INSERT INTO users_billing (user_id, plan, credits_available, trials_remaining, is_frozen)
+    VALUES (${userId}, 'free', ${appConfig.freeCredits}, 2, false)
     ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
     RETURNING *
   `;
@@ -832,13 +832,13 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
 
     if (existing.rows.length > 0) {
       const billing = existing.rows[0] as UserBilling;
-      // Ensure trial_used field exists (for backward compatibility)
-      if (billing.trial_used === undefined || billing.trial_used === null) {
+      // Ensure trials_remaining field exists (for backward compatibility)
+      if (billing.trials_remaining === undefined || billing.trials_remaining === null) {
         // Update to set default value if column exists
         try {
           await sql`
-            UPDATE users_billing 
-            SET trial_used = COALESCE(trial_used, false), updated_at = now()
+            UPDATE users_billing
+            SET trials_remaining = COALESCE(trials_remaining, 2), updated_at = now()
             WHERE user_id = ${userId}
           `;
           // Fetch again to get updated value
@@ -848,19 +848,19 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
           return updated.rows[0] as UserBilling;
         } catch {
           // If column doesn't exist, return with default value
-          return { ...billing, trial_used: false, is_frozen: billing.is_frozen ?? false };
+          return { ...billing, trials_remaining: 2, is_frozen: billing.is_frozen ?? false };
         }
       }
-      // If free plan trial has been used and there is no purchase, credits should be 0.
+      // If free plan trials have been consumed and there is no purchase, credits should be 0.
       // This corrects older records created with default free credits.
       const normalized = {
         ...billing,
-        trial_used: billing.trial_used ?? false,
+        trials_remaining: billing.trials_remaining ?? 2,
         is_frozen: billing.is_frozen ?? false,
       };
       if (
         normalized.plan === "free" &&
-        normalized.trial_used === true &&
+        normalized.trials_remaining === 0 &&
         (normalized.credits_available ?? 0) > 0 &&
         !normalized.stripe_subscription_id
       ) {
@@ -875,7 +875,7 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
           if (updated.rows.length > 0) {
             return {
               ...(updated.rows[0] as UserBilling),
-              trial_used: true,
+              trials_remaining: 0,
               is_frozen: (updated.rows[0] as UserBilling).is_frozen ?? false,
             };
           }
@@ -887,8 +887,8 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
     // Create new record
     try {
       const result = await sql`
-        INSERT INTO users_billing (user_id, plan, credits_available, trial_used, is_frozen)
-        VALUES (${userId}, 'free', ${appConfig.freeCredits}, false, false)
+        INSERT INTO users_billing (user_id, plan, credits_available, trials_remaining, is_frozen)
+        VALUES (${userId}, 'free', ${appConfig.freeCredits}, 2, false)
         ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
         RETURNING *
       `;
@@ -897,8 +897,8 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
         return result.rows[0] as UserBilling;
       }
     } catch (err: unknown) {
-      // If trial_used column doesn't exist, try without it
-      if (errorMessageIncludes(err, "trial_used")) {
+      // If trials_remaining column doesn't exist, try without it
+      if (errorMessageIncludes(err, "trials_remaining")) {
         const result = await sql`
           INSERT INTO users_billing (user_id, plan, credits_available, is_frozen)
           VALUES (${userId}, 'free', ${appConfig.freeCredits}, false)
@@ -906,7 +906,7 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
           RETURNING *
         `;
         if (result.rows.length > 0) {
-          return { ...(result.rows[0] as UserBilling), trial_used: false, is_frozen: false };
+          return { ...(result.rows[0] as UserBilling), trials_remaining: 2, is_frozen: false };
         }
       }
       throw err;
@@ -919,7 +919,7 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
     const fetched = fetchResult.rows[0] as UserBilling;
     return {
       ...fetched,
-      trial_used: fetched.trial_used ?? false,
+      trials_remaining: fetched.trials_remaining ?? 2,
       is_frozen: fetched.is_frozen ?? false,
     };
   });
@@ -963,12 +963,12 @@ export async function createCreditHold(params: {
     await ensureUserBillingWithLock(tx, userId);
     await releaseStaleActiveHoldsInTx(tx as unknown as TransactionSql, userId);
     let billing = await ensureUserBillingWithLock(tx, userId);
-    // Mark free trial as consumed when the first credit is held
-    if (!billing.trial_used && billing.plan === "free") {
+    // Decrement free trials when user is on free plan with trials remaining
+    if (billing.trials_remaining > 0 && billing.plan === "free") {
       const trialUpdate = await tx`
         UPDATE users_billing
-        SET trial_used = true, updated_at = now()
-        WHERE user_id = ${userId} AND (trial_used = false OR trial_used IS NULL)
+        SET trials_remaining = trials_remaining - 1, updated_at = now()
+        WHERE user_id = ${userId} AND trials_remaining > 0
         RETURNING *
       `;
       if (trialUpdate.rows.length > 0) {
@@ -1626,53 +1626,40 @@ export async function updateUserBillingCredits(
 }
 
 /**
- * Check if user is currently on a free trial (hasn't used their free try-on yet)
+ * Check if user is currently on a free trial (has trials_remaining > 0)
  */
 export async function isUserOnFreeTrial(userId: string): Promise<boolean> {
   const billing = await getOrCreateUserBilling(userId);
-  return !billing.trial_used;
+  return billing.trials_remaining > 0;
 }
 
 /**
  * Decrement credits in a transaction-safe way
  * Returns true if credits were available and decremented, false otherwise
- * During free trial (first try-on), allows 1 free try-on and marks trial as used
+ * During free trial, allows 2 free try-ons by decrementing trials_remaining
  */
 export async function decrementCreditsIfAvailable(userId: string): Promise<boolean> {
   try {
     const billing = await getOrCreateUserBilling(userId);
 
-    // Check if user is on free trial (hasn't used their free try-on)
-    // Handle case where trial_used might be null/undefined (backward compatibility)
-    const trialUsed = billing.trial_used ?? false;
-
-    if (!trialUsed) {
-      // Mark trial as used and allow this try-on
-      try {
-        const result = await withUsersBillingTable(() => sql`
-          UPDATE users_billing
-          SET 
-            trial_used = true,
-            updated_at = now()
-          WHERE user_id = ${userId} AND (trial_used = false OR trial_used IS NULL)
-          RETURNING *
-        `);
-        return result.rows.length > 0;
-      } catch (err: unknown) {
-        // If trial_used column doesn't exist, just allow the try-on
-        const messageIncludesTrial =
-          errorMessageIncludes(err, "trial_used") || errorMessageIncludes(err, "column");
-        if (messageIncludesTrial) {
-          return true;
-        }
-        throw err;
-      }
+    // Check if user has free trials remaining
+    if (billing.trials_remaining > 0) {
+      // Decrement trials_remaining and allow this try-on
+      const result = await withUsersBillingTable(() => sql`
+        UPDATE users_billing
+        SET
+          trials_remaining = trials_remaining - 1,
+          updated_at = now()
+        WHERE user_id = ${userId} AND trials_remaining > 0
+        RETURNING *
+      `);
+      return result.rows.length > 0;
     }
 
     // Use a transaction to ensure atomicity for regular credits
     const result = await withUsersBillingTable(() => sql`
       UPDATE users_billing
-      SET 
+      SET
         credits_available = credits_available - 1,
         updated_at = now()
       WHERE user_id = ${userId} AND credits_available > 0
@@ -1841,13 +1828,13 @@ export async function markFreeTrialUsed(userId: string): Promise<UserBilling> {
     const result = await sql`
       UPDATE users_billing
       SET
-        trial_used = true,
+        trials_remaining = 0,
         credits_available = CASE
           WHEN plan = 'free' THEN 0
           ELSE credits_available
         END,
         updated_at = now()
-      WHERE user_id = ${userId} AND (trial_used = false OR trial_used IS NULL)
+      WHERE user_id = ${userId} AND trials_remaining > 0
       RETURNING *
     `;
 
@@ -1861,14 +1848,14 @@ export async function markFreeTrialUsed(userId: string): Promise<UserBilling> {
 
 /**
  * Reset free trial for a user (for testing/admin purposes)
- * Note: In production, users should only get one free try-on
+ * Note: In production, users should only get 2 free try-ons
  */
 export async function resetFreeTrial(userId: string): Promise<UserBilling> {
   return withUsersBillingTable(async () => {
     const result = await sql`
       UPDATE users_billing
-      SET 
-        trial_used = false,
+      SET
+        trials_remaining = 2,
         updated_at = now()
       WHERE user_id = ${userId}
       RETURNING *

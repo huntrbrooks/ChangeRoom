@@ -72,7 +72,7 @@ export function PaywallModal({
           {onTrial && !isBypass && (
             <div className="bg-black/10 border border-black/30 rounded-lg p-3 sm:p-4 shadow-[0_0_15px_rgba(0,0,0,0.2)]">
               <p className="text-xs sm:text-sm text-black">
-                <strong>Free Try-On Available!</strong> - You have 1 free try-on. 
+                <strong>Free Try-Ons Available!</strong> - You have up to 2 free try-ons.
                 Upgrade now to get unlimited try-ons with a subscription.
               </p>
             </div>

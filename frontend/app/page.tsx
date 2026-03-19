@@ -42,7 +42,7 @@ interface BillingInfo {
   plan: 'free' | 'standard' | 'pro';
   creditsAvailable: number;
   creditsRefreshAt: Date | null;
-  trialUsed?: boolean;
+  trialsRemaining: number;
   hasPurchase?: boolean;
 }
 
@@ -408,7 +408,7 @@ function HomeContent() {
     router.push('/pricing?promo=xmas');
   }, [router]);
 
-  const isOnTrial = billing && !billing.trialUsed && !isBypass;
+  const isOnTrial = billing && (billing.trialsRemaining ?? 0) > 0 && !isBypass;
   const isAuthenticated = isAuthLoaded ? isSignedIn : isLoaded && !!user;
   const isGuestPitchDemo = pitchDemoEnabled && !isAuthenticated;
   const hasCreditsAvailable = billing ? billing.creditsAvailable > 0 : false;
@@ -1513,8 +1513,8 @@ function HomeContent() {
           if (typeof creditsAvailable === 'number') {
             setBilling((prev) => (prev ? { ...prev, creditsAvailable } : prev));
           }
-          if (usedFreeTrial) {
-            setBilling((prev) => (prev ? { ...prev, trialUsed: true } : prev));
+          if (usedFreeTrial && billing) {
+            setBilling((prev) => (prev ? { ...prev, trialsRemaining: Math.max(0, prev.trialsRemaining - 1) } : prev));
           }
         } catch (holdErr: unknown) {
           // If user has no credits, this endpoint returns 402 + { error: 'no_credits' }
@@ -1761,11 +1761,11 @@ function HomeContent() {
           }
           
           // Mark trial as used if backend reported free trial consumption (idempotent)
-          if (tryOnRes?.data?.usedFreeTrial || (billing && !billing.trialUsed)) {
+          if (tryOnRes?.data?.usedFreeTrial || (billing && billing.trialsRemaining > 0)) {
             try {
               await httpClient.post('/api/my/trial/consume');
           trialConsumedRef.current = true;
-          setBilling((prev) => (prev ? { ...prev, trialUsed: true } : prev));
+          setBilling((prev) => (prev ? { ...prev, trialsRemaining: Math.max(0, prev.trialsRemaining - 1) } : prev));
           // Track trial consumption for n8n automation
           trackTrialConsumed(requestId || undefined);
             } catch (consumeErr) {
@@ -2212,9 +2212,9 @@ function HomeContent() {
             <div className="flex items-center gap-2 sm:gap-3 flex-1">
               <Zap size={18} className="sm:w-5 sm:h-5 text-black flex-shrink-0" />
               <div className="min-w-0">
-                <p className="font-semibold text-black text-sm sm:text-base">Free Try-On Available!</p>
+                <p className="font-semibold text-black text-sm sm:text-base">Free Try-Ons Available!</p>
                 <p className="text-xs sm:text-sm text-[#7C3AED] mt-0.5">
-                  You have 1 free try-on. Upgrade to get unlimited try-ons with a subscription.
+                  You have {billing.trialsRemaining} free try-on{billing.trialsRemaining !== 1 ? 's' : ''}. Upgrade to get unlimited try-ons with a subscription.
                 </p>
               </div>
             </div>
@@ -2272,9 +2272,9 @@ function HomeContent() {
             <div className="flex items-center gap-2 sm:gap-3 flex-1">
               <Zap size={18} className="sm:w-5 sm:h-5 text-emerald-600 flex-shrink-0" />
               <div className="min-w-0">
-                <p className="font-semibold text-sm sm:text-base text-emerald-800">Free Try-On Complete</p>
+                <p className="font-semibold text-sm sm:text-base text-emerald-800">Free Try-Ons Complete</p>
                 <p className="text-xs sm:text-sm text-emerald-700 mt-0.5">
-                  Your preview is ready. Upgrade or purchase credits to generate another look.
+                  Your previews are ready. Upgrade or purchase credits to generate more looks.
                 </p>
               </div>
             </div>

@@ -17,7 +17,7 @@ interface BillingInfo {
   plan: 'free' | 'standard' | 'pro';
   creditsAvailable: number;
   creditsRefreshAt: Date | null;
-  trialUsed?: boolean;
+  trialsRemaining: number;
 }
 
 function BillingPageContent() {
@@ -72,7 +72,7 @@ function BillingPageContent() {
     return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   };
 
-  const isOnTrial = billing && !billing.trialUsed ? true : false;
+  const isOnTrial = billing && billing.trialsRemaining > 0 ? true : false;
 
   if (!isLoaded) {
     return (
@@ -289,7 +289,7 @@ function BillingPageContent() {
             <li>• Each try-on uses 1 credit</li>
             <li>• Subscription plans refresh credits monthly</li>
             <li>• Credit packs are added to your balance immediately</li>
-            <li>• New users get 1 free try-on to test the service</li>
+            <li>• New users get 2 free try-ons to test the service</li>
             <li>• You can upgrade, downgrade, or cancel anytime</li>
           </ul>
         </div>
