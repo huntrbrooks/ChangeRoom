@@ -70,7 +70,6 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const { userId } = await auth();
   // During build, Clerk keys might not be available or invalid
   const rawKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   const _isBuildTime = process.env.NODE_ENV === 'production' && !process.env.VERCEL_ENV;
@@ -110,7 +109,7 @@ export default async function RootLayout({
         <head>
           <GoogleTagManagerHead />
         </head>
-        <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-black flex flex-col min-h-screen`}>
+        <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#f7f8fb] text-[#101114] flex flex-col min-h-screen`}>
           <GoogleTagManagerBody />
           <PwaRegister />
           <GlobalErrorGuards />
@@ -120,9 +119,6 @@ export default async function RootLayout({
                 {statusMessage}
               </div>
             )}
-            <header className="flex justify-end items-center p-4 gap-4 h-16 bg-white border-b border-black/10">
-              {/* Clerk components unavailable - invalid or missing key */}
-            </header>
             <div className="flex-1">
               {children}
             </div>
@@ -131,6 +127,14 @@ export default async function RootLayout({
         </body>
       </html>
     );
+  }
+
+  let userId: string | null = null;
+  try {
+    const authResult = await auth();
+    userId = authResult.userId;
+  } catch {
+    userId = null;
   }
   
   return (
@@ -142,7 +146,7 @@ export default async function RootLayout({
       afterSignOutUrl={CANONICAL_ORIGIN}
       appearance={{
         elements: {
-          formButtonPrimary: 'bg-black hover:bg-gray-900 text-white uppercase font-semibold tracking-wider',
+          formButtonPrimary: 'bg-black hover:bg-gray-900 text-white font-semibold',
         }
       }}
     >
@@ -151,7 +155,7 @@ export default async function RootLayout({
           <GoogleTagManagerHead />
         </head>
         <body
-          className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#FAF9F6] text-black flex flex-col min-h-screen`}
+          className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#f7f8fb] text-[#101114] flex flex-col min-h-screen`}
         >
           <GoogleTagManagerBody />
           <PwaRegister />
@@ -163,18 +167,18 @@ export default async function RootLayout({
                 {statusMessage}
               </div>
             )}
-            <header className="flex justify-end items-center p-4 gap-4 h-16 bg-[#FAF9F6] border-b border-[#8B5CF6]/20">
+            <header className="flex justify-end items-center px-4 sm:px-6 py-3 gap-4 min-h-16 bg-white/90 backdrop-blur-md border-b border-slate-200">
               {!userId ? (
                 <>
                   <Link
                     href="/sign-in"
-                    className="text-xs sm:text-sm h-10 sm:h-12 px-4 sm:px-6 inline-flex items-center justify-center font-semibold uppercase tracking-wider text-black hover:text-gray-800 transition-colors"
+                    className="text-xs sm:text-sm h-10 sm:h-11 px-4 sm:px-5 inline-flex items-center justify-center font-semibold text-slate-800 hover:text-black transition-colors"
                   >
                     Sign in
                   </Link>
                   <Link
                     href="/sign-up"
-                    className="bg-black text-white rounded-none font-semibold text-xs sm:text-sm h-10 sm:h-12 px-6 sm:px-8 inline-flex items-center justify-center hover:bg-gray-900 transition-colors uppercase tracking-wider"
+                    className="bg-[#101114] text-white rounded-lg font-semibold text-xs sm:text-sm h-10 sm:h-11 px-5 sm:px-6 inline-flex items-center justify-center hover:bg-[#20232a] transition-colors shadow-[0_10px_24px_rgba(16,17,20,0.16)]"
                   >
                     Sign Up
                   </Link>

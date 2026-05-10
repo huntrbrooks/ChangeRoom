@@ -1,7 +1,14 @@
 'use client'
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import Image from 'next/image'
+import {
+  BadgeCheck,
+  Shirt,
+  Sparkles,
+  UserRound,
+  WandSparkles,
+  type LucideIcon,
+} from 'lucide-react'
 
 type TryOnProgressLoaderProps = {
   /** Whether generation is currently running */
@@ -22,7 +29,7 @@ type Stage = {
   id: number
   label: string
   description: string
-  icon: string
+  Icon: LucideIcon
   targetPercent: number
 }
 
@@ -31,35 +38,35 @@ const STAGES: Stage[] = [
     id: 1,
     label: 'Analyzing images',
     description: 'Reading your photos and garments',
-    icon: '/loader/stage-01.png',
+    Icon: UserRound,
     targetPercent: 8,
   },
   {
     id: 2,
     label: 'Constructing outfit',
     description: 'Pairing pieces for the best look',
-    icon: '/loader/stage-02.png',
+    Icon: Shirt,
     targetPercent: 28,
   },
   {
     id: 3,
     label: 'Dressing model',
     description: 'Applying garments on your model',
-    icon: '/loader/stage-03.png',
+    Icon: WandSparkles,
     targetPercent: 58,
   },
   {
     id: 4,
     label: 'Final details',
     description: 'Polishing lighting and fit',
-    icon: '/loader/stage-04.png',
+    Icon: Sparkles,
     targetPercent: 82,
   },
   {
     id: 5,
     label: 'Complete',
     description: 'Your look is ready',
-    icon: '/loader/stage-05.png',
+    Icon: BadgeCheck,
     targetPercent: 100,
   },
 ]
@@ -324,6 +331,7 @@ export function TryOnProgressLoader({
   const displayDescription = isError
     ? failureMessage || 'We could not generate this look. Please try again.'
     : stage.description
+  const StageIcon = stage.Icon
 
   useEffect(() => {
     onStageChange?.(stage.id)
@@ -356,13 +364,10 @@ export function TryOnProgressLoader({
               style={{ animationDuration: '2200ms' }}
             />
             <div className="absolute inset-1 rounded-full border-4 border-transparent border-t-black/80 animate-spin" style={{ animationDuration: '1400ms' }} />
-            <Image
-              src={stage.icon}
-              alt={stage.label}
-              width={56}
-              height={56}
-              className="w-12 h-12 sm:w-14 sm:h-14 object-contain relative z-10"
-              priority
+            <StageIcon
+              aria-hidden="true"
+              className="relative z-10 h-12 w-12 text-black sm:h-14 sm:w-14"
+              strokeWidth={1.8}
             />
           </div>
         </div>
@@ -400,6 +405,5 @@ export function TryOnProgressLoader({
     </div>
   )
 }
-
 
 

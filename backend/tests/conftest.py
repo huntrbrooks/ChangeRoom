@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Set test environment variables before importing app
 os.environ.setdefault("GEMINI_API_KEY", "test-key")
 os.environ.setdefault("GOOGLE_API_KEY", "test-key")
-os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
+os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from main import app
 

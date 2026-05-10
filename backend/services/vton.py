@@ -13,7 +13,7 @@ import httpx
 from .model_registry import (
     gemini_generate_content_endpoints,
     get_gemini_model_candidates,
-    get_openrouter_configured_model,
+    get_openai_model,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-# This module uses direct REST API calls for try-on generation plus Gemini REST calls for
+# This module uses OpenAI's image edit API for try-on generation plus Gemini REST calls for
 # rewrite/safety helpers. No SDKs or OAuth2 are required.
 
 CONTENT_REJECTION_FINISH_REASONS = {"IMAGE_SAFETY", "SAFETY", "CONTENT_FILTER", "PROHIBITED_CONTENT"}
@@ -202,62 +202,47 @@ async def _gemini_post_json(
     return await client.post(url, headers=headers, json=payload)
 
 
-async def _openrouter_post_json(
+async def _openai_images_edit(
     client: httpx.AsyncClient,
     *,
     url: str,
     headers: Dict[str, str],
-    payload: Dict[str, Any],
+    data: Dict[str, str],
+    files: List[Tuple[str, Tuple[str, bytes, str]]],
 ) -> httpx.Response:
     """
-    Thin wrapper for OpenRouter HTTP calls to make retry logic testable (can be monkeypatched).
+    Thin wrapper for OpenAI image edit calls to make retry logic testable.
     """
-    return await client.post(url, headers=headers, json=payload)
+    return await client.post(url, headers=headers, data=data, files=files)
 
 
-def _extract_openrouter_image_url(data: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], List[str]]:
-    choices = (data or {}).get("choices") or []
-    if not choices:
+def _extract_openai_image_url(data: Dict[str, Any], *, default_mime_type: str = "image/png") -> Tuple[Optional[str], Optional[str], List[str]]:
+    """
+    Extract a data URL from OpenAI image responses. The image API commonly returns
+    base64 in data[0].b64_json, but this also accepts URL responses for flexibility.
+    """
+    items = (data or {}).get("data") or []
+    if not items:
         return None, None, []
 
-    choice0 = choices[0] or {}
-    finish_reason = choice0.get("finish_reason") or choice0.get("finishReason")
-    message = choice0.get("message") or {}
+    item0 = items[0] or {}
+    if not isinstance(item0, dict):
+        return None, None, []
 
-    images = []
-    if isinstance(message, dict):
-        raw_images = message.get("images") or []
-        if isinstance(raw_images, list):
-            images = raw_images
+    text_parts: List[str] = []
+    revised_prompt = item0.get("revised_prompt")
+    if isinstance(revised_prompt, str) and revised_prompt.strip():
+        text_parts.append(revised_prompt.strip())
 
-    for image in images:
-        if not isinstance(image, dict):
-            continue
-        image_url = image.get("image_url") or image.get("imageUrl") or {}
-        if isinstance(image_url, dict):
-            url = image_url.get("url") or image_url.get("data")
-            if isinstance(url, str) and url.strip():
-                mime_type = image.get("mime_type") or image.get("mimeType") or "image/png"
-                return url.strip(), str(mime_type), []
+    b64 = item0.get("b64_json") or item0.get("base64")
+    if isinstance(b64, str) and b64.strip():
+        return f"data:{default_mime_type};base64,{b64.strip()}", default_mime_type, text_parts
 
-    content = message.get("content") if isinstance(message, dict) else None
-    content_parts: List[str] = []
-    if isinstance(content, str) and content.strip().startswith("data:image/"):
-        return content.strip(), None, content_parts
-    if isinstance(content, list):
-        for part in content:
-            if isinstance(part, dict) and part.get("type") == "image_url":
-                image_url = part.get("image_url") or {}
-                if isinstance(image_url, dict):
-                    url = image_url.get("url") or image_url.get("data")
-                    if isinstance(url, str) and url.strip():
-                        mime_type = image_url.get("mime_type") or image_url.get("mimeType")
-                        return url.strip(), str(mime_type) if mime_type else None, content_parts
-            if isinstance(part, dict) and part.get("type") == "text" and part.get("text"):
-                content_parts.append(str(part.get("text") or ""))
-    if isinstance(content, str) and content.strip():
-        content_parts.append(content.strip())
-    return None, None, content_parts
+    url = item0.get("url")
+    if isinstance(url, str) and url.strip():
+        return url.strip(), None, text_parts
+
+    return None, None, text_parts
 
 
 async def rewrite_for_modesty_gemini(
@@ -407,7 +392,7 @@ async def rewrite_for_modesty_gemini(
 
 async def generate_try_on(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None, main_index=0, user_quality_flags=None):
     """
-    Uses OpenRouter image generation to combine person and clothing images.
+    Uses OpenAI image editing to combine person and clothing images.
     Generates a photorealistic image of the person wearing all clothing items.
     
     Args:
@@ -428,8 +413,7 @@ async def generate_try_on(user_image_files, garment_image_files, category="upper
     if not isinstance(garment_image_files, list):
         garment_image_files = [garment_image_files]
     
-    # Use OpenRouter for image generation
-    return await _generate_with_openrouter(
+    return await _generate_with_openai(
         user_image_files,
         garment_image_files,
         category,
@@ -440,22 +424,22 @@ async def generate_try_on(user_image_files, garment_image_files, category="upper
     )
 
 
-async def _generate_with_openrouter(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None, main_index=0, user_quality_flags=None):
+async def _generate_with_openai(user_image_files, garment_image_files, category="upper_body", garment_metadata=None, user_attributes=None, main_index=0, user_quality_flags=None):
     """
-    Uses OpenRouter image generation for virtual try-on image generation.
+    Uses OpenAI image editing for virtual try-on image generation.
     Generates a photorealistic image of the person wearing all clothing items.
     
-    This function uses direct REST API calls to OpenRouter with the configured
-    Google Gemini image model via the OpenRouter gateway.
-    No SDKs or OAuth2 are required - just set OPENROUTER_API_KEY environment variable.
+    This function uses direct REST API calls to OpenAI's image edit endpoint with
+    the configured GPT Image model. No SDKs or OAuth2 are required - just set
+    OPENAI_API_KEY.
     
-    Model: resolved dynamically from OPENROUTER_TRYON_MODEL / configured OpenRouter model
+    Model: resolved dynamically from OPENAI_TRYON_IMAGE_MODEL / OPENAI_IMAGE_MODEL
     - Supports multi-image fusion (base person + clothing images)
-    - Uses modalities: ["image", "text"] for image generation
+    - Uses multipart image inputs plus one generation prompt
     
-    API Endpoint: https://openrouter.ai/api/v1/chat/completions
+    API Endpoint: https://api.openai.com/v1/images/edits
     Authentication: Bearer API key in the Authorization header
-    Request Format: JSON messages with text prompt + images as base64 data URLs
+    Request Format: multipart form data with a text prompt and normalized image files
     
     Args:
         user_image_files: List of file-like objects of the person image(s)
@@ -466,27 +450,12 @@ async def _generate_with_openrouter(user_image_files, garment_image_files, categ
     Returns:
         dict: {"image_url": "data:...base64,...", "retry_info": [...]} (retry_info may be empty)
     """
-    # Get API key from environment
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    # #region agent log
-    import json as json_lib
-    try:
-        with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-            f.write(json_lib.dumps({"location":"vton.py:63","message":"Checking OpenRouter API key","data":{"hasApiKey":api_key is not None,"apiKeyLength":len(api_key) if api_key else 0},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-    except: pass
-    # #endregion
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise ValueError("OPENROUTER_API_KEY environment variable is required")
+        raise ValueError("OPENAI_API_KEY environment variable is required")
+    gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
     
     try:
-        # Read user image bytes
-        # #region agent log
-        try:
-            with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                f.write(json_lib.dumps({"location":"vton.py:69","message":"Before reading images","data":{"userFilesCount":len(user_image_files),"garmentFilesCount":len(garment_image_files)},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"C"})+"\n")
-        except: pass
-        # #endregion
-        
         user_image_bytes_list = []
         for user_file in user_image_files:
             if hasattr(user_file, 'seek'):
@@ -501,14 +470,8 @@ async def _generate_with_openrouter(user_image_files, garment_image_files, categ
                 garment_file.seek(0)
             garment_bytes = garment_file.read() if hasattr(garment_file, 'read') else garment_file
             garment_image_bytes_list.append(garment_bytes)
-        # #region agent log
-        try:
-            with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                f.write(json_lib.dumps({"location":"vton.py:80","message":"Clothing images read","data":{"garmentImagesCount":len(garment_image_bytes_list)},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"C"})+"\n")
-        except: pass
-        # #endregion
-        
-        # Limit to 5 user images and 5 clothing items to keep OpenRouter payloads reasonable.
+
+        # Limit to 5 user images and 5 clothing items to keep image-edit payloads reasonable.
         limited_user_images = user_image_bytes_list[:5]
         if len(user_image_bytes_list) > 5:
             logger.warning(f"Limiting to 5 user images (received {len(user_image_bytes_list)})")
@@ -518,10 +481,10 @@ async def _generate_with_openrouter(user_image_files, garment_image_files, categ
             logger.warning(f"Limiting to 5 clothing items (received {len(garment_image_bytes_list)})")
         
         # Convert images to base64 for API request
-        # OpenRouter chat completions uses image_url data URLs for multimodal inputs.
+        # Compress each image before building multipart inputs.
         def image_to_base64(image_bytes, *, max_dim: int, jpeg_quality: int):
             """
-            Convert image bytes to base64 string for OpenRouter image inputs.
+            Convert image bytes to base64 string for compact image inputs.
             Detects image format and converts to a size-efficient format:
             - JPEG for non-alpha images (smaller payload, better for mobile photos/screenshots)
             - PNG only when alpha/transparency is present
@@ -791,7 +754,7 @@ async def _generate_with_openrouter(user_image_files, garment_image_files, categ
                 return {k: _sanitize_metadata_value(v) for k, v in value.items()}
             return value
 
-        # Build text prompt for the OpenRouter image model
+        # Build text prompt for the OpenAI image model
         user_img_count = len(limited_user_images)
         garment_img_count = len(limited_garments)
         user_refs = "image" if user_img_count == 1 else f"first {user_img_count} images"
@@ -973,45 +936,40 @@ async def _generate_with_openrouter(user_image_files, garment_image_files, categ
 
             return text_prompt, local_meta
 
-        def build_openrouter_messages(text_prompt_value: str):
-            """Construct OpenRouter chat messages with a given text prompt."""
-            content_blocks = [{"type": "text", "text": text_prompt_value}]
-            for item in user_data:
-                content_blocks.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{item['mimeType']};base64,{item['base64']}",
-                    },
-                })
-            for item in garment_data:
-                content_blocks.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{item['mimeType']};base64,{item['base64']}",
-                    },
-                })
-            return [
-                {
-                    "role": "system",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": TRYON_SYSTEM_PROMPT,
-                        }
-                    ],
-                },
-                {
-                    "role": "user",
-                    "content": content_blocks,
-                }
-            ]
+        def build_openai_image_files() -> List[Tuple[str, Tuple[str, bytes, str]]]:
+            """
+            Construct multipart image inputs for OpenAI image edits.
+            The first image is the main user reference; subsequent images are additional
+            user references followed by garment references.
+            """
+            files: List[Tuple[str, Tuple[str, bytes, str]]] = []
+            for idx, item in enumerate(user_data):
+                image_bytes = base64.b64decode(item["base64"])
+                ext = "png" if item["mimeType"] == "image/png" else "jpg"
+                files.append(("image[]", (f"user_reference_{idx + 1}.{ext}", image_bytes, item["mimeType"])))
+            for idx, item in enumerate(garment_data):
+                image_bytes = base64.b64decode(item["base64"])
+                ext = "png" if item["mimeType"] == "image/png" else "jpg"
+                files.append(("image[]", (f"garment_{idx + 1}.{ext}", image_bytes, item["mimeType"])))
+            return files
 
-        logger.info("🚀 Starting virtual try-on generation with OpenRouter image model selection")
+        logger.info("Starting virtual try-on generation with OpenAI image model selection")
         logger.info(f"   Person images: {len(limited_user_images)}")
         logger.info(f"   Clothing items: {len(limited_garments)}")
         
-        base_url = "https://openrouter.ai/api/v1/chat/completions"
-        model_name = get_openrouter_configured_model("tryon_image")
+        base_url = "https://api.openai.com/v1/images/edits"
+        model_name = get_openai_model("tryon_image")
+        output_format = os.getenv("OPENAI_TRYON_OUTPUT_FORMAT", "jpeg").strip() or "jpeg"
+        if output_format not in {"png", "jpeg", "webp"}:
+            output_format = "jpeg"
+        output_mime_type = {
+            "png": "image/png",
+            "jpeg": "image/jpeg",
+            "webp": "image/webp",
+        }[output_format]
+        image_size = os.getenv("OPENAI_TRYON_IMAGE_SIZE", "1024x1536").strip() or "1024x1536"
+        image_quality = os.getenv("OPENAI_TRYON_QUALITY", "high").strip() or "high"
+        image_moderation = os.getenv("OPENAI_TRYON_MODERATION", "auto").strip() or "auto"
         
         max_attempts = 4
         last_failure_details: Dict[str, Any] = {}
@@ -1223,22 +1181,14 @@ async def _generate_with_openrouter(user_image_files, garment_image_files, categ
             # Note: prompt will be rebuilt after this.
             pass
 
-        def summarize_candidate(candidate_obj):
-            finish_reason_local = candidate_obj.get("finishReason") or candidate_obj.get("finish_reason")
-            safety_ratings = candidate_obj.get("safetyRatings") or []
-            content_obj = candidate_obj.get("content", {}) or {}
-            parts_local = content_obj.get("parts", []) or []
-            texts = [str(p.get("text", "")) for p in parts_local if isinstance(p, dict) and "text" in p and p.get("text")]
-            return finish_reason_local, safety_ratings, parts_local, texts
-
         async with httpx.AsyncClient(timeout=300.0) as client:  # 5 minute timeout for image generation
             # If not detected by metadata, do a lightweight Gemini vision check on the first garment image.
-            if not intimate_flag and limited_garments:
+            if not intimate_flag and limited_garments and gemini_api_key:
                 try:
                     is_int, label = await asyncio.wait_for(
                         detect_intimate_from_gemini_vision(
                             client,
-                            api_key_value=api_key,
+                            api_key_value=gemini_api_key,
                             garment_bytes=limited_garments[0],
                         ),
                         timeout=float(os.getenv("GEMINI_INTIMATE_DETECT_TIMEOUT_S", "6")),
@@ -1261,6 +1211,59 @@ async def _generate_with_openrouter(user_image_files, garment_image_files, categ
             base_prompt, _ = build_base_text_prompt(current_metadata)
             current_prompt: str = base_prompt
 
+            async def apply_retry_rewrite(
+                *,
+                attempt_number: int,
+                reason: str,
+                strictness: str,
+                prefer_gemini: bool,
+            ) -> None:
+                nonlocal current_metadata, current_prompt
+
+                if prefer_gemini and gemini_api_key:
+                    try:
+                        new_meta, additions, gem_summary = await rewrite_for_modesty_gemini(
+                            client,
+                            api_key=gemini_api_key,
+                            metadata=current_metadata,
+                            prompt=current_prompt,
+                            last_failure=last_failure_details,
+                            strictness=strictness,
+                        )
+                        sanitized_meta, safe_additions, heur_summary = rewrite_for_modesty_heuristic(
+                            new_meta,
+                            additions,
+                            strictness=strictness,
+                        )
+                        current_metadata = sanitized_meta
+                        rebuilt, _ = build_base_text_prompt(current_metadata)
+                        current_prompt = rebuilt + "\n\n" + safe_additions
+                        retry_info.append({
+                            "attempt": attempt_number,
+                            "strategy": "gemini_rewrite",
+                            "reason": reason,
+                            "modificationsSummary": f"{gem_summary};{heur_summary}",
+                        })
+                        return
+                    except Exception as e:
+                        fallback_reason = f"gemini_rewrite_failed_fallback:{str(e)[:120]}"
+                else:
+                    fallback_reason = reason
+
+                safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
+                    current_metadata,
+                    current_prompt if prefer_gemini else build_base_text_prompt(current_metadata)[0],
+                    strictness=strictness,
+                )
+                current_metadata = safe_meta
+                current_prompt = safe_prompt
+                retry_info.append({
+                    "attempt": attempt_number,
+                    "strategy": "heuristic",
+                    "reason": fallback_reason,
+                    "modificationsSummary": summary,
+                })
+
             for attempt in range(1, max_attempts + 1):
                 retry_suffix = ""
                 if attempt == 2:
@@ -1270,50 +1273,39 @@ async def _generate_with_openrouter(user_image_files, garment_image_files, categ
                 elif attempt == 4:
                     retry_suffix = "\n\nRETRY (MAX SAFETY): Overlay-only with fully opaque lining if necessary. Do NOT change pose/background/identity or garment design."
 
-                text_prompt = current_prompt + retry_suffix
-                messages = build_openrouter_messages(text_prompt)
+                text_prompt = TRYON_SYSTEM_PROMPT + "\n\n" + current_prompt + retry_suffix
 
-                logger.info(f"Attempt {attempt}/{max_attempts} - calling OpenRouter image model: {model_name}")
+                logger.info(f"Attempt {attempt}/{max_attempts} - calling OpenAI image model: {model_name}")
                 try:
                     payload = {
                         "model": model_name,
-                        "messages": messages,
-                        "modalities": ["image", "text"],
-                        "temperature": 0.4,
-                        "max_tokens": 1024,
+                        "prompt": text_prompt,
+                        "size": image_size,
+                        "quality": image_quality,
+                        "output_format": output_format,
+                        "moderation": image_moderation,
                     }
                     headers = {
-                        "Content-Type": "application/json",
                         "Authorization": f"Bearer {api_key}",
                     }
-                    app_title = os.getenv("OPENROUTER_APP_TITLE", "IGetDressed.Online")
-                    http_referer = (
-                        os.getenv("OPENROUTER_HTTP_REFERER")
-                        or os.getenv("NEXT_PUBLIC_APP_URL")
-                        or os.getenv("APP_URL")
-                        or ""
-                    ).strip()
-                    if http_referer:
-                        headers["HTTP-Referer"] = http_referer
-                    if app_title:
-                        headers["X-Title"] = app_title
-
-                    response = await _openrouter_post_json(
+                    response = await _openai_images_edit(
                         client,
                         url=base_url,
                         headers=headers,
-                        payload=payload,
+                        data=payload,
+                        files=build_openai_image_files(),
                     )
                     
                     if not response.is_success:
                         error_text = response.text
-                        # #region agent log
                         try:
-                            with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                                f.write(json_lib.dumps({"location":"vton.py:326","message":"OpenRouter API request failed","data":{"statusCode":response.status_code,"errorText":error_text[:500],"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
-                        except: pass
-                        # #endregion
-                        logger.error(f"OpenRouter try-on failed (attempt {attempt}): {response.status_code} - {error_text}")
+                            error_json = response.json()
+                            error_obj = error_json.get("error") if isinstance(error_json, dict) else None
+                            if isinstance(error_obj, dict) and error_obj.get("message"):
+                                error_text = str(error_obj.get("message"))
+                        except Exception:
+                            pass
+                        logger.error(f"OpenAI try-on failed (attempt {attempt}): {response.status_code} - {error_text}")
                         last_failure_details = {
                             "reason": "http_error",
                             "status": response.status_code,
@@ -1326,333 +1318,66 @@ async def _generate_with_openrouter(user_image_files, garment_image_files, categ
                             error_text=error_text,
                         )
                         if should_rewrite and attempt < max_attempts:
-                            if attempt == 1:
-                                # Heuristic rewrite (first failure)
-                                safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
-                                    current_metadata,
-                                    build_base_text_prompt(current_metadata)[0],
-                                    strictness="moderate",
-                                )
-                                current_metadata = safe_meta
-                                current_prompt = safe_prompt
-                                retry_info.append({
-                                    "attempt": attempt + 1,
-                                    "strategy": "heuristic",
-                                    "reason": "content_rejection",
-                                    "modificationsSummary": summary,
-                                })
-                            elif attempt == 2:
-                                # Gemini text-only rewrite (second failure) with heuristic sanitization layer.
-                                try:
-                                    new_meta, additions, gem_summary = await rewrite_for_modesty_gemini(
-                                        client,
-                                        api_key=api_key,
-                                        metadata=current_metadata,
-                                        prompt=current_prompt,
-                                        last_failure=last_failure_details,
-                                        strictness="moderate",
-                                    )
-                                    sanitized_meta, safe_additions, heur_summary = rewrite_for_modesty_heuristic(
-                                        new_meta,
-                                        additions,
-                                        strictness="moderate",
-                                    )
-                                    current_metadata = sanitized_meta
-                                    rebuilt, _ = build_base_text_prompt(current_metadata)
-                                    current_prompt = rebuilt + "\n\n" + safe_additions
-                                    retry_info.append({
-                                        "attempt": attempt + 1,
-                                        "strategy": "gemini_rewrite",
-                                        "reason": "content_rejection",
-                                        "modificationsSummary": f"{gem_summary};{heur_summary}",
-                                    })
-                                except Exception as e:
-                                    # Fall back to heuristic-only if Gemini rewrite fails.
-                                    safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
-                                        current_metadata,
-                                        current_prompt,
-                                        strictness="moderate",
-                                    )
-                                    current_metadata = safe_meta
-                                    current_prompt = safe_prompt
-                                    retry_info.append({
-                                        "attempt": attempt + 1,
-                                        "strategy": "heuristic",
-                                        "reason": "gemini_rewrite_failed_fallback",
-                                        "modificationsSummary": f"{summary};err={str(e)[:120]}",
-                                    })
-                            elif attempt == 3:
-                                # Gemini text-only rewrite (third failure) with heuristic sanitization layer.
-                                try:
-                                    new_meta, additions, gem_summary = await rewrite_for_modesty_gemini(
-                                        client,
-                                        api_key=api_key,
-                                        metadata=current_metadata,
-                                        prompt=current_prompt,
-                                        last_failure=last_failure_details,
-                                        strictness="max",
-                                    )
-                                    sanitized_meta, safe_additions, heur_summary = rewrite_for_modesty_heuristic(
-                                        new_meta,
-                                        additions,
-                                        strictness="max",
-                                    )
-                                    current_metadata = sanitized_meta
-                                    rebuilt, _ = build_base_text_prompt(current_metadata)
-                                    current_prompt = rebuilt + "\n\n" + safe_additions
-                                    retry_info.append({
-                                        "attempt": attempt + 1,
-                                        "strategy": "gemini_rewrite",
-                                        "reason": "content_rejection",
-                                        "modificationsSummary": f"{gem_summary};{heur_summary}",
-                                    })
-                                except Exception as e:
-                                    # Fall back to heuristic-only if Gemini rewrite fails.
-                                    safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
-                                        current_metadata,
-                                        current_prompt,
-                                        strictness="max",
-                                    )
-                                    current_metadata = safe_meta
-                                    current_prompt = safe_prompt
-                                    retry_info.append({
-                                        "attempt": attempt + 1,
-                                        "strategy": "heuristic",
-                                        "reason": "gemini_rewrite_failed_fallback",
-                                        "modificationsSummary": f"{summary};err={str(e)[:120]}",
-                                    })
+                            await apply_retry_rewrite(
+                                attempt_number=attempt + 1,
+                                reason="content_rejection",
+                                strictness="max" if attempt >= 3 else "moderate",
+                                prefer_gemini=attempt >= 2,
+                            )
 
                         if attempt == max_attempts:
-                            raise ValueError(f"OpenRouter API error after {max_attempts} attempts: {response.status_code} - {error_text}")
+                            raise ValueError(f"OpenAI image edit error after {max_attempts} attempts: {response.status_code} - {error_text}")
                         continue
                     
                     data = response.json()
-                    # #region agent log
-                    try:
-                        with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                            f.write(json_lib.dumps({"location":"vton.py:331","message":"OpenRouter API response received","data":{"responseKeys":list(data.keys()) if isinstance(data,dict) else None,"hasChoices":"choices" in data if isinstance(data,dict) else False,"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
-                    except: pass
-                    # #endregion
-                    
-                    # Extract image from OpenRouter response
-                    choices = data.get("choices", [])
-                    if not choices:
-                        logger.error(f"No choices in response (attempt {attempt}). Full response: {json.dumps(data, indent=2)[:1000]}")
-                        last_failure_details = {"reason": "no_choices", "response": str(data)[:500]}
-                        should_rewrite = is_content_rejection(error_text=str(data))
-                        if should_rewrite and attempt < max_attempts:
-                            safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
-                                current_metadata,
-                                build_base_text_prompt(current_metadata)[0],
-                                strictness="moderate",
-                            )
-                            current_metadata = safe_meta
-                            current_prompt = safe_prompt
-                            retry_info.append({
-                                "attempt": attempt + 1,
-                                "strategy": "heuristic",
-                                "reason": "no_choices",
-                                "modificationsSummary": summary,
-                            })
-                        if attempt == max_attempts:
-                            raise ValueError("No choices returned from OpenRouter image model")
-                        continue
-
-                    choice = choices[0] or {}
-                    finish_reason = choice.get("finish_reason") or choice.get("finishReason")
-                    message = choice.get("message") or {}
-                    safety_ratings = []
-                    content_parts: List[Dict[str, Any]] = []
-                    text_parts: List[str] = []
-                    if isinstance(message, dict):
-                        content_value = message.get("content")
-                        if isinstance(content_value, list):
-                            content_parts = [part for part in content_value if isinstance(part, dict)]
-                            text_parts = [
-                                str(part.get("text") or "")
-                                for part in content_parts
-                                if part.get("text")
-                            ]
-                        elif isinstance(content_value, str):
-                            text_parts = [content_value]
-                            content_parts = [{"text": content_value}]
-
-                    if safety_ratings:
-                        logger.warning(f"Safety ratings (attempt {attempt}): {safety_ratings}")
-                    if finish_reason:
-                        logger.info(f"Finish reason (attempt {attempt}): {finish_reason}")
-                        if finish_reason != "STOP":
-                            logger.warning(f"Unexpected finish reason (attempt {attempt}): {finish_reason}")
-                    
-                    logger.info(f"Number of parts in response: {len(content_parts)}")
-                    
-                    for i, part in enumerate(content_parts):
-                        logger.info(f"Part {i} keys: {list(part.keys())}")
-                        if "text" in part:
-                            logger.info(f"Part {i} has text: {str(part.get('text', ''))[:100]}")
-                    
-                    image_url, mime_type, extracted_text_parts = _extract_openrouter_image_url(data)
-                    if image_url and finish_reason in (None, "stop", "STOP", "completed", "SUCCESS"):
-                        logger.info(f"✅ Successfully generated image using OpenRouter on attempt {attempt}")
+                    image_url, mime_type, extracted_text_parts = _extract_openai_image_url(
+                        data,
+                        default_mime_type=output_mime_type,
+                    )
+                    if image_url:
+                        logger.info(f"Successfully generated image using OpenAI on attempt {attempt}")
                         return {
-                            "image_url": image_url if image_url.startswith("data:") or image_url.startswith("http") else f"data:{mime_type or 'image/png'};base64,{image_url}",
+                            "image_url": image_url if image_url.startswith("data:") or image_url.startswith("http") else f"data:{mime_type or output_mime_type};base64,{image_url}",
                             "retry_info": retry_info,
                             "modesty_applied": modesty_applied,
                         }
-                    
-                    # If we get here, we either have no image or a non-STOP finish reason
+
                     last_failure_details = {
-                        "reason": "no_image_or_finish_reason",
-                        "finish_reason": finish_reason,
-                        "text": (text_parts or extracted_text_parts)[:2] if (text_parts or extracted_text_parts) else [],
-                        "has_image": bool(image_url),
+                        "reason": "no_image",
+                        "text": extracted_text_parts[:2] if extracted_text_parts else [],
+                        "has_image": False,
                         "attempt": attempt,
-                        "safety_ratings": safety_ratings,
                     }
                     logger.warning(f"No usable image on attempt {attempt}. Details: {last_failure_details}")
-                    # #region agent log
-                    try:
-                        with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                            f.write(json_lib.dumps({"location":"vton.py:386","message":"No image part in response","data":{"contentPartsCount":len(content_parts),"finishReason":finish_reason,"attempt":attempt,"text":text_parts[:2] if text_parts else []},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
-                    except: pass
-                    # #endregion
-                    
                     should_rewrite = is_content_rejection(
-                        finish_reason=finish_reason,
-                        error_text=((text_parts or extracted_text_parts)[0] if (text_parts or extracted_text_parts) else ""),
-                        safety_ratings=safety_ratings,
+                        error_text=json.dumps(data, ensure_ascii=False)[:1200],
                     )
                     if should_rewrite and attempt < max_attempts:
-                        if attempt == 1:
-                            safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
-                                current_metadata,
-                                build_base_text_prompt(current_metadata)[0],
-                                strictness="moderate",
-                            )
-                            current_metadata = safe_meta
-                            current_prompt = safe_prompt
-                            retry_info.append({
-                                "attempt": attempt + 1,
-                                "strategy": "heuristic",
-                                "reason": "content_rejection",
-                                "modificationsSummary": summary,
-                            })
-                        elif attempt == 2:
-                            try:
-                                new_meta, additions, gem_summary = await rewrite_for_modesty_gemini(
-                                    client,
-                                    api_key=api_key,
-                                    metadata=current_metadata,
-                                    prompt=current_prompt,
-                                    last_failure=last_failure_details,
-                                    strictness="moderate",
-                                )
-                                sanitized_meta, safe_additions, heur_summary = rewrite_for_modesty_heuristic(
-                                    new_meta,
-                                    additions,
-                                    strictness="moderate",
-                                )
-                                current_metadata = sanitized_meta
-                                rebuilt, _ = build_base_text_prompt(current_metadata)
-                                current_prompt = rebuilt + "\n\n" + safe_additions
-                                retry_info.append({
-                                    "attempt": attempt + 1,
-                                    "strategy": "gemini_rewrite",
-                                    "reason": "content_rejection",
-                                    "modificationsSummary": f"{gem_summary};{heur_summary}",
-                                })
-                            except Exception as e:
-                                safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
-                                    current_metadata,
-                                    current_prompt,
-                                    strictness="moderate",
-                                )
-                                current_metadata = safe_meta
-                                current_prompt = safe_prompt
-                                retry_info.append({
-                                    "attempt": attempt + 1,
-                                    "strategy": "heuristic",
-                                    "reason": "gemini_rewrite_failed_fallback",
-                                    "modificationsSummary": f"{summary};err={str(e)[:120]}",
-                                })
-                        elif attempt == 3:
-                            try:
-                                new_meta, additions, gem_summary = await rewrite_for_modesty_gemini(
-                                    client,
-                                    api_key=api_key,
-                                    metadata=current_metadata,
-                                    prompt=current_prompt,
-                                    last_failure=last_failure_details,
-                                    strictness="max",
-                                )
-                                sanitized_meta, safe_additions, heur_summary = rewrite_for_modesty_heuristic(
-                                    new_meta,
-                                    additions,
-                                    strictness="max",
-                                )
-                                current_metadata = sanitized_meta
-                                rebuilt, _ = build_base_text_prompt(current_metadata)
-                                current_prompt = rebuilt + "\n\n" + safe_additions
-                                retry_info.append({
-                                    "attempt": attempt + 1,
-                                    "strategy": "gemini_rewrite",
-                                    "reason": "content_rejection",
-                                    "modificationsSummary": f"{gem_summary};{heur_summary}",
-                                })
-                            except Exception as e:
-                                safe_meta, safe_prompt, summary = rewrite_for_modesty_heuristic(
-                                    current_metadata,
-                                    current_prompt,
-                                    strictness="max",
-                                )
-                                current_metadata = safe_meta
-                                current_prompt = safe_prompt
-                                retry_info.append({
-                                    "attempt": attempt + 1,
-                                    "strategy": "heuristic",
-                                    "reason": "gemini_rewrite_failed_fallback",
-                                    "modificationsSummary": f"{summary};err={str(e)[:120]}",
-                                })
-
+                        await apply_retry_rewrite(
+                            attempt_number=attempt + 1,
+                            reason="no_image",
+                            strictness="max" if attempt >= 3 else "moderate",
+                            prefer_gemini=attempt >= 2,
+                        )
                     if attempt == max_attempts:
-                        readable_text = ((text_parts or extracted_text_parts)[0][:300] if (text_parts or extracted_text_parts) else "")
-                        safety_hint = ""
-                        if (str(finish_reason or "").upper() == "IMAGE_SAFETY" or should_rewrite or str(finish_reason or "").upper().startswith("IMAGE_")):
-                            safety_hint = " The request was blocked by image safety filters. Please use a less revealing garment description or select a different item."
-                        raise ValueError(f"No image generated after {max_attempts} attempts. Finish reason: {finish_reason or 'UNKNOWN'}. Model message: {readable_text}.{safety_hint}")
+                        readable_text = (extracted_text_parts[0][:300] if extracted_text_parts else "")
+                        safety_hint = " The request may have been blocked by image safety filters." if should_rewrite else ""
+                        raise ValueError(f"No image generated after {max_attempts} attempts. Model message: {readable_text}.{safety_hint}")
                     continue
 
                 except httpx.TimeoutException as e:
-                    # #region agent log
-                    try:
-                        with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                            f.write(json_lib.dumps({"location":"vton.py:401","message":"OpenRouter API timeout","data":{"error":str(e),"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"F"})+"\n")
-                    except: pass
-                    # #endregion
-                    logger.error(f"Timeout calling OpenRouter try-on on attempt {attempt}: {e}")
+                    logger.error(f"Timeout calling OpenAI try-on on attempt {attempt}: {e}")
                     last_failure_details = {"reason": "timeout", "error": str(e), "attempt": attempt}
                     if attempt == max_attempts:
                         raise ValueError(f"Request timed out after {max_attempts} attempts. Please try again.")
                     continue
                 except Exception as e:
-                    # #region agent log
-                    try:
-                        with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                            f.write(json_lib.dumps({"location":"vton.py:404","message":"OpenRouter API call error","data":{"errorType":type(e).__name__,"errorMessage":str(e),"attempt":attempt},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
-                    except: pass
-                    # #endregion
-                    logger.error(f"Error calling OpenRouter try-on on attempt {attempt}: {e}")
+                    logger.error(f"Error calling OpenAI try-on on attempt {attempt}: {e}")
                     last_failure_details = {"reason": "exception", "error": str(e), "attempt": attempt}
                     if attempt == max_attempts:
                         raise
                     continue
-            
+
     except Exception as e:
-        # #region agent log
-        try:
-            with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                f.write(json_lib.dumps({"location":"vton.py:408","message":"vton.generate_try_on error","data":{"errorType":type(e).__name__,"errorMessage":str(e)},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"B"})+"\n")
-        except: pass
-        # #endregion
-        logger.error(f"Error in OpenRouter try-on generation: {e}", exc_info=True)
+        logger.error(f"Error in OpenAI try-on generation: {e}", exc_info=True)
         raise e

@@ -14,7 +14,18 @@ import { SocialShareButtons } from './components/SocialShareButtons';
 import { ProductCard } from './components/ProductCard';
 import { PaywallModal } from './components/PaywallModal';
 import { ShopSaveModal, type ShopSaveResult, type ShopSaveClothingItem } from './components/ShopSaveModal';
-import { Sparkles, Search, Loader2, CreditCard, Zap } from 'lucide-react';
+import {
+  BadgeCheck,
+  CreditCard,
+  LayoutGrid,
+  Loader2,
+  Search,
+  Shirt,
+  Sparkles,
+  UserRound,
+  WandSparkles,
+  Zap,
+} from 'lucide-react';
 import { getWearingStylePromptText } from '@/lib/wearingStyles';
 import { isBypassUser } from '@/lib/bypass-config';
 import { ensureAbsoluteUrl } from '@/lib/url';
@@ -47,6 +58,27 @@ interface BillingInfo {
 }
 
 type BackendAvailability = 'checking' | 'healthy' | 'unavailable';
+type ClerkUser = ReturnType<typeof useUser>['user'];
+type ClerkGetToken = ReturnType<typeof useAuth>['getToken'];
+
+interface HomeAuthState {
+  user: ClerkUser | null;
+  isLoaded: boolean;
+  getToken: ClerkGetToken;
+  isSignedIn: boolean | undefined;
+  isAuthLoaded: boolean;
+}
+
+const hasUsableClerkKey = () => {
+  const key = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim();
+  return Boolean(
+    key &&
+      key.startsWith('pk_') &&
+      key.length >= 20 &&
+      key.length <= 200 &&
+      /^pk_[a-zA-Z0-9_\-=.]+$/.test(key)
+  );
+};
 
 const formatCurrency = (value?: number | null, currency?: string | null) => {
   if (typeof value !== 'number' || Number.isNaN(value)) {
@@ -63,9 +95,41 @@ const formatCurrency = (value?: number | null, currency?: string | null) => {
   }
 };
 
-function HomeContent() {
+function HomeContentWithClerk() {
   const { user, isLoaded } = useUser();
   const { getToken, isSignedIn, isLoaded: isAuthLoaded } = useAuth();
+
+  return (
+    <HomeContent
+      auth={{
+        user,
+        isLoaded,
+        getToken,
+        isSignedIn,
+        isAuthLoaded,
+      }}
+    />
+  );
+}
+
+function HomeContentWithoutClerk() {
+  const getToken = useCallback(async () => null, []) as ClerkGetToken;
+
+  return (
+    <HomeContent
+      auth={{
+        user: null,
+        isLoaded: true,
+        getToken,
+        isSignedIn: false,
+        isAuthLoaded: true,
+      }}
+    />
+  );
+}
+
+function HomeContent({ auth }: { auth: HomeAuthState }) {
+  const { user, isLoaded, getToken, isSignedIn, isAuthLoaded } = auth;
   const router = useRouter();
   const backendApi = useMemo(() => resolveBackendApiUrl(), []);
   const myOutfitsEnabled = useMemo(() => isMyOutfitsEnabled(), []);
@@ -119,8 +183,8 @@ function HomeContent() {
     Map<number, { tone: 'success' | 'warning' | 'error'; message: string }>
   >(new Map());
   const cardClass =
-    "rounded-2xl border border-black/10 bg-white/95 shadow-[0_12px_40px_rgba(0,0,0,0.06)] backdrop-blur-sm";
-  const cardPadding = "p-3 sm:p-4 md:p-6";
+    "rounded-lg border border-slate-200/80 bg-white/95 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-sm";
+  const cardPadding = "p-4 sm:p-5 md:p-6";
   const resultImageLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const creditLoggedRef = useRef(false);
   const trialConsumedRef = useRef(false);
@@ -409,7 +473,7 @@ function HomeContent() {
   }, [router]);
 
   const isOnTrial = billing && (billing.trialsRemaining ?? 0) > 0 && !isBypass;
-  const isAuthenticated = isAuthLoaded ? isSignedIn : isLoaded && !!user;
+  const isAuthenticated = isAuthLoaded ? Boolean(isSignedIn) : isLoaded && !!user;
   const isGuestPitchDemo = pitchDemoEnabled && !isAuthenticated;
   const hasCreditsAvailable = billing ? billing.creditsAvailable > 0 : false;
   const billingBannerState = getBillingBannerState({
@@ -1678,9 +1742,16 @@ function HomeContent() {
         console.log("Using analyzed metadata for try-on:", metadata);
 
         console.log("Starting try-on generation...");
-        // #region agent log
-        logIngest({location:'page.tsx:640',message:'Frontend try-on request starting',data:{apiUrl:API_URL,userImagesCount:userImages.length,clothingItemsCount:preparedTryOnFiles.length,metadataKeys:Object.keys(metadata)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'});
-        // #endregion
+        logIngest({
+          event: 'try_on_request_started',
+          data: {
+            apiUrl: API_URL,
+            userImagesCount: userImages.length,
+            clothingItemsCount: preparedTryOnFiles.length,
+            metadataKeys: Object.keys(metadata),
+          },
+          timestamp: Date.now(),
+        });
         const backendAuthHeaders = await getBackendAuthHeaders();
         tryOnRes = await withRetry(
           () =>
@@ -1696,9 +1767,14 @@ function HomeContent() {
           1,
           2000
         );
-        // #region agent log
-        logIngest({location:'page.tsx:646',message:'Frontend try-on request succeeded',data:{status:tryOnRes?.status,hasImageUrl:!!tryOnRes?.data?.image_url},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'});
-        // #endregion
+        logIngest({
+          event: 'try_on_request_succeeded',
+          data: {
+            status: tryOnRes?.status,
+            hasImageUrl: Boolean(tryOnRes?.data?.image_url),
+          },
+          timestamp: Date.now(),
+        });
 
         // Render stack does not manage billing; keep preview state from the hold call above.
         // (If Render happens to return usedFreeTrial, we still respect it.)
@@ -1785,9 +1861,17 @@ function HomeContent() {
         }
       } catch (tryOnError: unknown) {
         const error = tryOnError as { name?: string; code?: string; response?: { status?: number; data?: { error?: string; detail?: string } }; message?: string };
-        // #region agent log
-        logIngest({location:'page.tsx:683',message:'Frontend try-on request failed',data:{errorName:error?.name,errorCode:error?.code,status:error?.response?.status,errorDetail:error?.response?.data?.detail,errorData:error?.response?.data,errorMessage:error?.message,fullError:JSON.stringify(error?.response?.data||{})},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'});
-        // #endregion
+        logIngest({
+          event: 'try_on_request_failed',
+          data: {
+            errorName: error?.name,
+            errorCode: error?.code,
+            status: error?.response?.status,
+            errorDetail: error?.response?.data?.detail,
+            errorMessage: error?.message,
+          },
+          timestamp: Date.now(),
+        });
         if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
           try {
             if (requestId) {
@@ -2060,39 +2144,49 @@ function HomeContent() {
   };
 
   return (
-    <main className="min-h-screen bg-white text-black font-sans">
-      {/* Header */}
+    <main className="min-h-screen bg-[#f7f8fb] text-[#101114] font-sans">
       <header
         ref={stickyHeaderRef}
-        className="border-b border-white/10 sticky top-0 bg-[#2C2C2C]/95 backdrop-blur-md z-50 safe-area-inset text-white"
+        className="sticky top-0 z-50 border-b border-slate-200 bg-white/90 text-[#101114] backdrop-blur-md safe-area-inset"
       >
-        <div className="w-full px-3 sm:px-6 lg:px-10 py-2.5 sm:py-3 md:py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center flex-shrink-0">
+        <div className="mx-auto flex w-full max-w-[1540px] items-center justify-between gap-4 px-3 py-3 sm:px-6 lg:px-10">
+          <div className="flex min-w-0 flex-shrink-0 items-center gap-3">
+            <span className="block text-sm font-semibold text-[#101114] sm:hidden">
+              IGETDRESSED.ONLINE
+            </span>
             <Image 
               src="/main logo.png" 
               alt="IGETDRESSED.ONLINE logo" 
               width={5065}
               height={1042}
               priority
-              className="h-8 sm:h-10 w-auto object-contain"
+              className="hidden object-contain invert sm:block"
+              style={{ width: 'clamp(136px, 16vw, 188px)', height: 'auto' }}
               sizes="(max-width: 640px) 180px, 260px"
             />
           </div>
-          <nav className="flex items-center gap-2 sm:gap-4 md:gap-6 text-xs sm:text-sm font-medium flex-shrink-0 text-white">
+          <nav className="flex flex-shrink-0 items-center gap-2 text-xs font-medium text-slate-700 sm:gap-3 sm:text-sm md:gap-4">
+            <Link
+              href="/"
+              className="hidden items-center gap-2 rounded-lg border border-[#6d5dfc]/20 bg-[#6d5dfc]/10 px-3 py-2 font-semibold text-[#5b46f4] shadow-sm md:inline-flex"
+            >
+              <LayoutGrid size={15} />
+              Studio
+            </Link>
             {isAuthenticated && (
               <>
                 {billing ? (
                   <>
                     {isBypass ? (
-                      <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-white/10 border border-white/20 rounded-lg text-white min-h-[36px] sm:min-h-[40px]">
-                        <Zap size={14} className="sm:w-4 sm:h-4 flex-shrink-0 text-white" />
-                        <span className="hidden sm:inline whitespace-nowrap font-semibold">Unlimited Access</span>
+                      <div className="flex min-h-10 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-emerald-700 sm:gap-2 sm:px-3">
+                        <Zap size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
+                        <span className="hidden whitespace-nowrap font-semibold sm:inline">Unlimited Access</span>
                         <span className="sm:hidden font-semibold">∞</span>
                       </div>
                     ) : (
                       <Link 
                         href="/pricing" 
-                        className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-white/10 hover:bg-white/20 border border-white/30 rounded-lg transition-colors text-white min-h-[36px] sm:min-h-[40px] touch-manipulation"
+                        className="flex min-h-10 items-center gap-1.5 rounded-lg border border-[#009b9b]/20 bg-[#009b9b]/10 px-2.5 py-1.5 text-[#007f7f] transition-colors hover:bg-[#009b9b]/20 sm:gap-2 sm:px-3 touch-manipulation"
                       >
                         <CreditCard size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
                         <span className="hidden sm:inline whitespace-nowrap">
@@ -2107,7 +2201,7 @@ function HomeContent() {
                     href="/billing"
                     onClick={() => fetchBilling()}
                     title={billingError || 'Billing is temporarily unavailable.'}
-                    className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-1.5 bg-white/10 hover:bg-white/20 border border-white/30 rounded-lg transition-colors text-white min-h-[36px] sm:min-h-[40px] touch-manipulation"
+                    className="flex min-h-10 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-700 transition-colors hover:border-slate-300 sm:gap-2 sm:px-3 touch-manipulation"
                   >
                     <CreditCard size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
                     <span className="hidden sm:inline whitespace-nowrap">Credits unavailable</span>
@@ -2117,49 +2211,54 @@ function HomeContent() {
               </>
             )}
             <div className="hidden md:flex items-center gap-6">
-              <Link href="/pricing" className="hover:text-gray-200 transition-colors whitespace-nowrap">Pricing</Link>
-              <Link href="/how-it-works" className="hover:text-gray-200 transition-colors whitespace-nowrap">How it Works</Link>
-              <Link href="/about" className="hover:text-gray-200 transition-colors whitespace-nowrap">About</Link>
+              <Link href="/pricing" className="whitespace-nowrap transition-colors hover:text-black">Pricing</Link>
+              <Link href="/how-it-works" className="whitespace-nowrap transition-colors hover:text-black">How it Works</Link>
+              <Link href="/about" className="whitespace-nowrap transition-colors hover:text-black">About</Link>
             </div>
           </nav>
         </div>
       </header>
 
-      <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-6 md:py-8 pb-28 sm:pb-12 lg:pb-10">
-        
-        {/* Main Heading */}
-        <div className="text-center mb-6 sm:mb-8">
-          <h1 className="sr-only">Virtual Try-On & Shopping</h1>
-          <div className="flex justify-center mb-3 sm:mb-4">
-            <Link href="/" aria-label="Home" className="inline-flex items-center justify-center">
-              <Image
-                src="/main logo Black.png"
-                alt="IGetDressed.Online"
-                width={5065}
-                height={1042}
-                priority
-                className="h-10 sm:h-12 md:h-14 w-auto object-contain"
-              />
-            </Link>
+      <div className="mx-auto w-full max-w-[1540px] px-3 py-5 pb-28 sm:px-6 sm:py-8 sm:pb-12 lg:px-10 lg:py-10 lg:pb-12">
+        <section className="mb-6 grid gap-5 lg:mb-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-end">
+          <div>
+            <h1 className="max-w-4xl text-[2.4rem] font-semibold leading-[0.98] text-[#101114] sm:text-[4rem] lg:text-[5.25rem]">
+              Virtual Try-On Studio
+            </h1>
+            <p className="mt-4 max-w-2xl text-base leading-7 text-slate-600 sm:text-lg">
+              See it on you, preserve your real fit, then shop comparable pieces with confidence.
+            </p>
           </div>
-          <p className="text-sm sm:text-base text-gray-600 mb-4">
-            Try on clothes virtually and discover similar products to shop
-          </p>
-          <div className="flex flex-wrap justify-center items-center gap-4 sm:gap-6 text-xs sm:text-sm text-black">
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+            {[
+              { icon: UserRound, label: `${userImages.length || 0} self photos` },
+              { icon: Shirt, label: `${wardrobeItems.length || 0}/5 wardrobe items` },
+              { icon: BadgeCheck, label: backendAvailability === 'healthy' ? 'Studio online' : 'Service check' },
+            ].map(({ icon: Icon, label }) => (
+              <div
+                key={label}
+                className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white/90 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm"
+              >
+                <Icon size={15} className="text-[#009b9b]" />
+                {label}
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <div className="mb-5 flex flex-wrap items-center gap-4 text-xs text-slate-500 sm:gap-6 sm:text-sm">
             <Link 
               href="/terms-of-service" 
-              className="hover:text-[#7C3AED] transition-colors underline"
+              className="transition-colors hover:text-[#5b46f4] underline"
             >
               Terms of Service
             </Link>
-            <span className="text-gray-400">|</span>
             <Link 
               href="/privacy-policy" 
-              className="hover:text-[#7C3AED] transition-colors underline"
+              className="transition-colors hover:text-[#5b46f4] underline"
             >
               Privacy Policy
             </Link>
-          </div>
         </div>
 
         {/* Admin Auth Diagnostics */}
@@ -2208,19 +2307,19 @@ function HomeContent() {
 
         {/* Free Trial Banner */}
         {isAuthenticated && billing && isOnTrial && (
-          <div className="bg-gradient-to-r from-[#8B5CF6]/20 to-[#8B5CF6]/20 border border-black/30 text-black p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_20px_rgba(0,0,0,0.3)]">
+          <div className="mb-4 flex flex-col items-start justify-between gap-3 rounded-lg border border-[#6d5dfc]/20 bg-white p-3 text-[#101114] shadow-[0_16px_44px_rgba(109,93,252,0.12)] sm:mb-6 sm:flex-row sm:items-center sm:p-4">
             <div className="flex items-center gap-2 sm:gap-3 flex-1">
               <Zap size={18} className="sm:w-5 sm:h-5 text-black flex-shrink-0" />
               <div className="min-w-0">
                 <p className="font-semibold text-black text-sm sm:text-base">Free Try-Ons Available!</p>
-                <p className="text-xs sm:text-sm text-[#7C3AED] mt-0.5">
+                <p className="text-xs sm:text-sm text-slate-600 mt-0.5">
                   You have {billing.trialsRemaining} free try-on{billing.trialsRemaining !== 1 ? 's' : ''}. Upgrade to get unlimited try-ons with a subscription.
                 </p>
               </div>
             </div>
             <Link 
               href="/pricing"
-              className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-black text-white rounded-lg font-semibold hover:bg-[#7C3AED] transition-colors text-sm shadow-[0_0_15px_rgba(0,0,0,0.5)] text-center min-h-[44px] flex items-center justify-center touch-manipulation"
+              className="flex min-h-11 w-full items-center justify-center rounded-lg bg-[#101114] px-4 py-2.5 text-center text-sm font-semibold text-white shadow-[0_10px_24px_rgba(16,17,20,0.18)] transition-colors hover:bg-[#20232a] sm:w-auto sm:py-2 touch-manipulation"
             >
               Go to Pricing
             </Link>
@@ -2229,19 +2328,19 @@ function HomeContent() {
 
         {/* Low Credits Warning */}
         {billingBannerState === 'low_credits' && billing && (
-          <div className="bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_15px_rgba(255,255,0,0.2)]">
+          <div className="mb-4 flex flex-col items-start justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900 shadow-sm sm:mb-6 sm:flex-row sm:items-center sm:p-4">
             <div className="flex items-center gap-2 sm:gap-3 flex-1">
               <CreditCard size={18} className="sm:w-5 sm:h-5 text-yellow-400 flex-shrink-0" />
               <div className="min-w-0">
                 <p className="font-semibold text-sm sm:text-base">Low Credits</p>
-                <p className="text-xs sm:text-sm text-yellow-200 mt-0.5">
+                <p className="text-xs sm:text-sm text-amber-800 mt-0.5">
                   You have {billing.creditsAvailable} credit{billing.creditsAvailable !== 1 ? 's' : ''} remaining
                 </p>
               </div>
             </div>
             <Link
               href="/pricing"
-              className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-yellow-500 text-black rounded-lg font-semibold hover:bg-yellow-400 transition-colors text-sm shadow-[0_0_15px_rgba(255,255,0,0.3)] text-center min-h-[44px] flex items-center justify-center touch-manipulation"
+              className="flex min-h-11 w-full items-center justify-center rounded-lg bg-amber-500 px-4 py-2.5 text-center text-sm font-semibold text-black transition-colors hover:bg-amber-400 sm:w-auto sm:py-2 touch-manipulation"
             >
               Go to Pricing
             </Link>
@@ -2309,24 +2408,30 @@ function HomeContent() {
         )}
 
         {error && (
-          <div className="bg-red-500/10 text-red-300 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6 border border-red-500/30 text-sm sm:text-base shadow-[0_0_15px_rgba(255,0,0,0.2)]">
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 shadow-sm sm:mb-6 sm:p-4 sm:text-base">
             {error}
           </div>
         )}
 
-        <div className="grid lg:grid-cols-12 gap-4 sm:gap-6 lg:gap-8">
+        <div className="grid gap-4 sm:gap-6 lg:grid-cols-12 lg:gap-8">
           
-          {/* Left Column: Inputs */}
-          <div className="lg:col-span-7 space-y-3 sm:space-y-4 md:space-y-6 lg:space-y-8">
+          <div className="space-y-4 sm:space-y-5 lg:col-span-7 lg:space-y-6">
             
             <section
               id="choose-wardrobe"
               className={`${cardClass} ${cardPadding} space-y-4`}
             >
-              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
-                <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,0,0,0.5)]">1</span>
-                Upload Yourself
-              </h2>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="flex items-center gap-3 text-base font-semibold text-[#101114] sm:text-lg">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#101114] text-white shadow-[0_10px_24px_rgba(16,17,20,0.18)]">
+                    <UserRound size={17} />
+                  </span>
+                  Upload Yourself
+                </h2>
+                <span className="hidden rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 sm:inline-flex">
+                  Main reference first
+                </span>
+              </div>
               <UploadZone 
                 label="Your Photos" 
                 multiple={true}
@@ -2354,23 +2459,30 @@ function HomeContent() {
                   preferredMimeType: 'image/jpeg',
                 }}
               />
-              <p className="mt-2 text-[11px] sm:text-xs text-black/70">
+              <p className="mt-2 text-[11px] sm:text-xs text-slate-500">
                 Tip: Drag to reorder; the first photo is used as the main reference. Aim for front / 45° / profile in good light.
               </p>
             </section>
 
             <section className={`${cardClass} ${cardPadding} space-y-4`}>
-              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
-                <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,0,0,0.5)]">2</span>
-                Choose Wardrobe
-              </h2>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="flex items-center gap-3 text-base font-semibold text-[#101114] sm:text-lg">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#101114] text-white shadow-[0_10px_24px_rgba(16,17,20,0.18)]">
+                    <Shirt size={17} />
+                  </span>
+                  Choose Wardrobe
+                </h2>
+                <span className="hidden rounded-lg border border-[#009b9b]/20 bg-[#009b9b]/10 px-3 py-1.5 text-xs font-medium text-[#007f7f] sm:inline-flex">
+                  Up to 5 pieces
+                </span>
+              </div>
 
               {tryOnFromUrlEnabled && (
                 <>
-                  <div className="p-3 sm:p-4 rounded-xl border-2 border-dashed border-black/20 bg-gradient-to-r from-violet-50/50 to-purple-50/50">
+                  <div className="rounded-lg border border-dashed border-[#6d5dfc]/30 bg-[#6d5dfc]/5 p-3 sm:p-4">
                     <div className="flex items-center gap-2 mb-3">
-                      <span className="px-2 py-0.5 rounded-full bg-black text-white text-[10px] font-bold uppercase tracking-wide">Optional</span>
-                      <h3 className="text-sm font-semibold text-black">Try On Any URL</h3>
+                      <span className="rounded-md bg-[#101114] px-2 py-0.5 text-[10px] font-bold text-white">Optional</span>
+                      <h3 className="text-sm font-semibold text-[#101114]">Try On Any URL</h3>
                     </div>
                     <TryOnFromUrl
                       onProductScraped={handleProductScraped}
@@ -2382,7 +2494,7 @@ function HomeContent() {
 
                   <div className="relative flex items-center gap-3 my-2">
                     <div className="flex-1 h-px bg-black/10"></div>
-                    <span className="text-xs font-medium text-black/40 uppercase tracking-wide">or upload images</span>
+                    <span className="text-xs font-medium text-slate-400">or upload images</span>
                     <div className="flex-1 h-px bg-black/10"></div>
                   </div>
                 </>
@@ -2411,9 +2523,9 @@ function HomeContent() {
                 blockedMessage="Please sign in to upload clothing items."
               />
               {wardrobeItems.length > 1 && (
-                <div className="mt-3 p-3 bg-black/10 border border-black/30 rounded-lg shadow-[0_0_10px_rgba(0,0,0,0.2)]">
-                  <p className="text-sm text-black">
-                    💡 <strong>Tip:</strong> You can try on up to 5 items at once for a complete outfit!
+                <div className="mt-3 rounded-lg border border-[#009b9b]/20 bg-[#009b9b]/10 p-3 shadow-sm">
+                  <p className="text-sm text-[#006f6f]">
+                    <strong>Tip:</strong> You can try on up to 5 items at once for a complete outfit.
                   </p>
                 </div>
               )}
@@ -2459,17 +2571,17 @@ function HomeContent() {
                 type="button"
                 aria-label="Try on clothes"
                 className={`
-                  w-full py-3.5 sm:py-4 rounded-xl font-bold text-base sm:text-lg flex items-center justify-center gap-2 sm:gap-3 transition-all uppercase tracking-wider
+                  w-full rounded-lg py-3.5 text-base font-semibold sm:py-4 sm:text-lg flex items-center justify-center gap-2 sm:gap-3 transition-all
                   min-h-[52px] touch-manipulation select-none
                   ${isGenerating 
-                    ? 'bg-gray-200 text-gray-500 cursor-not-allowed border border-gray-300 pointer-events-none' 
+                    ? 'bg-slate-200 text-slate-500 cursor-not-allowed border border-slate-300 pointer-events-none'
                     : backendAvailability !== 'healthy'
                       ? pitchDemoEnabled
-                        ? 'bg-black text-white hover:bg-gray-900 active:bg-gray-800 active:scale-[0.98] border-2 border-black'
-                        : 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
+                        ? 'bg-[#101114] text-white hover:bg-[#20232a] active:scale-[0.98] border border-[#101114]'
+                        : 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
                     : !isAuthenticated && !pitchDemoEnabled
-                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
-                    : 'bg-black text-white hover:bg-gray-900 active:bg-gray-800 active:scale-[0.98] border-2 border-black'
+                      ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
+                    : 'bg-[linear-gradient(135deg,#101114_0%,#5b46f4_52%,#009b9b_100%)] text-white hover:brightness-105 active:scale-[0.98] border border-[#101114]/10 shadow-[0_18px_36px_rgba(91,70,244,0.24)]'
                   }
                 `}
               >
@@ -2480,12 +2592,12 @@ function HomeContent() {
                   </>
                 ) : isGuestPitchDemo ? (
                   <>
-                    <Sparkles size={18} className="sm:w-5 sm:h-5" />
+                    <WandSparkles size={18} className="sm:w-5 sm:h-5" />
                     <span>Launch demo preview</span>
                   </>
                 ) : !isAuthenticated && !pitchDemoEnabled ? (
                   <>
-                    <Sparkles size={18} className="sm:w-5 sm:h-5" />
+                    <WandSparkles size={18} className="sm:w-5 sm:h-5" />
                     <span>Sign in to try on</span>
                   </>
                 ) : backendAvailability === 'checking' ? (
@@ -2495,12 +2607,12 @@ function HomeContent() {
                   </>
                 ) : backendAvailability !== 'healthy' ? (
                   <>
-                    <Sparkles size={18} className="sm:w-5 sm:h-5" />
+                    <WandSparkles size={18} className="sm:w-5 sm:h-5" />
                     <span>{pitchDemoEnabled ? 'Launch demo preview' : 'Try-on unavailable'}</span>
                   </>
                 ) : (
                   <>
-                    <Sparkles size={18} className="sm:w-5 sm:h-5" />
+                    <WandSparkles size={18} className="sm:w-5 sm:h-5" />
                     <span>{isGuestPitchDemo ? 'Launch demo preview' : 'Try it on'}</span>
                   </>
                 )}
@@ -2508,7 +2620,7 @@ function HomeContent() {
               {isGenerating && (
                 <button
                   onClick={() => abortController?.abort()}
-                  className="text-sm text-black hover:text-[#7C3AED] underline w-full text-center"
+                  className="w-full text-center text-sm text-slate-600 underline hover:text-[#5b46f4]"
                   aria-label="Cancel operation"
                 >
                   Cancel
@@ -2517,18 +2629,22 @@ function HomeContent() {
             </div>
           </div>
 
-          {/* Right Column: Results */}
-          <div className="lg:col-span-5 space-y-3 sm:space-y-4 md:space-y-6 lg:space-y-8">
+          <div className="space-y-4 sm:space-y-5 lg:col-span-5 lg:space-y-6">
             
             <section
               ref={virtualMirrorSectionRef}
               id="virtual-mirror"
-              className={`${cardClass} ${cardPadding} space-y-4 scroll-mt-24`}
+              className="scroll-mt-24 overflow-hidden rounded-lg border border-slate-800 bg-[#101114] p-3 text-white shadow-[0_28px_80px_rgba(15,23,42,0.24)] sm:p-4"
             >
-              <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
-                <span className="bg-black text-white w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full text-xs font-bold shadow-[0_0_10px_rgba(0,0,0,0.5)]">3</span>
-                Virtual Mirror
-              </h2>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h2 className="flex items-center gap-2 text-base font-semibold text-white sm:text-lg">
+                  <Sparkles size={18} className="text-[#8ff4e6]" />
+                  Virtual Mirror
+                </h2>
+                <span className="rounded-md border border-white/15 bg-white/10 px-2.5 py-1 text-xs text-slate-200">
+                  Fit view
+                </span>
+              </div>
               <VirtualMirror
                 imageUrl={generatedImage}
                 isLoading={isTryOnLoading}
@@ -2540,17 +2656,17 @@ function HomeContent() {
                 onImageLoaded={handleResultImageLoaded}
               />
               {generatedImage && modestyApplied && (
-                <div className="rounded-lg border border-black/15 bg-black/5 p-3 text-xs text-black/70">
+                <div className="mt-3 rounded-lg border border-white/15 bg-white/10 p-3 text-xs text-slate-200">
                   For safety, we automatically add tasteful coverage/lining for intimate or minimal-coverage items.
                 </div>
               )}
               
               {/* Social Share Buttons - appears after successful try-on */}
               {generatedImage && !isGenerating && (
-                <div className="mt-4 p-4 rounded-lg border border-black/10 bg-gradient-to-r from-violet-50/50 to-purple-50/50">
-                  <h3 className="text-sm font-semibold text-black mb-3 flex items-center gap-2">
-                    📸 Share Your Look
-                    <span className="px-2 py-0.5 rounded-full bg-black/10 text-[10px] font-medium uppercase tracking-wide">
+                <div className="mt-4 rounded-lg border border-white/15 bg-white/10 p-4">
+                  <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
+                    Share Your Look
+                    <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-medium text-slate-200">
                       Get 2 free credits
                     </span>
                   </h3>
@@ -2559,26 +2675,26 @@ function HomeContent() {
                     isPreview={isPreviewResult}
                     onUpgradeClick={redirectToPricing}
                   />
-                  <p className="mt-3 text-[11px] text-black/60">
-                    Tag @igetdressed.online on Instagram for a chance to be featured! 🌟
+                  <p className="mt-3 text-[11px] text-slate-300">
+                    Tag @igetdressed.online on Instagram for a chance to be featured.
                   </p>
                 </div>
               )}
 
               {generatedImage && !isGenerating && user && (
-                <div className="mt-4 rounded-lg border border-black/20 bg-black/5 p-4">
+                <div className="mt-4 rounded-lg border border-white/15 bg-white/10 p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <p className="text-sm font-semibold uppercase tracking-wide text-black/70">
+                      <p className="text-sm font-semibold text-white">
                         Shop &amp; Save
                       </p>
-                      <p className="text-xs text-black/60">
+                      <p className="text-xs text-slate-300">
                         Compare prices for up to 5 wardrobe items using Google Shopping data.
                       </p>
                     </div>
                     <button
                       onClick={() => setIsShopSaveOpen(true)}
-                      className="w-full sm:w-auto rounded-none border border-black bg-black px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white transition-colors hover:bg-[#111]"
+                      className="w-full rounded-lg border border-white/16 bg-white px-4 py-2 text-xs font-semibold text-[#101114] transition-colors hover:bg-slate-100 sm:w-auto"
                     >
                       Open Selector
                     </button>
@@ -2591,8 +2707,8 @@ function HomeContent() {
               isProductSearchLoading ||
               productSearchAttempted) && (
               <section className={`${cardClass} ${cardPadding} space-y-4`}>
-                <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
-                  <Search size={18} className="sm:w-5 sm:h-5 text-black" />
+                <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-[#101114] sm:mb-4 sm:text-lg">
+                  <Search size={18} className="text-[#009b9b] sm:h-5 sm:w-5" />
                   Shop the Look
                 </h2>
                 <div className="space-y-3 sm:space-y-4">
@@ -2605,13 +2721,13 @@ function HomeContent() {
                       <ProductCard key={idx} product={product} />
                     ))
                   ) : (
-                    <div className="rounded-xl border border-black/10 bg-black/5 p-4 text-sm text-black/70">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
                       {productSearchError ? (
                         <p>{productSearchError}</p>
                       ) : (
                         <p>No matching products found yet.</p>
                       )}
-                      <p className="mt-2 text-xs text-black/60">
+                      <p className="mt-2 text-xs text-slate-500">
                         Tip: Try a different item or use{" "}
                         <span className="font-semibold">Shop &amp; Save</span> to
                         price match specific wardrobe pieces.
@@ -2624,8 +2740,8 @@ function HomeContent() {
 
             {shopSaveResults.length > 0 && (
               <section className={`${cardClass} ${cardPadding} space-y-4`}>
-                <h2 className="text-base sm:text-lg font-bold mb-3 sm:mb-4 flex items-center gap-2 text-black">
-                  <Search size={18} className="sm:w-5 sm:h-5 text-black" />
+                <h2 className="mb-3 flex items-center gap-2 text-base font-semibold text-[#101114] sm:mb-4 sm:text-lg">
+                  <Search size={18} className="text-[#009b9b] sm:h-5 sm:w-5" />
                   Shop &amp; Save Deals
                 </h2>
                 <div className="space-y-4">
@@ -2634,7 +2750,7 @@ function HomeContent() {
                     return (
                     <div
                       key={result.item.id}
-                      className="rounded-lg border border-black/15 bg-white/80 p-3 sm:p-4 shadow-[0_5px_20px_rgba(0,0,0,0.08)]"
+                      className="rounded-lg border border-slate-200 bg-white p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)] sm:p-4"
                     >
                       <div className="flex gap-3">
                         {itemImageUrl && (
@@ -2650,7 +2766,7 @@ function HomeContent() {
                           </div>
                         )}
                         <div className="flex-1">
-                          <p className="text-[11px] font-semibold uppercase tracking-wide text-black/60">
+                          <p className="text-[11px] font-semibold text-slate-500">
                             {result.item.category?.replace('_', ' ') || 'Item'}
                           </p>
                           <p className="text-sm font-bold">
@@ -2668,7 +2784,7 @@ function HomeContent() {
                               {result.item.tags.slice(0, 3).map((tag) => (
                                 <span
                                   key={`${result.item.id}-${tag}`}
-                                  className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-black/70"
+                                  className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600"
                                 >
                                   {tag}
                                 </span>
@@ -2749,7 +2865,7 @@ function HomeContent() {
               <button
                 onClick={handleConfirmNewWardrobe}
                 disabled={isAddingSavedItem}
-                className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold uppercase tracking-wide border border-black transition-colors ${
+                className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold border border-[#101114] transition-colors ${
                   isAddingSavedItem
                     ? "bg-black/10 text-black/40 cursor-not-allowed"
                     : "bg-black text-white hover:bg-black/90"
@@ -2760,7 +2876,7 @@ function HomeContent() {
               <button
                 onClick={handleDismissWardrobeLimit}
                 disabled={isAddingSavedItem}
-                className="flex-1 rounded-lg px-4 py-2 text-sm font-semibold uppercase tracking-wide border border-black/20 bg-white hover:border-black/60 transition-colors"
+                className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold transition-colors hover:border-slate-400"
               >
                 Cancel
               </button>
@@ -2775,7 +2891,7 @@ function HomeContent() {
       >
           <div className="flex items-center gap-3">
             <div className="flex-1 min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-black/70">Ready to try-on?</p>
+              <p className="text-[11px] font-semibold text-slate-700">Ready to try on?</p>
               <p className="text-[11px] text-black/60 truncate">
                 {userImages.length ? `${userImages.length} selfie${userImages.length !== 1 ? 's' : ''}` : 'Add a selfie'}
                 {" • "}
@@ -2797,7 +2913,7 @@ function HomeContent() {
               }}
               disabled={!canAttemptTryOn}
               className={`
-                rounded-xl px-4 py-3 text-xs font-bold uppercase tracking-wider min-w-[120px]
+                min-w-[120px] rounded-lg px-4 py-3 text-xs font-bold
                 ${isGenerating ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : !isAuthenticated && !pitchDemoEnabled ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-900 active:bg-gray-800'}
               `}
             >
@@ -2840,5 +2956,5 @@ export default function Home() {
     );
   }
 
-  return <HomeContent />;
+  return hasUsableClerkKey() ? <HomeContentWithClerk /> : <HomeContentWithoutClerk />;
 }

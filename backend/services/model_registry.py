@@ -54,18 +54,11 @@ GEMINI_TASKS = {
 }
 
 
-OPENROUTER_TASKS = {
-    "tryon_image": TaskModelConfig(
-        env_keys=("OPENROUTER_TRYON_MODEL", "OPENROUTER_IMAGE_MODEL", "OPENROUTER_MODEL"),
-        default_model="google/gemini-3.1-flash-image-preview",
-        fallback_models=(
-            "google/gemini-2.5-flash-image-preview",
-        ),
-    ),
-}
-
-
 OPENAI_TASKS = {
+    "tryon_image": TaskModelConfig(
+        env_keys=("OPENAI_TRYON_IMAGE_MODEL", "OPENAI_IMAGE_MODEL"),
+        default_model="gpt-image-1.5",
+    ),
     "clothing_analysis": TaskModelConfig(
         env_keys=("OPENAI_CLOTHING_ANALYZE_MODEL", "OPENAI_VISION_MODEL", "OPENAI_MODEL"),
         default_model="gpt-5.4",
@@ -99,10 +92,10 @@ def gemini_generate_content_endpoints(model: str) -> List[str]:
 def get_task_config(task_family: str, task_name: str) -> TaskModelConfig:
     if task_family == "gemini":
         registry = GEMINI_TASKS
-    elif task_family == "openrouter":
-        registry = OPENROUTER_TASKS
-    else:
+    elif task_family == "openai":
         registry = OPENAI_TASKS
+    else:
+        raise ValueError(f"Unknown model family: {task_family}")
     try:
         return registry[task_name]
     except KeyError as exc:
@@ -139,12 +132,3 @@ def get_gemini_model_candidates(
     models.append(config.default_model)
     models.extend(config.fallback_models)
     return unique_model_names(models)
-
-
-def get_openrouter_configured_model(task_name: str) -> str:
-    config = get_task_config("openrouter", task_name)
-    for env_key in config.env_keys:
-        env_value = (os.getenv(env_key) or "").strip()
-        if env_value:
-            return env_value
-    return config.default_model

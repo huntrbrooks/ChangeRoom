@@ -529,7 +529,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
           <button
             type="button"
             onClick={() => setShowTips(!showTips)}
-            className="text-xs text-black hover:text-black/70 uppercase tracking-wider flex items-center gap-1 py-1 px-1 touch-manipulation min-h-[32px]"
+            className="flex min-h-8 items-center gap-1 rounded-md px-1 py-1 text-xs font-semibold text-slate-700 transition-colors hover:text-[#5b46f4] touch-manipulation"
             aria-label="Show photo tips"
           >
             <Info size={14} />
@@ -538,16 +538,16 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
         )}
       </div>
       {optimizationEnabled && files.length === 0 && (
-        <p className="text-[11px] text-black/70 mb-2">
+        <p className="mb-2 text-[11px] text-slate-500">
           Large mobile photos are automatically resized to stay under the 10MB limit.
         </p>
       )}
       {(showTips || showGuidance) && files.length === 0 && (
-        <div className="mb-3 p-3 bg-black/5 rounded-none text-xs text-black border border-black/20">
+        <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <p className="font-semibold text-black text-sm mb-1">Best results</p>
-              <ul className="list-disc list-inside space-y-1">
+              <p className="mb-1 text-sm font-semibold text-[#101114]">Best results</p>
+              <ul className="list-disc space-y-1 pl-4">
                 {multiple ? (
                    <>
                     <li>Upload 3-5 photos: front, 45°, side/profile.</li>
@@ -566,12 +566,12 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
             </div>
             {showGuidance && (
               <div className="space-y-2">
-                <p className="font-semibold text-black text-sm">What to upload here</p>
-                <div className="rounded border border-black/10 bg-white p-2 flex items-center justify-center">
+                <p className="text-sm font-semibold text-[#101114]">What to upload here</p>
+                <div className="flex items-center justify-center rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
                   <img
                     src="/example poses.jpeg"
                     alt="Guidance showing acceptable angles and photo quality examples"
-                    className="w-full h-auto rounded"
+                    className="h-auto w-full rounded-md"
                     loading="lazy"
                   />
                 </div>
@@ -758,10 +758,10 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
             border-2 border-dashed rounded-none p-4 sm:p-6 text-center cursor-pointer transition-all touch-manipulation
             ${
               isOptimizing
-                ? 'opacity-70 pointer-events-none border-black/10'
+                ? 'opacity-70 pointer-events-none border-slate-200'
                 : !isAuthenticated
-                ? 'opacity-60 border-black/10 cursor-not-allowed'
-                : 'border-black/20 hover:border-black/40 active:border-black'
+                ? 'opacity-70 border-slate-200 cursor-not-allowed'
+                : 'border-slate-200 hover:border-slate-300 active:border-[#6d5dfc]'
             }
           `}
           aria-busy={isOptimizing}
@@ -769,22 +769,22 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
         >
           {isOptimizing ? (
             <div className="flex flex-col items-center justify-center py-6 sm:py-10 gap-3">
-              <Loader2 className="h-8 w-8 sm:h-10 sm:w-10 text-black animate-spin" />
-              <p className="text-xs sm:text-sm font-semibold text-black uppercase tracking-wider">
+              <Loader2 className="h-8 w-8 animate-spin text-[#6d5dfc] sm:h-10 sm:w-10" />
+              <p className="text-xs font-semibold text-[#101114] sm:text-sm">
                 Optimizing your photo...
               </p>
-              <p className="text-[11px] sm:text-xs text-black/70">
+              <p className="text-[11px] text-slate-500 sm:text-xs">
                 This usually takes just a few seconds.
               </p>
             </div>
           ) : (
             <label className="cursor-pointer block touch-manipulation">
-              <Upload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-black" />
-              <span className="mt-2 block text-xs sm:text-sm font-semibold text-black uppercase tracking-wider px-2">
+              <Upload className="mx-auto h-10 w-10 text-slate-500 sm:h-12 sm:w-12" />
+              <span className="mt-2 block px-2 text-xs font-semibold text-slate-700 sm:text-sm">
                 {multiple ? "Drop images here or tap to upload" : "Drop image here or tap to upload"}
               </span>
               {multiple && (
-                 <span className="block text-[10px] sm:text-xs text-black/60 mt-1">
+                 <span className="mt-1 block text-[10px] text-slate-500 sm:text-xs">
                    Recommend 3-5 photos for best results
                  </span>
               )}
@@ -802,15 +802,15 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
       )}
 
       {!isAuthenticated && (
-        <p className="mt-2 text-xs sm:text-sm text-red-600">
+        <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 sm:text-sm">
           {blockedMessage}
         </p>
       )}
       {optimizationMessage && (
-        <p className="mt-2 text-xs sm:text-sm text-black/80">{optimizationMessage}</p>
+        <p className="mt-2 text-xs text-slate-600 sm:text-sm">{optimizationMessage}</p>
       )}
       {optimizationError && (
-        <p className="mt-2 text-xs sm:text-sm text-red-600">{optimizationError}</p>
+        <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 sm:text-sm">{optimizationError}</p>
       )}
       {isMainFaceCheckRunning && (
         <p className="mt-2 text-xs sm:text-sm text-black/70 inline-flex items-center gap-2">
@@ -831,4 +831,3 @@ export const UploadZone: React.FC<UploadZoneProps> = ({
     </div>
   );
 };
-

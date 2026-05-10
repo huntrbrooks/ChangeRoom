@@ -141,7 +141,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
   const handleTryAnother = onTryAnother || goToPricing;
 
   return (
-    <div className="w-full aspect-[3/4] bg-white rounded-none overflow-hidden relative border-2 border-black/20">
+    <div className="relative aspect-[3/4] w-full overflow-hidden rounded-lg border border-white/15 bg-[#f6f7fb]">
       {showLoader && (
         <TryOnProgressLoader
           isActive={showLoader}
@@ -206,7 +206,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
           <div className="absolute bottom-2 sm:bottom-3 right-2 sm:right-3 flex flex-col sm:flex-row gap-2">
             <button
               onClick={handleDownloadClean}
-              className="bg-black hover:bg-gray-900 active:bg-gray-800 text-white px-3 sm:px-3 py-2.5 sm:py-2 rounded-none flex items-center justify-center gap-2 text-xs sm:text-sm font-semibold uppercase tracking-wider transition-colors min-h-[44px] min-w-[44px] touch-manipulation select-none"
+              className="flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg bg-[#101114] px-3 py-2.5 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(16,17,20,0.24)] transition-colors hover:bg-[#20232a] active:bg-[#20232a] sm:px-3 sm:py-2 sm:text-sm touch-manipulation select-none"
               aria-label="Download clean result"
             >
               <Download size={16} className="sm:w-4 sm:h-4" />
@@ -214,7 +214,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
             </button>
             <button
               onClick={handleTryAnother}
-              className="bg-white text-black border border-black px-3 sm:px-3 py-2.5 sm:py-2 rounded-none flex items-center justify-center gap-2 text-xs sm:text-sm font-semibold uppercase tracking-wider transition-colors min-h-[44px] min-w-[44px] touch-manipulation select-none hover:bg-black hover:text-white"
+              className="flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-3 py-2.5 text-xs font-semibold text-[#101114] shadow-[0_10px_24px_rgba(15,23,42,0.12)] transition-colors hover:bg-slate-100 sm:px-3 sm:py-2 sm:text-sm touch-manipulation select-none"
               aria-label="Try another outfit"
             >
               <Share2 size={16} className="sm:w-4 sm:h-4" />
@@ -223,11 +223,15 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
           </div>
         </>
       ) : (
-        <div className="w-full h-full flex items-center justify-center text-black/40 px-4">
-          <p className="text-xs sm:text-sm text-center">Your virtual reflection appears here</p>
+        <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_50%_35%,#ffffff_0%,#eef2f7_54%,#dbe3ee_100%)] px-4 text-slate-400">
+          <div className="text-center">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-white shadow-sm">
+              <Share2 size={18} className="text-[#6d5dfc]" />
+            </div>
+            <p className="text-xs sm:text-sm">Your virtual reflection appears here</p>
+          </div>
         </div>
       )}
     </div>
   );
 };
-

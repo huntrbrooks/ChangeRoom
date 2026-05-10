@@ -17,15 +17,18 @@ Start here:
 
 - Python 3.10+
 - Node.js 18+
-- Gemini API Key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+- OpenAI API key for try-on generation
+- Optional Gemini API key from [Google AI Studio](https://makersuite.google.com/app/apikey) for safety rewrite helpers
 
 ### Environment Variables
 
 Create a `.env` file in the `backend` directory with the following:
 
 ```bash
-# Required: Gemini API Key for image generation and analysis
-# Get your API key from: https://makersuite.google.com/app/apikey
+# Required: OpenAI API key for try-on image generation
+OPENAI_API_KEY=your_api_key_here
+
+# Optional: Gemini API key for rewrite / safety helpers
 GEMINI_API_KEY=your_api_key_here
 
 # Optional: Fallback to GOOGLE_API_KEY for backward compatibility
@@ -41,7 +44,7 @@ Create a `.env.local` file in the `frontend` directory with the following:
 NEXT_PUBLIC_PAYWALL_BYPASS_EMAILS=gerard.grenville@gmail.com
 ```
 
-**Note:** The application uses direct REST API calls to Gemini API with API key authentication. No OAuth2 or SDK setup is required.
+**Note:** The try-on flow uses direct REST API calls to OpenAI image edits with API key authentication. No OAuth2 setup is required.
 
 ### Backend Setup
 
@@ -74,16 +77,17 @@ The frontend will be available at `http://localhost:3000`
 
 ## Architecture
 
-### Gemini API Integration
+### AI API Integration
 
-This application uses **direct REST API calls** to Google's Gemini API with API key authentication:
+This application uses direct API calls with API key authentication:
 
-- **No SDKs required** - Uses `httpx` for async HTTP requests
-- **API Key only** - Simple authentication via `GEMINI_API_KEY` environment variable
+- **Try-on generation** - OpenAI image edits via `OPENAI_API_KEY` and `gpt-image-1.5`
+- **Analysis / helpers** - OpenAI and optional Gemini helpers for metadata, product identification, and safety rewrite support
+- **No OAuth required** - Uses `httpx` / OpenAI SDK calls where appropriate
 - **Multiple models** - Automatically falls back between models for reliability
-- **Image support** - Sends images as base64 `inline_data` in requests
+- **Image support** - Normalizes uploaded images server-side before model calls
 
-All Gemini API calls are implemented in:
+Key service files:
 - `backend/services/vton.py` - Virtual try-on image generation
 - `backend/services/gemini.py` - Clothing analysis and product identification
 
@@ -91,9 +95,10 @@ All Gemini API calls are implemented in:
 
 ### Render.com
 
-1. Set `GEMINI_API_KEY` environment variable in Render dashboard
-2. Deploy backend service
-3. Update frontend `NEXT_PUBLIC_API_URL` to point to your Render backend
+1. Set `OPENAI_API_KEY` environment variable in Render dashboard
+2. Optionally set `GEMINI_API_KEY` for rewrite / safety helper paths
+3. Deploy backend service
+4. Update frontend `NEXT_PUBLIC_API_URL` to point to your Render backend
 
 ### YOLOv8 Demo Services
 

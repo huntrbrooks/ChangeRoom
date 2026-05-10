@@ -725,14 +725,14 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
           </div>
         ) : (
           <label className={`${uploadsBlocked ? 'cursor-not-allowed' : 'cursor-pointer'} block touch-manipulation`}>
-            <Upload className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-black" />
-            <span className="mt-3 sm:mt-4 block text-sm sm:text-base font-medium text-black px-2">
+            <Upload className="mx-auto h-10 w-10 text-slate-500 sm:h-12 sm:w-12" />
+            <span className="mt-3 block px-2 text-sm font-medium text-slate-700 sm:mt-4 sm:text-base">
               {uploadedFiles.length < 5 
                 ? `Upload ${5 - uploadedFiles.length} more clothing item${5 - uploadedFiles.length !== 1 ? 's' : ''} (${uploadedFiles.length}/5)`
                 : 'Maximum 5 items reached. Upload new images to replace all existing items.'
               }
             </span>
-            <span className="mt-2 block text-xs sm:text-sm text-black/70 px-2">
+            <span className="mt-2 block px-2 text-xs text-slate-500 sm:text-sm">
               Drag and drop images here or tap to select. Items will be analyzed and categorized automatically.
             </span>
             <input
@@ -747,7 +747,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
         )}
       </div>
       {uploadsBlocked && (
-        <p className="text-xs sm:text-sm text-red-600">
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 sm:text-sm">
           {!isUploadEnabled ? disabledMessage : blockedMessage}
         </p>
       )}

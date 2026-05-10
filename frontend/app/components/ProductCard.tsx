@@ -38,23 +38,23 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, loading = fal
 
   if (loading || !product) {
     return (
-      <div className="border border-black/10 rounded-none overflow-hidden bg-white animate-pulse">
-        <div className="aspect-square bg-gray-200" />
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white animate-pulse">
+        <div className="aspect-square bg-slate-200" />
         <div className="p-3 sm:p-4 space-y-3">
-          <div className="h-4 w-3/4 bg-gray-200" />
+          <div className="h-4 w-3/4 bg-slate-200" />
           <div className="flex items-center justify-between">
-            <div className="h-4 w-16 bg-gray-200" />
-            <div className="h-3 w-12 bg-gray-200" />
+            <div className="h-4 w-16 bg-slate-200" />
+            <div className="h-3 w-12 bg-slate-200" />
           </div>
-          <div className="h-10 w-full bg-gray-200" />
+          <div className="h-10 w-full rounded-lg bg-slate-200" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="border border-black/10 rounded-none overflow-hidden hover:border-black/30 transition-all bg-white">
-      <div className="aspect-square relative overflow-hidden bg-gray-100">
+    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white transition-all hover:border-slate-300 hover:shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
+      <div className="aspect-square relative overflow-hidden bg-slate-100">
         {product.thumbnail && (
           // Use <img> instead of next/image because shopping thumbnails can come from many hosts.
           // This avoids brittle remote-host allowlists and prevents silent "no image" failures.
@@ -68,19 +68,19 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, loading = fal
         )}
       </div>
       <div className="p-3 sm:p-4">
-        <h3 className="font-semibold text-xs sm:text-sm line-clamp-2 mb-2 min-h-[2.5rem] sm:h-10 text-black uppercase tracking-wide" title={product.title}>
+        <h3 className="mb-2 min-h-[2.5rem] text-xs font-semibold leading-5 text-[#101114] line-clamp-2 sm:h-10 sm:text-sm" title={product.title}>
           {product.title}
         </h3>
         <div className="flex items-center justify-between mt-2">
-          <span className="font-bold text-base sm:text-lg text-black">{product.price}</span>
-          <span className="text-[10px] sm:text-xs text-black/60 uppercase tracking-wider">{product.source}</span>
+          <span className="text-base font-semibold text-[#101114] sm:text-lg">{product.price}</span>
+          <span className="text-[10px] text-slate-500 sm:text-xs">{product.source}</span>
         </div>
         <a
           href={affiliateLink}
           onClick={handleClick}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-3 w-full flex items-center justify-center gap-2 bg-black text-white py-2.5 sm:py-2 rounded-none hover:bg-gray-900 active:bg-gray-800 transition-colors text-xs sm:text-sm font-semibold uppercase tracking-wider min-h-[44px] touch-manipulation"
+          className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#101114] py-2.5 text-xs font-semibold text-white transition-colors hover:bg-[#20232a] active:bg-[#20232a] sm:py-2 sm:text-sm touch-manipulation"
         >
           <ShoppingCart size={14} className="sm:w-4 sm:h-4" />
           Buy Now
@@ -89,4 +89,3 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, loading = fal
     </div>
   );
 };
-

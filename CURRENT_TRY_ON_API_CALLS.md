@@ -1,292 +1,91 @@
 # Current Try-On API Calls
 
-**Status**: The Next.js `/api/try-on` route is deprecated (returns 410). The active try-on pipeline is the FastAPI backend (`/api/try-on` on Render).
+**Status**: The active try-on pipeline is the FastAPI backend (`/api/try-on` on Render). The homepage posts multipart form data directly to that backend via `NEXT_PUBLIC_API_URL`.
 
-This document shows the current API calls being made for virtual try-on generation.
+## 1. Frontend To Backend
 
-## 1. Frontend API Route (Deprecated)
+**Location**: `frontend/app/page.tsx`
 
-**Location**: `frontend/app/api/try-on/route.ts`
+The homepage sends:
 
-### Frontend → Gemini Direct Call
-
-```typescript
-// Function: generateTryOnWithGemini()
-// Lines 93-109
-
-const response = await fetch(
-  `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${geminiConfig.apiKey}`,
-  {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              inlineData: {
-                data: personImageBase64,      // Base64 encoded person image
-                mimeType: personMimeType,      // e.g., "image/jpeg"
-              },
-            },
-            // ... clothing images
-            {
-              inlineData: {
-                data: clothing1Base64,
-                mimeType: clothing1MimeType,
-              },
-            },
-            {
-              text: `
-First image is the person. Following images are clothing items. Generate one photorealistic image of the same person wearing all the clothing items. Keep pose and identity consistent. Do not add extra logos or text beyond what is visible on the clothing.
-              `.trim(),
-            },
-          ],
-        },
-      ],
-    }),
-  }
-);
-```
-
-### Full Request Example
-
-```http
-POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=YOUR_API_KEY
-Content-Type: application/json
-
-{
-  "contents": [
-    {
-      "role": "user",
-      "parts": [
-        {
-          "inlineData": {
-            "data": "iVBORw0KGgoAAAANSUhEUgAA...",
-            "mimeType": "image/jpeg"
-          }
-        },
-        {
-          "inlineData": {
-            "data": "iVBORw0KGgoAAAANSUhEUgAA...",
-            "mimeType": "image/jpeg"
-          }
-        },
-        {
-          "text": "First image is the person. Following images are clothing items. Generate one photorealistic image of the same person wearing all the clothing items. Keep pose and identity consistent. Do not add extra logos or text beyond what is visible on the clothing."
-        }
-      ]
-    }
-  ]
-}
-```
-
-### Response Handling
+- `user_images`: up to 5 person reference images
+- `user_image`: first person image for backward compatibility
+- `clothing_images`: up to 5 wardrobe items
+- `main_index`: main person reference index
+- `category`: inferred garment category
+- `garment_metadata`: JSON metadata and wearing-style directives
+- `requestId`: correlation id for logs/billing holds
 
 ```typescript
-const data = await response.json();
-const imagePart = data.candidates?.[0]?.content?.parts?.find(
-  (p: any) => p.inlineData
-);
+const tryOnFormData = new FormData();
+userImages.forEach((img) => tryOnFormData.append("user_images", img));
+tryOnFormData.append("user_image", userImages[0]);
+activeWardrobeItems.forEach((item) => {
+  tryOnFormData.append("clothing_images", item.file);
+});
+tryOnFormData.append("main_index", "0");
+tryOnFormData.append("category", inferredCategory);
+tryOnFormData.append("garment_metadata", JSON.stringify(metadata));
 
-return {
-  base64: imagePart.inlineData.data,
-  mimeType: imagePart.inlineData.mimeType || "image/png",
-};
+await httpClient.post(`${API_URL}/api/try-on`, tryOnFormData, {
+  headers: { "Content-Type": "multipart/form-data" },
+  timeout: 600000,
+});
 ```
 
----
-
-## 2. Backend API Route (Active, Python/FastAPI)
+## 2. Backend To OpenAI
 
 **Location**: `backend/services/vton.py`
 
-### Backend → Gemini Call
+The backend normalizes uploaded images, compresses them, and calls OpenAI image edits:
+
+- Endpoint: `POST https://api.openai.com/v1/images/edits`
+- Model: `OPENAI_TRYON_IMAGE_MODEL`, default `gpt-image-1.5`
+- Required key: `OPENAI_API_KEY`
+- Default size: `1024x1536`
+- Default quality: `high`
+- Default output format: `jpeg`
 
 ```python
-# Function: _generate_with_gemini()
-# Lines 304-317
-
-endpoint = f"{base_url}/{model_name}:generateContent"
-# base_url = "https://generativelanguage.googleapis.com/v1beta/models"
-# model_name = "gemini-1.5-flash"
-
 response = await client.post(
-    f"{endpoint}?key={api_key}",
-    headers={
-        "Content-Type": "application/json",
+    "https://api.openai.com/v1/images/edits",
+    headers={"Authorization": f"Bearer {api_key}"},
+    data={
+        "model": model_name,
+        "prompt": prompt,
+        "size": image_size,
+        "quality": image_quality,
+        "output_format": output_format,
+        "moderation": image_moderation,
     },
-    json={
-        "contents": [
-            {
-                "role": "user",
-                "parts": parts,  # Array with images + text prompt
-            }
-        ],
-    },
+    files=[
+        ("image[]", ("user_reference_1.jpg", user_bytes, "image/jpeg")),
+        ("image[]", ("garment_1.jpg", garment_bytes, "image/jpeg")),
+    ],
 )
 ```
 
-### Parts Array Structure (Python)
+The response is parsed from `data[0].b64_json` and returned to the frontend as a `data:image/...;base64,...` URL.
 
-```python
-parts = [
-    {
-        "inline_data": {
-            "mime_type": "image/jpeg",
-            "data": user_img_base64,  # Person image
-        }
-    },
-    {
-        "inline_data": {
-            "mime_type": "image/jpeg",
-            "data": garment1_base64,  # Clothing item 1
-        }
-    },
-    # ... more clothing items
-    {
-        "text": "Very long system prompt with instructions..."
-    }
-]
-```
+## Retry And Safety Helpers
 
-### Full Python Request Example
+The backend keeps the existing modesty/safety retry pipeline:
 
-```python
-import httpx
+- Detects high-risk garment metadata.
+- Optionally uses Gemini vision/text helpers when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set.
+- Falls back to local heuristic prompt rewriting when Gemini helpers are unavailable.
+- Retries up to 4 image generation attempts before returning a user-facing error.
 
-async with httpx.AsyncClient(timeout=300.0) as client:
-    response = await client.post(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=YOUR_API_KEY",
-        headers={
-            "Content-Type": "application/json",
-        },
-        json={
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [
-                        {
-                            "inline_data": {
-                                "mime_type": "image/jpeg",
-                                "data": "base64_encoded_person_image..."
-                            }
-                        },
-                        {
-                            "inline_data": {
-                                "mime_type": "image/jpeg",
-                                "data": "base64_encoded_clothing_image..."
-                            }
-                        },
-                        {
-                            "text": "System prompt with instructions..."
-                        }
-                    ]
-                }
-            ]
-        }
-    )
-```
+## Required Environment Variables
 
-### Response Parsing (Python)
+- Backend: `OPENAI_API_KEY`
+- Frontend: `NEXT_PUBLIC_API_URL`
 
-```python
-data = response.json()
+Optional backend controls:
 
-parts_out = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-
-image_part = None
-for part in parts_out:
-    if "inline_data" in part:
-        image_part = part["inline_data"]
-        break
-
-image_base64 = image_part.get("data")
-mime_type = image_part.get("mime_type", "image/png")
-
-return f"data:{mime_type};base64,{image_base64}"
-```
-
----
-
-## Key Differences
-
-### Frontend (TypeScript)
-- **Model**: `gemini-2.5-flash-image` (doesn't exist - 404 error)
-- **Field names**: `inlineData` (camelCase)
-- **Field names**: `mimeType` (camelCase)
-- **Location**: Direct call from Next.js API route
-
-### Backend (Python)
-- **Model**: `gemini-1.5-flash` (exists but doesn't generate images)
-- **Field names**: `inline_data` (snake_case)
-- **Field names**: `mime_type` (snake_case)
-- **Location**: FastAPI backend service
-
----
-
-## Current Issues
-
-1. **Frontend model doesn't exist**: `gemini-2.5-flash-image` returns 404
-2. **Backend model doesn't generate images**: `gemini-1.5-flash` exists but standard Gemini models don't create images
-3. **Inconsistent field naming**: Frontend uses camelCase, backend uses snake_case (both are valid in JSON)
-
----
-
-## What Each Part Does
-
-### Request Structure
-```
-contents[0]
-  └── role: "user"
-  └── parts: [
-        ├── inlineData/inline_data: { person image }
-        ├── inlineData/inline_data: { clothing item 1 }
-        ├── inlineData/inline_data: { clothing item 2 }
-        └── text: { instructions }
-      ]
-```
-
-### Response Structure
-```
-candidates[0]
-  └── content
-      └── parts: [
-            └── inlineData/inline_data: { generated image }
-          ]
-```
-
----
-
-## API Endpoints Used
-
-- **Frontend**: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent`
-- **Backend**: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent`
-
-Both use:
-- **API Version**: `v1beta`
-- **Method**: `generateContent`
-- **Authentication**: API key as query parameter (`?key=...`)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+- `OPENAI_TRYON_IMAGE_MODEL=gpt-image-1.5`
+- `OPENAI_TRYON_IMAGE_SIZE=1024x1536`
+- `OPENAI_TRYON_QUALITY=high`
+- `OPENAI_TRYON_OUTPUT_FORMAT=jpeg`
+- `OPENAI_TRYON_MODERATION=auto`
+- `GEMINI_API_KEY` or `GOOGLE_API_KEY` for rewrite/safety helper paths

@@ -8,7 +8,6 @@ import os
 import sys
 import logging
 import json
-import json as json_lib
 import asyncio
 import httpx
 from pathlib import Path
@@ -441,12 +440,6 @@ async def try_on(
         # Parse metadata if provided
         metadata = None
         if garment_metadata:
-            # #region agent log
-            try:
-                with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                    f.write(json_lib.dumps({"location":"main.py:241","message":"Before metadata parsing","data":{"metadataType":type(garment_metadata).__name__,"metadataLength":len(str(garment_metadata)) if isinstance(garment_metadata,str) else None},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"D"})+"\n")
-            except: pass
-            # #endregion
             try:
                 import json
                 # Handle both string and dict inputs, ensure UTF-8 encoding
@@ -454,20 +447,8 @@ async def try_on(
                     metadata = json.loads(garment_metadata)
                 else:
                     metadata = garment_metadata
-                # #region agent log
-                try:
-                    with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                        f.write(json_lib.dumps({"location":"main.py:247","message":"Metadata parsing succeeded","data":{"metadataKeys":list(metadata.keys()) if isinstance(metadata,dict) else None},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"D"})+"\n")
-                except: pass
-                # #endregion
             except Exception as e:
                 logger.warning(f"Could not parse garment_metadata: {e}")
-                # #region agent log
-                try:
-                    with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                        f.write(json_lib.dumps({"location":"main.py:250","message":"Metadata parsing failed","data":{"error":str(e)},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"D"})+"\n")
-                except: pass
-                # #endregion
                 # Try to clean smart quotes if present
                 try:
                     if isinstance(garment_metadata, str):
@@ -496,12 +477,6 @@ async def try_on(
         result = None
         result_url = None
         try:
-            # #region agent log
-            try:
-                with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                    f.write(json_lib.dumps({"location":"main.py:267","message":"Calling vton.generate_try_on","data":{"category":final_category,"clothingFilesCount":len(clothing_image_files),"hasMetadata":metadata is not None},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
-            except: pass
-            # #endregion
             result = await vton.generate_try_on(
                 user_image_files, 
                 clothing_image_files, 
@@ -512,12 +487,6 @@ async def try_on(
                 user_quality_flags=user_quality_flags
             )
             result_url = result.get("image_url") if isinstance(result, dict) else result
-            # #region agent log
-            try:
-                with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                    f.write(json_lib.dumps({"location":"main.py:273","message":"vton.generate_try_on succeeded","data":{"hasResultUrl":result_url is not None,"resultUrlLength":len(result_url) if result_url else 0},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"E"})+"\n")
-            except: pass
-            # #endregion
             logger.info(f"Try-on completed successfully. Result URL: {result_url}")
         finally:
             # Close any files we opened from URLs
@@ -541,12 +510,6 @@ async def try_on(
     except Exception as e:
         error_detail = str(e)
         error_type = type(e).__name__
-        # #region agent log
-        try:
-            with open('/Users/gerardgrenville/Change Room/.cursor/debug.log', 'a') as f:
-                f.write(json_lib.dumps({"location":"main.py:286","message":"Backend try-on endpoint error","data":{"errorType":error_type,"errorMessage":error_detail,"hasApiKeyError":"GEMINI_API_KEY" in error_detail or "GOOGLE_API_KEY" in error_detail},"timestamp":int(__import__('time').time()*1000),"sessionId":"debug-session","runId":"run1","hypothesisId":"A"})+"\n")
-        except: pass
-        # #endregion
         logger.error(f"Error in try-on endpoint: {error_type}: {error_detail}", exc_info=True)
         # Provide more helpful error messages
         # Treat safety/policy blocks and “no image after retries with IMAGE_* finish reason” as 422 so the UI can warn/penalize.
@@ -565,8 +528,10 @@ async def try_on(
                 status_code=422,
                 detail="The image request was blocked by safety filters. Please choose less revealing clothing or use a more neutral description."
             )
-        if "GEMINI_API_KEY" in error_detail or "GOOGLE_API_KEY" in error_detail or "environment variable is required" in error_detail:
-            error_detail = "Gemini API key not configured. Set GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable in Render dashboard."
+        if "OPENAI_API_KEY" in error_detail or "environment variable is required" in error_detail:
+            error_detail = "OpenAI API key not configured. Set OPENAI_API_KEY in the Render dashboard."
+        elif "GEMINI_API_KEY" in error_detail or "GOOGLE_API_KEY" in error_detail:
+            error_detail = "Gemini API key not configured. Set GEMINI_API_KEY (or GOOGLE_API_KEY) if optional safety helpers are enabled."
         elif "ValueError" in error_type and "required" in error_detail.lower():
             # Catch any ValueError about missing required variables
             error_detail = f"Configuration error: {error_detail}. Please check your Render environment variables."

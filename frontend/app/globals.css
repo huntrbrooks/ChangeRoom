@@ -1,25 +1,26 @@
 @import "tailwindcss";
 
 :root {
-  /* Monochrome Base Colors - Streetwear Theme */
-  --background: #FFFFFF;
-  --foreground: #000000;
+  --background: #f7f8fb;
+  --foreground: #101114;
   
-  /* Primary accent - Pure black for streetwear aesthetic */
-  --primary-accent: #000000;
-  --primary-accent-hover: #1A1A1A;
-  --primary-accent-light: #333333;
+  --primary-accent: #101114;
+  --primary-accent-hover: #20232a;
+  --primary-accent-light: #3b3f49;
   --primary-accent-dark: #000000;
   
-  /* Secondary accent - Medium gray for subtle elements */
-  --secondary-accent: #666666;
-  --secondary-accent-hover: #4A4A4A;
-  --secondary-accent-light: #999999;
-  --secondary-accent-dark: #333333;
+  --secondary-accent: #6d5dfc;
+  --secondary-accent-hover: #5b46f4;
+  --secondary-accent-light: #8f84ff;
+  --secondary-accent-dark: #4533d3;
   
-  /* Tertiary accent - Light gray for borders and dividers */
-  --tertiary-accent: #E5E5E5;
-  --tertiary-accent-hover: #CCCCCC;
+  --tertiary-accent: #dfe3eb;
+  --tertiary-accent-hover: #cbd2df;
+  --studio-teal: #009b9b;
+  --studio-lilac: #6d5dfc;
+  --studio-ink: #101114;
+  --studio-muted: #687083;
+  --studio-line: #dfe3eb;
   
   /* Gray scale palette */
   --gray-50: #FAFAFA;
@@ -33,13 +34,12 @@
   --gray-800: #262626;
   --gray-900: #171717;
   
-  /* Semantic colors - Monochrome variants */
-  --success: #000000;
-  --success-light: #333333;
-  --warning: #666666;
-  --warning-light: #999999;
-  --error: #000000;
-  --error-light: #333333;
+  --success: #009b72;
+  --success-light: #dff7ef;
+  --warning: #a16207;
+  --warning-light: #fef3c7;
+  --error: #dc2626;
+  --error-light: #fee2e2;
   
   /* Opacity variants for backgrounds and borders */
   --primary-accent-10: rgba(0, 0, 0, 0.1);
@@ -72,11 +72,12 @@
 }
 
 body {
-  background: var(--background);
+  background:
+    linear-gradient(180deg, #ffffff 0%, #f7f8fb 40%, #eef2f7 100%);
   color: var(--foreground);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
   font-weight: 400;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /* Prevent text size adjustment on iOS */
@@ -86,26 +87,25 @@ body {
   overflow-x: clip;
 }
 
-/* Streetwear Typography Styles */
 h1, h2, h3, h4, h5, h6 {
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  text-transform: uppercase;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  font-weight: 720;
+  letter-spacing: 0;
+  text-transform: none;
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
 
 button, .btn, [role="button"] {
   font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  letter-spacing: 0;
+  text-transform: none;
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
 
 nav a, .nav-link {
   font-weight: 500;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  letter-spacing: 0;
+  text-transform: none;
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
 }
 
 /* Mobile optimizations */

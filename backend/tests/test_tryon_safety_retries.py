@@ -43,27 +43,20 @@ def test_heuristic_rewrite_sanitizes_and_adds_defaults():
     assert "heuristic_rewrite" in summary
 
 
-def test_extract_openrouter_image_url_handles_image_blocks():
-    from services.vton import _extract_openrouter_image_url
+def test_extract_openai_image_url_handles_b64_response():
+    from services.vton import _extract_openai_image_url
 
-    image_url, mime_type, text_parts = _extract_openrouter_image_url(
+    image_url, mime_type, text_parts = _extract_openai_image_url(
         {
-            "choices": [
-                {
-                    "finish_reason": "stop",
-                    "message": {
-                        "content": [
-                            {"type": "text", "text": "done"},
-                            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
-                        ]
-                    },
-                }
+            "data": [
+                {"b64_json": "AAAA", "revised_prompt": "done"}
             ]
-        }
+        },
+        default_mime_type="image/jpeg",
     )
 
-    assert image_url == "data:image/png;base64,AAAA"
-    assert mime_type is None
+    assert image_url == "data:image/jpeg;base64,AAAA"
+    assert mime_type == "image/jpeg"
     assert text_parts == ["done"]
 
 
@@ -71,40 +64,27 @@ def test_extract_openrouter_image_url_handles_image_blocks():
 async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_bytes):
     from services import vton
 
-    openrouter_calls = {"n": 0}
+    openai_calls = {"n": 0}
     rewrite_calls = {"n": 0}
     captured_payloads = []
 
-    async def fake_openrouter_post(_client, *, url, headers, payload):
-        openrouter_calls["n"] += 1
-        captured_payloads.append(payload)
-        if openrouter_calls["n"] <= 2:
+    async def fake_openai_edit(_client, *, url, headers, data, files):
+        openai_calls["n"] += 1
+        captured_payloads.append({"data": data, "files": files})
+        if openai_calls["n"] <= 2:
             return DummyResponse(
-                ok=True,
+                ok=False,
+                status_code=400,
+                text="Blocked by content policy",
                 data={
-                    "choices": [
-                        {
-                            "finish_reason": "content_filter",
-                            "message": {"content": [{"type": "text", "text": "Blocked by policy"}]},
-                        }
-                    ]
+                    "error": {"message": "Blocked by content policy"}
                 },
             )
 
         return DummyResponse(
             ok=True,
             data={
-                "choices": [
-                    {
-                        "finish_reason": "stop",
-                        "message": {
-                            "content": [
-                                {"type": "text", "text": "ok"},
-                                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
-                            ]
-                        },
-                    }
-                ]
+                "data": [{"b64_json": "AAAA"}]
             },
         )
 
@@ -128,7 +108,7 @@ async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_byt
             },
         )
 
-    monkeypatch.setattr(vton, "_openrouter_post_json", fake_openrouter_post)
+    monkeypatch.setattr(vton, "_openai_images_edit", fake_openai_edit)
     monkeypatch.setattr(vton, "_gemini_post_json", fake_gemini_post)
 
     result = await vton.generate_try_on(
@@ -150,17 +130,16 @@ async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_byt
     strategies = [r.get("strategy") for r in retry_info if isinstance(r, dict)]
     assert "modesty_contract_preflight" in strategies
     assert any(s in ("preflight_heuristic", "heuristic", "gemini_rewrite") for s in strategies)
-    assert openrouter_calls["n"] == 3
+    assert openai_calls["n"] == 3
     assert rewrite_calls["n"] >= 1
-    first_messages = captured_payloads[0]["messages"]
-    assert first_messages[0]["role"] == "system"
-    assert "real body" in first_messages[0]["content"][0]["text"]
-    assert "neutral, seamless studio environment" in first_messages[0]["content"][0]["text"]
-    assert first_messages[1]["role"] == "user"
-    first_user_prompt = first_messages[1]["content"][0]["text"]
-    assert "BODY FIDELITY IS PARAMOUNT" in first_user_prompt
-    assert "Do not reuse the original background" in first_user_prompt
-    assert "Do not slim, enlarge, lengthen, shorten" in first_user_prompt
+    first_payload = captured_payloads[0]["data"]
+    assert first_payload["model"] == "gpt-image-1.5"
+    assert "real body" in first_payload["prompt"]
+    assert "neutral, seamless studio environment" in first_payload["prompt"]
+    assert "BODY FIDELITY IS PARAMOUNT" in first_payload["prompt"]
+    assert "Do not reuse the original background" in first_payload["prompt"]
+    assert "Do not slim, enlarge, lengthen, shorten" in first_payload["prompt"]
+    assert len(captured_payloads[0]["files"]) == 2
 
 
 def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeypatch):
@@ -170,36 +149,23 @@ def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeyp
     async def fake_user_attrs(_files):
         return {}
 
-    openrouter_calls = {"n": 0}
+    openai_calls = {"n": 0}
 
-    async def fake_openrouter_post(_client, *, url, headers, payload):
-        openrouter_calls["n"] += 1
-        if openrouter_calls["n"] <= 2:
+    async def fake_openai_edit(_client, *, url, headers, data, files):
+        openai_calls["n"] += 1
+        if openai_calls["n"] <= 2:
             return DummyResponse(
-                ok=True,
+                ok=False,
+                status_code=400,
+                text="Blocked",
                 data={
-                    "choices": [
-                        {
-                            "finish_reason": "content_filter",
-                            "message": {"content": [{"type": "text", "text": "Blocked"}]},
-                        }
-                    ]
+                    "error": {"message": "Blocked"}
                 },
             )
         return DummyResponse(
             ok=True,
             data={
-                "choices": [
-                    {
-                        "finish_reason": "stop",
-                        "message": {
-                            "content": [
-                                {"type": "text", "text": "ok"},
-                                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
-                            ]
-                        },
-                    }
-                ]
+                "data": [{"b64_json": "AAAA"}]
             },
         )
 
@@ -223,7 +189,7 @@ def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeyp
         )
 
     monkeypatch.setattr(analyze_user, "analyze_user_attributes", fake_user_attrs)
-    monkeypatch.setattr(vton, "_openrouter_post_json", fake_openrouter_post)
+    monkeypatch.setattr(vton, "_openai_images_edit", fake_openai_edit)
     monkeypatch.setattr(vton, "_gemini_post_json", fake_gemini_post)
 
     files = {

@@ -21,8 +21,7 @@ Set these in the **Render service** for the backend (see `render.yaml`).
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `GEMINI_API_KEY` | Google Gemini API key for image generation and analysis | `AIzaSy...` |
-| `GOOGLE_API_KEY` | Alternative name for GEMINI_API_KEY (fallback) | `AIzaSy...` |
+| `OPENAI_API_KEY` | OpenAI API key for try-on generation and OpenAI analysis/preprocess helpers | `sk-...` |
 
 ### Optional
 
@@ -35,7 +34,13 @@ Set these in the **Render service** for the backend (see `render.yaml`).
 | `ALLOWED_ORIGIN_REGEX` | Regex CORS allowlist override | (none) | `^https://.*\.vercel\.app$` |
 | `MAX_FILE_SIZE` | Max bytes per uploaded image | `10485760` | `10485760` |
 | `MAX_TOTAL_SIZE` | Max bytes per request across all images | `52428800` | `52428800` |
-| `OPENAI_API_KEY` | OpenAI API key (analysis/preprocess) | (none) | `sk-...` |
+| `GEMINI_API_KEY` | Optional Google Gemini API key for rewrite/safety helpers and Gemini-backed analysis paths | (none) | `AIzaSy...` |
+| `GOOGLE_API_KEY` | Alternative name for GEMINI_API_KEY (fallback) | (none) | `AIzaSy...` |
+| `OPENAI_TRYON_IMAGE_MODEL` | OpenAI model for main try-on image edits | `gpt-image-1.5` | `gpt-image-1.5` |
+| `OPENAI_TRYON_IMAGE_SIZE` | Output size for try-on image edits | `1024x1536` | `1024x1536` |
+| `OPENAI_TRYON_QUALITY` | Output quality for try-on image edits | `high` | `medium` |
+| `OPENAI_TRYON_OUTPUT_FORMAT` | Output format for try-on results | `jpeg` | `png` |
+| `OPENAI_TRYON_MODERATION` | OpenAI image moderation setting | `auto` | `auto` |
 | `OPENAI_VISION_MAX_IMAGE_BYTES` | Max bytes per image sent to OpenAI vision calls | `4194304` | `6291456` |
 | `SERPAPI_API_KEY` | SerpAPI key for product search | (none) | `abc123` |
 | `BACKEND_AUTH_MODE` | Protect expensive endpoints: `none`, `clerk`, or `api_key` | `none` | `clerk` |
@@ -162,7 +167,9 @@ Upload signing and clothing preprocessing now run through the Render backend. Th
 
 1. **Backend** - Create `backend/.env`:
 ```bash
-GEMINI_API_KEY=your_api_key_here
+OPENAI_API_KEY=your_api_key_here
+# Optional:
+GEMINI_API_KEY=your_gemini_key_here
 ```
 
 2. **Frontend** - Create `frontend/.env.local`:
@@ -176,7 +183,6 @@ STRIPE_PRO_PRICE_ID=price_...
 STRIPE_CREDIT_PACK_SMALL_PRICE_ID=price_...
 STRIPE_CREDIT_PACK_LARGE_PRICE_ID=price_...
 DATABASE_URL=postgresql://...
-GEMINI_API_KEY=...
 NEXT_PUBLIC_API_URL=http://localhost:8000
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
@@ -186,7 +192,8 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 All environment variables must be set in your hosting platform (e.g., Render, Vercel):
 
 1. **Backend (Render)**
-   - Set `GEMINI_API_KEY` in Render dashboard
+   - Set `OPENAI_API_KEY` in Render dashboard
+   - Optionally set `GEMINI_API_KEY` for rewrite/safety helper paths
    - `PORT` is automatically set by Render
 
 2. **Frontend (Vercel/Next.js)**
@@ -223,7 +230,7 @@ All environment variables must be set in your hosting platform (e.g., Render, Ve
 ## Validation
 
 The application validates required environment variables at runtime:
-- Backend: Fails fast if `GEMINI_API_KEY` is missing
+- Backend: Fails fast if `OPENAI_API_KEY` is missing for try-on generation
 - Frontend: Uses lazy loading to avoid build-time errors, but fails at runtime if required vars are missing
 
 ## Getting API Keys
