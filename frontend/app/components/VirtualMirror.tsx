@@ -11,6 +11,9 @@ interface VirtualMirrorProps {
   onDownloadClean?: () => void;
   onTryAnother?: () => void;
   onImageLoaded?: () => void;
+  placeholderImageUrl?: string;
+  showResultActions?: boolean;
+  className?: string;
 }
 
 export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
@@ -22,6 +25,9 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
   onDownloadClean,
   onTryAnother,
   onImageLoaded,
+  placeholderImageUrl,
+  showResultActions = true,
+  className = '',
 }) => {
   const [showLoader, setShowLoader] = useState(false);
   const [hasRun, setHasRun] = useState(false);
@@ -30,6 +36,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
   const loaderFallbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const LOADER_FADE_MS = 2400;
 
+  const displayImageUrl = imageUrl || placeholderImageUrl || null;
   const hasResult = Boolean(imageUrl);
   const hasError = Boolean(errorMessage);
   const status: 'pending' | 'success' | 'error' =
@@ -141,7 +148,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
   const handleTryAnother = onTryAnother || goToPricing;
 
   return (
-    <div className="relative aspect-[3/4] w-full overflow-hidden rounded-lg border border-white/15 bg-[#f6f7fb]">
+    <div className={`relative aspect-[3/4] w-full overflow-hidden rounded-lg border border-white/15 bg-[#f6f7fb] ${className}`}>
       {showLoader && (
         <TryOnProgressLoader
           isActive={showLoader}
@@ -153,34 +160,36 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
         />
       )}
 
-      {imageUrl ? (
+      {displayImageUrl ? (
         <>
-          <img 
-            key={imageUrl} 
-            src={imageUrl} 
-            alt="Virtual Try-On Result" 
+          <img
+            key={displayImageUrl}
+            src={displayImageUrl}
+            alt="Virtual Try-On Result"
             ref={imgElRef}
             className="w-full h-full object-cover"
-            loading="eager"
+            loading={imageUrl ? 'eager' : 'lazy'}
             decoding="async"
-            fetchPriority="high"
+            fetchPriority={imageUrl ? 'high' : 'auto'}
             onLoad={() => {
-              setImageReady(true);
-              onImageLoaded?.();
-              console.log('Try-on image loaded successfully');
+              if (imageUrl) {
+                setImageReady(true);
+                onImageLoaded?.();
+                console.log('Try-on image loaded successfully');
+              }
             }}
             onError={(e) => {
-              console.error('Error loading try-on image:', imageUrl);
+              console.error('Error loading try-on image:', displayImageUrl);
               const img = e.target as HTMLImageElement;
               // Try to reload without timestamp if it was added
-              if (imageUrl.includes('?t=')) {
+              if (imageUrl?.includes('?t=')) {
                 const urlWithoutTimestamp = imageUrl.split('?')[0];
                 if (urlWithoutTimestamp !== imageUrl && img.src !== urlWithoutTimestamp) {
                   img.src = urlWithoutTimestamp;
                 }
               } else {
                 // For data URLs, try reloading after a short delay
-                if (imageUrl.startsWith('data:')) {
+                if (imageUrl?.startsWith('data:')) {
                   setTimeout(() => {
                     if (img.src === imageUrl) {
                       img.src = imageUrl;
@@ -203,7 +212,8 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
               />
             </div>
           )}
-          <div className="absolute bottom-2 sm:bottom-3 right-2 sm:right-3 flex flex-col sm:flex-row gap-2">
+          {showResultActions && imageUrl && (
+            <div className="absolute bottom-2 sm:bottom-3 right-2 sm:right-3 flex flex-col sm:flex-row gap-2">
             <button
               onClick={handleDownloadClean}
               className="flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg bg-[#101114] px-3 py-2.5 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(16,17,20,0.24)] transition-colors hover:bg-[#20232a] active:bg-[#20232a] sm:px-3 sm:py-2 sm:text-sm touch-manipulation select-none"
@@ -220,7 +230,8 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
               <Share2 size={16} className="sm:w-4 sm:h-4" />
               <span className="hidden sm:inline">Try another outfit</span>
             </button>
-          </div>
+            </div>
+          )}
         </>
       ) : (
         <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_50%_35%,#ffffff_0%,#eef2f7_54%,#dbe3ee_100%)] px-4 text-slate-400">

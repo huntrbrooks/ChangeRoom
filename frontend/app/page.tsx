@@ -16,15 +16,29 @@ import { PaywallModal } from './components/PaywallModal';
 import { ShopSaveModal, type ShopSaveResult, type ShopSaveClothingItem } from './components/ShopSaveModal';
 import {
   BadgeCheck,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CreditCard,
+  Download,
+  Expand,
+  Heart,
   LayoutGrid,
   Loader2,
+  Plus,
   Search,
   Shirt,
+  SlidersHorizontal,
   Sparkles,
+  ThumbsDown,
+  ThumbsUp,
+  Upload,
+  UserPlus,
   UserRound,
   WandSparkles,
   Zap,
+  ZoomIn,
 } from 'lucide-react';
 import { getWearingStylePromptText } from '@/lib/wearingStyles';
 import { isBypassUser } from '@/lib/bypass-config';
@@ -94,6 +108,101 @@ const formatCurrency = (value?: number | null, currency?: string | null) => {
     return `$${value.toFixed(2)}`;
   }
 };
+
+const PREVIEW_SAMPLE_MODELS = [
+  {
+    label: 'Studio front',
+    src: '/preview-assets/sample-woman-1.png',
+    filename: 'studio-front-sample.png',
+  },
+  {
+    label: 'Menswear fit',
+    src: '/preview-assets/sample-man.png',
+    filename: 'menswear-sample.png',
+  },
+  {
+    label: 'Denim casual',
+    src: '/preview-assets/sample-woman-2.png',
+    filename: 'denim-casual-sample.png',
+  },
+];
+
+const PREVIEW_WARDROBE_ITEMS = [
+  {
+    label: 'Classic Trench Coat',
+    src: '/preview-assets/wardrobe-coat.png',
+    filename: 'classic-trench-coat.png',
+    category: 'upper_body',
+  },
+  {
+    label: 'Black Blazer',
+    src: '/preview-assets/wardrobe-blazer.png',
+    filename: 'black-blazer.png',
+    category: 'upper_body',
+  },
+  {
+    label: 'Ribbed Tank Top',
+    src: '/preview-assets/wardrobe-tank.png',
+    filename: 'ribbed-tank-top.png',
+    category: 'upper_body',
+  },
+  {
+    label: 'High Rise Straight Jeans',
+    src: '/preview-assets/wardrobe-jeans.png',
+    filename: 'high-rise-straight-jeans.png',
+    category: 'lower_body',
+  },
+  {
+    label: 'Leather Shoulder Bag',
+    src: '/preview-assets/wardrobe-bag.png',
+    filename: 'leather-shoulder-bag.png',
+    category: 'accessories',
+  },
+  {
+    label: 'Slingback Heels',
+    src: '/preview-assets/wardrobe-heels.png',
+    filename: 'slingback-heels.png',
+    category: 'shoes',
+  },
+];
+
+const PREVIEW_SHOP_PRODUCTS = [
+  {
+    title: 'Classic Trench Coat',
+    price: '$129.00',
+    thumbnail: '/preview-assets/product-coat.png',
+    source: 'Preview',
+    link: '#',
+  },
+  {
+    title: 'High Rise Straight Jeans',
+    price: '$89.00',
+    thumbnail: '/preview-assets/product-jeans.png',
+    source: 'Preview',
+    link: '#',
+  },
+  {
+    title: 'Ribbed Tank Top',
+    price: '$29.00',
+    thumbnail: '/preview-assets/product-tank.png',
+    source: 'Preview',
+    link: '#',
+  },
+  {
+    title: 'Leather Shoulder Bag',
+    price: '$79.00',
+    thumbnail: '/preview-assets/product-bag.png',
+    source: 'Preview',
+    link: '#',
+  },
+  {
+    title: 'Slingback Heels',
+    price: '$99.00',
+    thumbnail: '/preview-assets/product-heels.png',
+    source: 'Preview',
+    link: '#',
+  },
+];
 
 function HomeContentWithClerk() {
   const { user, isLoaded } = useUser();
@@ -193,6 +302,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const virtualMirrorSectionRef = useRef<HTMLElement | null>(null);
   const stickyHeaderRef = useRef<HTMLElement | null>(null);
   const mobileActionBarRef = useRef<HTMLDivElement | null>(null);
+  const selfUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const wardrobeUploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const withRetry = useCallback(
     async function withRetryFn<T>(fn: () => Promise<T>, retries = 2, delayMs = 1500): Promise<T> {
@@ -548,6 +659,49 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     storage_path?: string;
     clothing_item_id?: string;
   }
+
+  const createPreviewAnalysis = useCallback((
+    file: File,
+    index: number,
+    label?: string,
+    category = 'upper_body'
+  ): AnalyzedItem => {
+    const cleanLabel =
+      label ||
+      file.name
+        .replace(/\.[^.]+$/, '')
+        .replace(/[-_]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim() ||
+      'Wardrobe item';
+
+    const fileWithMeta = file as FileWithMetadata;
+    fileWithMeta.category = category;
+    fileWithMeta.item_type = cleanLabel;
+    fileWithMeta.detailed_description = cleanLabel;
+    fileWithMeta.metadata = {
+      ...(fileWithMeta.metadata || {}),
+      category,
+      item_type: cleanLabel,
+      description: cleanLabel,
+    };
+
+    return {
+      index,
+      original_filename: file.name,
+      status: 'success',
+      analysis: {
+        body_region: category,
+        category,
+        item_type: cleanLabel,
+        short_description: cleanLabel,
+        description: cleanLabel,
+        suggested_filename: file.name,
+        metadata: fileWithMeta.metadata,
+        tags: ['studio-preview'],
+      },
+    };
+  }, []);
 
   const persistClothingItems = useCallback(async (itemsToPersist: ImageWithAnalysis[]) => {
     if (!itemsToPersist || itemsToPersist.length === 0) {
@@ -1098,6 +1252,132 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
     console.log('Product added from URL:', product.title, product.productUrl);
   }, [requireAuth, wardrobeItems.length, persistClothingItems]);
+
+  const userPreviewUrls = useMemo(() => {
+    if (typeof URL === 'undefined') return [];
+    return userImages.slice(0, 3).map((file) => ({
+      name: file.name,
+      url: URL.createObjectURL(file),
+    }));
+  }, [userImages]);
+
+  useEffect(() => {
+    return () => {
+      userPreviewUrls.forEach(({ url }) => URL.revokeObjectURL(url));
+    };
+  }, [userPreviewUrls]);
+
+  const wardrobePreviewUrls = useMemo(() => {
+    if (typeof URL === 'undefined') return [];
+    return wardrobeItems.slice(0, 6).map((entry) => {
+      const fileMeta = entry.file as FileWithMetadata;
+      const hostedUrl = ensureAbsoluteUrl(fileMeta.file_url || entry.analysis?.file_url || null);
+      return {
+        name:
+          entry.analysis?.analysis?.item_type ||
+          entry.analysis?.analysis?.short_description ||
+          entry.file.name,
+        url: hostedUrl || URL.createObjectURL(entry.file),
+        shouldRevoke: !hostedUrl,
+      };
+    });
+  }, [wardrobeItems]);
+
+  useEffect(() => {
+    return () => {
+      wardrobePreviewUrls.forEach(({ url, shouldRevoke }) => {
+        if (shouldRevoke) URL.revokeObjectURL(url);
+      });
+    };
+  }, [wardrobePreviewUrls]);
+
+  const loadPublicAssetAsFile = useCallback(async (src: string, filename: string) => {
+    const response = await fetch(src);
+    if (!response.ok) {
+      throw new Error(`Could not load ${filename}`);
+    }
+    const blob = await response.blob();
+    return new File([blob], filename, { type: blob.type || 'image/png' });
+  }, []);
+
+  const inferPreviewCategory = useCallback((name: string) => {
+    const normalized = name.toLowerCase();
+    if (/jean|pant|trouser|skirt|short/.test(normalized)) return 'lower_body';
+    if (/shoe|heel|boot|sneaker/.test(normalized)) return 'shoes';
+    if (/bag|purse|hat|cap|jewellery|jewelry/.test(normalized)) return 'accessories';
+    return 'upper_body';
+  }, []);
+
+  const handleSelfFilesSelected = useCallback(
+    (fileList: FileList | null) => {
+      const files = Array.from(fileList || [])
+        .filter((file) => file.type.startsWith('image/'))
+        .slice(0, 5);
+      if (files.length === 0) return;
+      if (!requireAuth()) return;
+      setError(null);
+      setUserImages(files);
+    },
+    [requireAuth]
+  );
+
+  const handleWardrobeFilesSelected = useCallback(
+    (fileList: FileList | null) => {
+      const remainingSlots = Math.max(0, 5 - wardrobeItems.length);
+      const shouldReplace = remainingSlots === 0;
+      const limit = shouldReplace ? 5 : remainingSlots;
+      const files = Array.from(fileList || [])
+        .filter((file) => file.type.startsWith('image/'))
+        .slice(0, limit);
+      if (files.length === 0) return;
+      if (!requireAuth()) return;
+      const analyses = files.map((file, index) =>
+        createPreviewAnalysis(
+          file,
+          shouldReplace ? index : wardrobeItems.length + index,
+          undefined,
+          inferPreviewCategory(file.name)
+        )
+      );
+      setError(null);
+      handleBulkUpload(files, analyses, shouldReplace);
+    },
+    [createPreviewAnalysis, handleBulkUpload, inferPreviewCategory, requireAuth, wardrobeItems.length]
+  );
+
+  const handleSampleModelSelect = useCallback(
+    async (sample: (typeof PREVIEW_SAMPLE_MODELS)[number]) => {
+      if (!requireAuth()) return;
+      try {
+        const file = await loadPublicAssetAsFile(sample.src, sample.filename);
+        setError(null);
+        setUserImages([file]);
+      } catch (selectError) {
+        console.error('Failed to select sample model', selectError);
+        setError('Could not load that sample. Please upload a photo instead.');
+      }
+    },
+    [loadPublicAssetAsFile, requireAuth]
+  );
+
+  const handleWardrobePreviewSelect = useCallback(
+    async (item: (typeof PREVIEW_WARDROBE_ITEMS)[number]) => {
+      if (!requireAuth()) return;
+      try {
+        const file = await loadPublicAssetAsFile(item.src, item.filename);
+        const analysis = createPreviewAnalysis(file, 0, item.label, item.category);
+        setError(null);
+        setWardrobeItems([{ file, analysis }]);
+        setBlockedWardrobeIndices(new Set());
+        setAdjustingDescriptionIndices(new Set());
+        setAdjustDescriptionFeedback(new Map());
+      } catch (selectError) {
+        console.error('Failed to select wardrobe preview item', selectError);
+        setError('Could not load that wardrobe item. Please upload one instead.');
+      }
+    },
+    [createPreviewAnalysis, loadPublicAssetAsFile, requireAuth]
+  );
 
   const shopSaveReadyItems = useMemo<ShopSaveClothingItem[]>(() => {
     return wardrobeItems.reduce<ShopSaveClothingItem[]>((acc, entry) => {
@@ -2144,82 +2424,496 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   };
 
   return (
-    <main className="min-h-screen bg-[#f7f8fb] text-[#101114] font-sans">
+    <main className="min-h-screen bg-white text-[#101114] font-sans">
       <header
         ref={stickyHeaderRef}
-        className="sticky top-0 z-50 border-b border-slate-200 bg-white/90 text-[#101114] backdrop-blur-md safe-area-inset"
+        className="sticky top-0 z-50 border-b border-[#d9dde5] bg-white/95 text-[#101114] shadow-[0_1px_12px_rgba(15,23,42,0.08)] backdrop-blur-md safe-area-inset"
       >
-        <div className="mx-auto flex w-full max-w-[1540px] items-center justify-between gap-4 px-3 py-3 sm:px-6 lg:px-10">
-          <div className="flex min-w-0 flex-shrink-0 items-center gap-3">
-            <span className="block text-sm font-semibold text-[#101114] sm:hidden">
-              IGETDRESSED.ONLINE
-            </span>
-            <Image 
-              src="/main logo.png" 
-              alt="IGETDRESSED.ONLINE logo" 
-              width={5065}
-              height={1042}
-              priority
-              className="hidden object-contain invert sm:block"
-              style={{ width: 'clamp(136px, 16vw, 188px)', height: 'auto' }}
-              sizes="(max-width: 640px) 180px, 260px"
-            />
-          </div>
-          <nav className="flex flex-shrink-0 items-center gap-2 text-xs font-medium text-slate-700 sm:gap-3 sm:text-sm md:gap-4">
-            <Link
-              href="/"
-              className="hidden items-center gap-2 rounded-lg border border-[#6d5dfc]/20 bg-[#6d5dfc]/10 px-3 py-2 font-semibold text-[#5b46f4] shadow-sm md:inline-flex"
-            >
-              <LayoutGrid size={15} />
-              Studio
+        <div className="mx-auto grid min-h-[84px] w-full max-w-[1435px] grid-cols-[1fr_auto] items-center gap-3 px-5 sm:px-8 md:grid-cols-[1fr_auto_1fr] md:gap-4">
+          <Link href="/" className="min-w-0 truncate text-base font-black tracking-[-0.02em] text-black sm:text-2xl">
+            IGetDressed.Online
+          </Link>
+
+          <nav className="hidden items-center gap-10 text-sm font-medium text-black md:flex">
+            <Link href="/" className="relative flex h-[84px] items-center gap-2 px-2">
+              <LayoutGrid size={16} strokeWidth={1.8} />
+              <span>Studio</span>
+              <span className="absolute inset-x-0 bottom-4 h-0.5 rounded-full bg-[#6b35f4]" />
             </Link>
-            {isAuthenticated && (
-              <>
-                {billing ? (
-                  <>
-                    {isBypass ? (
-                      <div className="flex min-h-10 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-emerald-700 sm:gap-2 sm:px-3">
-                        <Zap size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
-                        <span className="hidden whitespace-nowrap font-semibold sm:inline">Unlimited Access</span>
-                        <span className="sm:hidden font-semibold">∞</span>
-                      </div>
-                    ) : (
-                      <Link 
-                        href="/pricing" 
-                        className="flex min-h-10 items-center gap-1.5 rounded-lg border border-[#009b9b]/20 bg-[#009b9b]/10 px-2.5 py-1.5 text-[#007f7f] transition-colors hover:bg-[#009b9b]/20 sm:gap-2 sm:px-3 touch-manipulation"
-                      >
-                        <CreditCard size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
-                        <span className="hidden sm:inline whitespace-nowrap">
-                          {isOnTrial ? 'Free Trial' : `${billing.creditsAvailable} credits`}
-                        </span>
-                        <span className="sm:hidden font-semibold">{billing.creditsAvailable}</span>
-                      </Link>
-                    )}
-                  </>
-                ) : billingStatus === 'error' ? (
-                  <Link
-                    href="/billing"
-                    onClick={() => fetchBilling()}
-                    title={billingError || 'Billing is temporarily unavailable.'}
-                    className="flex min-h-10 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-700 transition-colors hover:border-slate-300 sm:gap-2 sm:px-3 touch-manipulation"
-                  >
-                    <CreditCard size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
-                    <span className="hidden sm:inline whitespace-nowrap">Credits unavailable</span>
-                    <span className="sm:hidden font-semibold">--</span>
-                  </Link>
-                ) : null}
-              </>
-            )}
-            <div className="hidden md:flex items-center gap-6">
-              <Link href="/pricing" className="whitespace-nowrap transition-colors hover:text-black">Pricing</Link>
-              <Link href="/how-it-works" className="whitespace-nowrap transition-colors hover:text-black">How it Works</Link>
-              <Link href="/about" className="whitespace-nowrap transition-colors hover:text-black">About</Link>
-            </div>
+            <Link href="/pricing" className="transition-colors hover:text-[#6b35f4]">
+              Pricing
+            </Link>
+            <Link href="/about" className="transition-colors hover:text-[#6b35f4]">
+              About
+            </Link>
           </nav>
+
+          <div className="flex items-center justify-end gap-4">
+            <Link
+              href="/pricing"
+              className="hidden items-center gap-2 text-sm font-semibold text-[#008b8b] sm:flex"
+            >
+              <Sparkles size={19} fill="#008b8b" strokeWidth={1.6} />
+              {isBypass ? 'Unlimited' : `${billing?.creditsAvailable ?? 120} Credits`}
+            </Link>
+            <div className="hidden h-8 w-px bg-slate-200 sm:block" />
+            {isAuthenticated ? (
+              <button
+                type="button"
+                className="flex items-center gap-2"
+                aria-label="Account menu"
+              >
+                <span className="relative h-10 w-10 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200">
+                  {user?.imageUrl ? (
+                    <Image
+                      src={user.imageUrl}
+                      alt={user.fullName || 'Account'}
+                      fill
+                      sizes="40px"
+                      className="object-cover"
+                    />
+                  ) : (
+                    <Image
+                      src="/preview-assets/sample-woman-1.png"
+                      alt="Account"
+                      fill
+                      sizes="40px"
+                      className="object-cover"
+                    />
+                  )}
+                </span>
+                <ChevronDown size={18} className="hidden text-black sm:block" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => router.push('/sign-in')}
+                className="rounded-lg bg-black px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-800 sm:px-4"
+              >
+                Sign in
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
-      <div className="mx-auto w-full max-w-[1540px] px-3 py-5 pb-28 sm:px-6 sm:py-8 sm:pb-12 lg:px-10 lg:py-10 lg:pb-12">
+      <div className="mx-auto w-full max-w-[1435px] px-5 pb-24 pt-10 sm:px-8 sm:pt-12 lg:pb-10">
+        <div className="grid gap-9 lg:grid-cols-[minmax(0,1.02fr)_minmax(520px,0.9fr)] lg:items-start">
+          <section className="min-w-0">
+            <h1 className="max-w-[680px] text-[2.75rem] font-black leading-[0.98] tracking-[-0.04em] text-black sm:text-[3.55rem]">
+              Virtual Try-On Studio
+            </h1>
+            <p className="mt-4 text-lg leading-7 text-slate-600">
+              See it on you. Shop with confidence.
+            </p>
+
+            <div className="mt-5 space-y-3">
+              <section className="rounded-xl border border-[#dfe3ea] bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.08)]">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h2 className="flex items-center gap-3 text-lg font-bold text-black">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#101720] text-sm font-bold text-white shadow-[0_10px_20px_rgba(15,23,42,0.18)]">
+                      1
+                    </span>
+                    Upload Yourself
+                  </h2>
+                </div>
+
+                <input
+                  ref={selfUploadInputRef}
+                  className="sr-only"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={(event) => {
+                    handleSelfFilesSelected(event.currentTarget.files);
+                    event.currentTarget.value = '';
+                  }}
+                />
+
+                <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_44px_minmax(250px,1.25fr)] md:items-center">
+                  <button
+                    type="button"
+                    onClick={() => selfUploadInputRef.current?.click()}
+                    className="group relative flex min-h-[158px] flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-white text-center transition-colors hover:border-[#6b35f4] hover:bg-[#f8f6ff]"
+                  >
+                    {userPreviewUrls[0] ? (
+                      <img
+                        src={userPreviewUrls[0].url}
+                        alt={userPreviewUrls[0].name}
+                        className="absolute inset-0 h-full w-full object-cover"
+                      />
+                    ) : (
+                      <>
+                        <UserPlus size={54} className="mb-3 text-[#6b35f4]" strokeWidth={1.6} />
+                        <span className="text-sm font-semibold text-black">Upload full-body photo</span>
+                        <span className="mt-1 text-sm text-slate-500">PNG, JPG up to 10MB</span>
+                      </>
+                    )}
+                    {userPreviewUrls[0] && (
+                      <span className="absolute inset-x-0 bottom-0 bg-black/55 px-3 py-2 text-sm font-semibold text-white">
+                        Change photo
+                      </span>
+                    )}
+                  </button>
+
+                  <div className="hidden items-center justify-center md:flex">
+                    <div className="relative h-[158px] w-px bg-slate-200">
+                      <span className="absolute left-1/2 top-1/2 flex h-10 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-sm text-slate-500 shadow-sm">
+                        or
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="mb-3 text-sm font-medium text-slate-700">Choose a sample</p>
+                    <div className="grid grid-cols-3 gap-3">
+                      {PREVIEW_SAMPLE_MODELS.map((sample) => (
+                        <button
+                          key={sample.filename}
+                          type="button"
+                          onClick={() => void handleSampleModelSelect(sample)}
+                          className="relative aspect-[0.8] overflow-hidden rounded-lg border border-slate-200 bg-slate-50 transition-all hover:border-[#6b35f4] hover:shadow-[0_8px_20px_rgba(107,53,244,0.16)]"
+                          aria-label={`Choose ${sample.label}`}
+                        >
+                          <Image
+                            src={sample.src}
+                            alt={sample.label}
+                            fill
+                            sizes="110px"
+                            className="object-cover"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between gap-4 text-sm">
+                  <span className="flex items-center gap-2 text-slate-500">
+                    <CheckCircle2 size={17} className="text-[#12a7a2]" />
+                    <span>Photo looks good</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => selfUploadInputRef.current?.click()}
+                    className="font-semibold text-[#6b35f4] transition-colors hover:text-[#4c24c8]"
+                  >
+                    Change
+                  </button>
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-[#dfe3ea] bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.08)]">
+                <input
+                  ref={wardrobeUploadInputRef}
+                  className="sr-only"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={(event) => {
+                    handleWardrobeFilesSelected(event.currentTarget.files);
+                    event.currentTarget.value = '';
+                  }}
+                />
+
+                <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <h2 className="flex items-center gap-3 text-lg font-bold text-black">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#101720] text-sm font-bold text-white shadow-[0_10px_20px_rgba(15,23,42,0.18)]">
+                      2
+                    </span>
+                    Choose Wardrobe
+                  </h2>
+                  <div className="flex items-center gap-3">
+                    <div className="hidden h-9 w-48 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-400 sm:flex">
+                      <Search size={16} />
+                      <span>Search clothing</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => wardrobeUploadInputRef.current?.click()}
+                      className="flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
+                    >
+                      <SlidersHorizontal size={15} />
+                      Filters
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-7 border-b border-slate-200 text-sm font-medium text-slate-500">
+                  {['Women', 'Men', 'Unisex'].map((tab, index) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      className={`relative pb-3 ${index === 0 ? 'text-[#6b35f4]' : 'hover:text-slate-900'}`}
+                    >
+                      {tab}
+                      {index === 0 && (
+                        <span className="absolute inset-x-0 bottom-[-1px] h-0.5 rounded-full bg-[#6b35f4]" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-3 flex items-stretch gap-3 overflow-x-auto pb-1">
+                  {wardrobePreviewUrls.length > 0
+                    ? wardrobePreviewUrls.map((item, index) => (
+                        <button
+                          key={`${item.name}-${index}`}
+                          type="button"
+                          onClick={() => handleItemRemove(index)}
+                          className={`relative h-[110px] w-[110px] flex-none overflow-hidden rounded-lg border bg-white transition-all ${
+                            index === 0
+                              ? 'border-[#6b35f4] shadow-[0_0_0_1px_#6b35f4]'
+                              : 'border-slate-200 hover:border-[#6b35f4]'
+                          }`}
+                          aria-label={`Remove ${item.name}`}
+                        >
+                          <img src={item.url} alt={item.name} className="h-full w-full object-cover" />
+                          {index === 0 && (
+                            <span className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#6b35f4] text-white">
+                              <CheckCircle2 size={15} />
+                            </span>
+                          )}
+                        </button>
+                      ))
+                    : PREVIEW_WARDROBE_ITEMS.map((item, index) => (
+                        <button
+                          key={item.filename}
+                          type="button"
+                          onClick={() => void handleWardrobePreviewSelect(item)}
+                          className={`relative h-[110px] w-[110px] flex-none overflow-hidden rounded-lg border bg-white transition-all ${
+                            index === 0
+                              ? 'border-[#6b35f4] shadow-[0_0_0_1px_#6b35f4]'
+                              : 'border-slate-200 hover:border-[#6b35f4]'
+                          }`}
+                          aria-label={`Choose ${item.label}`}
+                        >
+                          <Image src={item.src} alt={item.label} fill sizes="110px" className="object-cover" />
+                          {index === 0 && (
+                            <span className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#6b35f4] text-white">
+                              <CheckCircle2 size={15} />
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                  <button
+                    type="button"
+                    onClick={() => wardrobeUploadInputRef.current?.click()}
+                    className="flex h-[110px] w-[74px] flex-none items-center justify-center rounded-full border border-slate-200 bg-white text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.12)] transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
+                    aria-label="Upload clothing"
+                  >
+                    <ChevronRight size={22} />
+                  </button>
+                </div>
+              </section>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (isGenerating) return;
+                  if (lacksCredits) {
+                    redirectToPricing();
+                    return;
+                  }
+                  void handleGenerate().catch((clickError) => {
+                    console.error('Error in handleGenerate:', clickError);
+                    setError('An error occurred while trying to generate your look. Please try again.');
+                    setIsGenerating(false);
+                  });
+                }}
+                disabled={isGenerating}
+                className="flex min-h-[54px] w-full items-center justify-center gap-3 rounded-lg bg-[#6b35f4] px-5 text-base font-bold text-white shadow-[0_14px_28px_rgba(107,53,244,0.28)] transition-all hover:bg-[#5c2bdd] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {isGenerating ? (
+                  <Loader2 size={20} className="animate-spin" />
+                ) : (
+                  <Sparkles size={21} fill="currentColor" strokeWidth={1.6} />
+                )}
+                <span>{isGenerating ? 'Generating your look...' : isGuestPitchDemo ? 'Launch demo preview' : 'Try it on'}</span>
+                {!isGenerating && (
+                  <span className="ml-auto rounded-full bg-[#5528c8] px-4 py-1.5 text-sm font-semibold text-white/90">
+                    {isOnTrial ? 'Free' : '2 Credits'}
+                  </span>
+                )}
+              </button>
+              {isGenerating && (
+                <button
+                  type="button"
+                  onClick={() => abortController?.abort()}
+                  className="w-full text-center text-sm font-medium text-slate-500 underline hover:text-[#6b35f4]"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          </section>
+
+          <section
+            ref={virtualMirrorSectionRef}
+            id="virtual-mirror"
+            className="scroll-mt-28 overflow-hidden rounded-lg bg-[#10141b] text-white shadow-[0_22px_48px_rgba(15,23,42,0.24)]"
+          >
+            <div className="flex min-h-[66px] items-center justify-between gap-3 border-b border-white/10 px-5">
+              <h2 className="flex items-center gap-2 text-base font-semibold text-white">
+                <Sparkles size={20} className="text-white" fill="white" strokeWidth={1.4} />
+                Virtual Mirror
+              </h2>
+              <div className="flex items-center gap-2 text-sm">
+                <button type="button" className="flex h-9 items-center gap-2 rounded-md border border-white/25 bg-white/5 px-4 text-white">
+                  <UserRound size={15} />
+                  Fit view
+                </button>
+                <button type="button" className="hidden h-9 items-center gap-2 rounded-md border border-white/10 bg-white/5 px-4 text-white md:flex">
+                  <ZoomIn size={15} />
+                  Zoom
+                </button>
+                <button type="button" className="flex h-9 w-9 items-center justify-center rounded-md text-white/80 hover:bg-white/10" aria-label="Expand mirror">
+                  <Expand size={17} />
+                </button>
+              </div>
+            </div>
+
+            <div className="grid bg-white lg:grid-cols-[minmax(0,1fr)_124px]">
+              <div className="min-h-[420px] bg-[#e5e1d9] lg:h-[567px] lg:min-h-0">
+                <VirtualMirror
+                  imageUrl={generatedImage}
+                  placeholderImageUrl="/preview-assets/mirror-look.png"
+                  isLoading={isTryOnLoading}
+                  errorMessage={error}
+                  onStageChange={handleLoaderStageChange}
+                  isPreview={isPreviewResult}
+                  onDownloadClean={redirectToPricing}
+                  onTryAnother={redirectToPricing}
+                  onImageLoaded={handleResultImageLoaded}
+                  showResultActions={false}
+                  className="h-full min-h-[420px] rounded-none border-0 lg:min-h-0 lg:aspect-auto"
+                />
+              </div>
+              <div className="hidden border-l border-slate-200 bg-white p-5 lg:block">
+                <div className="space-y-4">
+                  {[
+                    { src: '/preview-assets/thumb-front.png', alt: 'Front look' },
+                    { src: '/preview-assets/thumb-back.png', alt: 'Back look' },
+                    { src: '/preview-assets/thumb-detail.png', alt: 'Detail look' },
+                  ].map((thumb, index) => (
+                    <button
+                      key={thumb.src}
+                      type="button"
+                      className={`relative aspect-[0.72] w-full overflow-hidden rounded-lg border bg-slate-50 ${
+                        index === 0 ? 'border-[#6b35f4] shadow-[0_0_0_2px_#6b35f4]' : 'border-slate-200'
+                      }`}
+                      aria-label={thumb.alt}
+                    >
+                      <Image src={thumb.src} alt={thumb.alt} fill sizes="84px" className="object-cover" />
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="flex aspect-[0.72] w-full flex-col items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
+                  >
+                    <Plus size={22} />
+                    <span className="text-sm">Add look</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex min-h-[72px] items-center justify-between gap-4 px-6">
+              <p className="flex items-center gap-2 text-[11px] font-semibold leading-tight text-[#2dd4cf] sm:gap-3 sm:text-base">
+                <Sparkles size={22} fill="#2dd4cf" strokeWidth={1.5} />
+                <span className="hidden sm:inline">Looks great! Ready to shop.</span>
+                <span className="sm:hidden">Ready to shop.</span>
+              </p>
+              <div className="flex items-center gap-5 text-white/80">
+                <button type="button" className="transition-colors hover:text-white" aria-label="Like look">
+                  <ThumbsUp size={22} />
+                </button>
+                <button type="button" className="transition-colors hover:text-white" aria-label="Dislike look">
+                  <ThumbsDown size={22} />
+                </button>
+                <span className="h-7 w-px bg-white/15" />
+                <button
+                  type="button"
+                  onClick={generatedImage ? redirectToPricing : undefined}
+                  className="transition-colors hover:text-white"
+                  aria-label="Download look"
+                >
+                  <Download size={22} />
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section className="mt-5 border-t border-slate-200 pt-4">
+          <div className="mb-4 flex items-center justify-between gap-4">
+            <div className="flex items-baseline gap-4">
+              <h2 className="text-xl font-bold tracking-[-0.02em] text-black">Shop the Look</h2>
+              <button
+                type="button"
+                onClick={() => generatedImage && user ? setIsShopSaveOpen(true) : undefined}
+                className="text-sm font-semibold text-[#6b35f4] hover:text-[#4c24c8]"
+              >
+                View all
+              </button>
+            </div>
+            <div className="flex items-center gap-3">
+              <button type="button" className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:text-black" aria-label="Previous products">
+                <ChevronLeft size={18} />
+              </button>
+              <button type="button" className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-black shadow-sm" aria-label="Next products">
+                <ChevronRight size={18} />
+              </button>
+            </div>
+          </div>
+
+          {productSearchError && (
+            <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {productSearchError}
+            </p>
+          )}
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            {(products.length > 0 ? products : PREVIEW_SHOP_PRODUCTS).map((product, index) => (
+              <article
+                key={`${product.title}-${index}`}
+                className="grid min-h-[148px] grid-cols-[90px_minmax(0,1fr)] gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-[0_8px_22px_rgba(15,23,42,0.06)]"
+              >
+                <div className="relative overflow-hidden rounded-md bg-slate-50">
+                  <img
+                    src={product.thumbnail}
+                    alt={product.title}
+                    className="h-full w-full object-contain"
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+                <div className="min-w-0">
+                  <div className="mb-3 flex items-start justify-between gap-2">
+                  <h3 className="text-sm font-medium leading-5 text-black">{product.title}</h3>
+                    <Heart size={18} className="flex-none text-slate-500" />
+                  </div>
+                  <p className="text-sm font-semibold text-black">{product.price}</p>
+                  <a
+                    href={product.link || '#'}
+                    target={product.link && product.link !== '#' ? '_blank' : undefined}
+                    rel={product.link && product.link !== '#' ? 'noopener noreferrer' : undefined}
+                    className="mt-4 inline-flex h-9 items-center justify-center whitespace-nowrap rounded-md border border-slate-200 px-3 text-sm font-medium text-slate-600 transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
+                  >
+                    View product
+                  </a>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          {isProductSearchLoading && (
+            <p className="mt-3 text-sm text-slate-500">Finding close matches...</p>
+          )}
+        </section>
+      </div>
+
+      <div className="hidden">
         <section className="mb-6 grid gap-5 lg:mb-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-end">
           <div>
             <h1 className="max-w-4xl text-[2.4rem] font-semibold leading-[0.98] text-[#101114] sm:text-[4rem] lg:text-[5.25rem]">
@@ -2632,8 +3326,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           <div className="space-y-4 sm:space-y-5 lg:col-span-5 lg:space-y-6">
             
             <section
-              ref={virtualMirrorSectionRef}
-              id="virtual-mirror"
+              id="legacy-virtual-mirror"
               className="scroll-mt-24 overflow-hidden rounded-lg border border-slate-800 bg-[#101114] p-3 text-white shadow-[0_28px_80px_rgba(15,23,42,0.24)] sm:p-4"
             >
               <div className="mb-3 flex items-center justify-between gap-3">
@@ -2887,7 +3580,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
       <div
         ref={mobileActionBarRef}
-        className="lg:hidden fixed inset-x-0 bottom-0 z-40 px-3 pb-[calc(14px+env(safe-area-inset-bottom))] pt-3 bg-white/95 backdrop-blur-md border-t border-black/10 shadow-[0_-8px_30px_rgba(0,0,0,0.12)]"
+        className="hidden"
       >
           <div className="flex items-center gap-3">
             <div className="flex-1 min-w-0">

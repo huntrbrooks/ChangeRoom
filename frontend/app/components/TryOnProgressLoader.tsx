@@ -1,14 +1,7 @@
 'use client'
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  BadgeCheck,
-  Shirt,
-  Sparkles,
-  UserRound,
-  WandSparkles,
-  type LucideIcon,
-} from 'lucide-react'
+import Image from 'next/image'
 
 type TryOnProgressLoaderProps = {
   /** Whether generation is currently running */
@@ -29,7 +22,8 @@ type Stage = {
   id: number
   label: string
   description: string
-  Icon: LucideIcon
+  imageSrc: string
+  imageAlt: string
   targetPercent: number
 }
 
@@ -38,35 +32,40 @@ const STAGES: Stage[] = [
     id: 1,
     label: 'Analyzing images',
     description: 'Reading your photos and garments',
-    Icon: UserRound,
+    imageSrc: '/loader%20reference/icons%20for%20loader-01.png',
+    imageAlt: 'Clothing analysis icon',
     targetPercent: 8,
   },
   {
     id: 2,
     label: 'Constructing outfit',
     description: 'Pairing pieces for the best look',
-    Icon: Shirt,
+    imageSrc: '/loader%20reference/icons%20for%20loader-02.png',
+    imageAlt: 'Outfit construction icon',
     targetPercent: 28,
   },
   {
     id: 3,
     label: 'Dressing model',
     description: 'Applying garments on your model',
-    Icon: WandSparkles,
+    imageSrc: '/loader%20reference/icons%20for%20loader-03.png',
+    imageAlt: 'Model dressing icon',
     targetPercent: 58,
   },
   {
     id: 4,
-    label: 'Final details',
+    label: 'Final Details',
     description: 'Polishing lighting and fit',
-    Icon: Sparkles,
+    imageSrc: '/loader%20reference/icons%20for%20loader-04.png',
+    imageAlt: 'Final details icon',
     targetPercent: 82,
   },
   {
     id: 5,
     label: 'Complete',
     description: 'Your look is ready',
-    Icon: BadgeCheck,
+    imageSrc: '/loader%20reference/icons%20for%20loader-05.png',
+    imageAlt: 'Complete try-on icon',
     targetPercent: 100,
   },
 ]
@@ -331,7 +330,6 @@ export function TryOnProgressLoader({
   const displayDescription = isError
     ? failureMessage || 'We could not generate this look. Please try again.'
     : stage.description
-  const StageIcon = stage.Icon
 
   useEffect(() => {
     onStageChange?.(stage.id)
@@ -341,7 +339,7 @@ export function TryOnProgressLoader({
     <div
       className={`
         absolute inset-0 z-10 flex flex-col items-center justify-center 
-        bg-white/92 backdrop-blur-sm
+        bg-white/96 backdrop-blur-[2px]
         ${isExiting ? 'opacity-0' : 'opacity-100'}
       `}
       style={{
@@ -356,54 +354,72 @@ export function TryOnProgressLoader({
       aria-label={`Processing stage ${stage.id} of 5: ${stage.label}`}
       role="status"
     >
-      <div className="flex flex-col items-center gap-4 px-6 text-center max-w-xs">
-        <div className="relative">
-          <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-full border-4 border-black/10 flex items-center justify-center relative">
-            <div
-              className="absolute inset-1 rounded-full border-4 border-orange-500/80 border-t-transparent animate-spin"
-              style={{ animationDuration: '2200ms' }}
-            />
-            <div className="absolute inset-1 rounded-full border-4 border-transparent border-t-black/80 animate-spin" style={{ animationDuration: '1400ms' }} />
-            <StageIcon
-              aria-hidden="true"
-              className="relative z-10 h-12 w-12 text-black sm:h-14 sm:w-14"
-              strokeWidth={1.8}
-            />
+      <div className="flex w-full max-w-[34rem] flex-col items-center px-3 text-center sm:px-6">
+        <div className="grid w-full grid-cols-6 items-start gap-x-1 gap-y-4 sm:gap-x-3 sm:gap-y-5">
+          {STAGES.map((s, idx) => {
+            const isActiveStage = !isError && idx === stageIndex
+            const isCompletedStage = !isError && idx < stageIndex
+            const isPendingStage = !isError && idx > stageIndex
+            const placement = s.id === 4 ? 'col-span-2 col-start-2' : s.id === 5 ? 'col-span-2 col-start-4' : 'col-span-2'
+
+            return (
+              <div key={s.id} className={`${placement} flex flex-col items-center`}>
+                <div
+                  className={`
+                    relative aspect-square w-20 rounded-full transition-all duration-500
+                    sm:w-24
+                    ${isActiveStage ? 'scale-110 drop-shadow-[0_0_18px_rgba(249,115,22,0.42)]' : ''}
+                    ${isCompletedStage ? 'opacity-95 saturate-110' : ''}
+                    ${isPendingStage ? 'opacity-45 grayscale-[20%]' : ''}
+                    ${isError ? 'opacity-55 grayscale' : ''}
+                  `}
+                >
+                  <Image
+                    src={s.imageSrc}
+                    alt={s.imageAlt}
+                    fill
+                    sizes="(max-width: 640px) 80px, 96px"
+                    className="object-contain"
+                    priority={s.id <= 3}
+                  />
+                </div>
+                <p
+                  className={`
+                    mt-1.5 max-w-[7rem] text-[11px] font-bold leading-tight text-black transition-colors duration-300
+                    sm:mt-2 sm:text-sm
+                    ${isActiveStage ? 'text-black' : ''}
+                    ${isPendingStage ? 'text-black/55' : ''}
+                    ${isError ? 'text-black/55' : ''}
+                  `}
+                >
+                  {s.label}
+                </p>
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="mt-5 w-full max-w-xs space-y-2 sm:mt-6">
+          <div className="space-y-1">
+            <p className="text-sm font-bold text-black sm:text-base">{displayLabel}</p>
+            <p className={`text-xs sm:text-sm ${isError ? 'text-red-600' : 'text-black/68'}`}>{displayDescription}</p>
           </div>
-        </div>
 
-        <div className="space-y-1">
-          <p className="text-sm sm:text-base font-bold uppercase tracking-wide text-black">{displayLabel}</p>
-          <p className={`text-xs sm:text-sm ${isError ? 'text-red-600' : 'text-black/70'}`}>{displayDescription}</p>
-        </div>
-
-        <div className="w-full">
-          <div className="w-full h-2 bg-black/10 rounded-full overflow-hidden">
+          <div className="pt-1.5">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-black/10">
             <div
-              className="h-full bg-black rounded-full transition-[width] duration-500 ease-out shadow-[0_0_10px_rgba(0,0,0,0.25)]"
+              className="h-full rounded-full bg-[#f47a20] shadow-[0_0_12px_rgba(244,122,32,0.4)] transition-[width] duration-500 ease-out"
               style={{ width: `${percentInt}%` }}
             />
           </div>
-          <div className="flex justify-between text-[11px] sm:text-xs text-black/60 mt-1">
+          <div className="mt-1 flex justify-between text-[11px] text-black/60 sm:text-xs">
             <span>Stage {stage.id}/5</span>
             <span>{percentInt}%</span>
           </div>
         </div>
-
-        <div className="flex gap-2 mt-1">
-          {STAGES.map((s, idx) => (
-            <span
-              key={s.id}
-              className={`
-                w-2 h-2 rounded-full transition-all
-                ${idx <= stageIndex ? 'bg-black' : 'bg-black/20'}
-              `}
-            />
-          ))}
         </div>
       </div>
     </div>
   )
 }
-
 
