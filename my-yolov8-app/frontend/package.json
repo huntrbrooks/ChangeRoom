@@ -2,38 +2,21 @@
   "name": "my-yolov8-frontend",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "dependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-scripts": "5.0.1"
+    "vite": "^7.2.7"
   },
   "overrides": {
-    "nth-check": "2.0.1",
-    "postcss": "8.4.38",
-    "webpack-dev-server": "5.2.2"
+    "postcss": "8.5.14"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test --passWithNoTests",
-    "eject": "react-scripts eject"
-  },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
+    "dev": "vite --host 0.0.0.0",
+    "start": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "echo \"No frontend tests configured for the YOLO demo\""
   }
 }

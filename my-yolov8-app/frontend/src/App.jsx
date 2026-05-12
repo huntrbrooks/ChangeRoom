@@ -14,7 +14,7 @@ function App() {
   const [history, setHistory] = useState([]);
 
   const apiBaseUrl = useMemo(
-    () => process.env.REACT_APP_API_URL || DEFAULT_API_URL,
+    () => import.meta.env.VITE_API_URL || DEFAULT_API_URL,
     []
   );
 

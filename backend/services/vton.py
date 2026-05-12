@@ -14,6 +14,7 @@ from .model_registry import (
     gemini_generate_content_endpoints,
     get_gemini_model_candidates,
     get_openai_model,
+    get_openai_model_candidates,
 )
 from .openrouter_fallback import (
     extract_image_url as extract_openrouter_image_url,
@@ -146,6 +147,37 @@ def is_nsfw_rejection(*, http_status: Optional[int] = None, error_text: Optional
     if http_status in (400, 403, 422):
         return any(keyword in text for keyword in NSFW_REJECTION_KEYWORDS)
     return any(keyword in text for keyword in ("nsfw", "sexually explicit", "nudity", "prohibited_content", "image_safety", "safety filter"))
+
+
+def is_openai_model_unsupported_error(
+    *,
+    http_status: Optional[int] = None,
+    error_text: Optional[str] = None,
+    error_code: Optional[str] = None,
+    error_type: Optional[str] = None,
+) -> bool:
+    """
+    Detect model availability/config errors so the OpenAI provider can move from
+    the newest image model to a known compatible fallback without wasting all
+    provider retries.
+    """
+    if http_status not in (400, 404):
+        return False
+    text = " ".join([error_text or "", error_code or "", error_type or ""]).lower()
+    if "model" not in text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "does not exist",
+            "not found",
+            "not supported",
+            "unsupported",
+            "invalid model",
+            "unknown model",
+            "not available",
+        )
+    )
 
 
 def rewrite_for_modesty_heuristic(
@@ -1097,10 +1129,7 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                 refs.append(
                     {
                         "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{first_user['mimeType']};base64,{first_user['base64']}",
-                            "detail": "high",
-                        },
+                        "url": f"data:{first_user['mimeType']};base64,{first_user['base64']}",
                     }
                 )
 
@@ -1109,10 +1138,7 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                     refs.append(
                         {
                             "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{item['mimeType']};base64,{item['base64']}",
-                                "detail": "high",
-                            },
+                            "url": f"data:{item['mimeType']};base64,{item['base64']}",
                         }
                     )
                 return refs
@@ -1139,10 +1165,7 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                 refs.append(
                     {
                         "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}",
-                            "detail": "high",
-                        },
+                        "url": f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}",
                     }
                 )
             except Exception as e:
@@ -1151,10 +1174,7 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                     refs.append(
                         {
                             "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{item['mimeType']};base64,{item['base64']}",
-                                "detail": "high",
-                            },
+                            "url": f"data:{item['mimeType']};base64,{item['base64']}",
                         }
                     )
             return refs
@@ -1365,6 +1385,8 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
         
         base_url = "https://api.openai.com/v1/images/edits"
         model_name = get_openai_model("tryon_image")
+        openai_model_candidates = get_openai_model_candidates("tryon_image", extra_models=[model_name])
+        openai_model_index = 0
         output_format = os.getenv("OPENAI_TRYON_OUTPUT_FORMAT", "jpeg").strip() or "jpeg"
         if output_format not in {"png", "jpeg", "webp"}:
             output_format = "jpeg"
@@ -1755,6 +1777,32 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                                 reason="openai_credit_exhausted",
                                 attempt=attempt,
                             )
+
+                        if is_openai_model_unsupported_error(
+                            http_status=response.status_code,
+                            error_text=error_text,
+                            error_code=str(error_code or ""),
+                            error_type=str(error_type or ""),
+                        ) and openai_model_index < len(openai_model_candidates) - 1:
+                            failed_model = model_name
+                            openai_model_index += 1
+                            model_name = openai_model_candidates[openai_model_index]
+                            retry_info.append({
+                                "attempt": attempt,
+                                "strategy": "openai_model_fallback",
+                                "reason": "openai_model_unsupported",
+                                "provider": "openai",
+                                "model": failed_model,
+                                "modificationsSummary": f"OpenAI model {failed_model} was unavailable; retrying with {model_name}.",
+                            })
+                            logger.warning(
+                                "OpenAI image model unavailable; switching from %s to %s after code=%s message=%s",
+                                failed_model,
+                                model_name,
+                                error_code or response.status_code,
+                                error_text[:300],
+                            )
+                            continue
 
                         should_rewrite = is_content_rejection(
                             http_status=response.status_code,

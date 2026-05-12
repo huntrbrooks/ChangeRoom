@@ -225,6 +225,56 @@ async def test_vton_falls_back_to_openrouter_when_openai_credit_exhausted(monkey
 
 
 @pytest.mark.asyncio
+async def test_vton_tries_openai_image_fallback_when_default_model_unavailable(monkeypatch, sample_image_bytes):
+    from services import vton
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.setenv("OPENAI_TRYON_IMAGE_MODEL", "gpt-image-2")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    seen_models = []
+
+    async def fake_openai_edit(_client, *, url, headers, data, files):
+        seen_models.append(data["model"])
+        if data["model"] == "gpt-image-2":
+            return DummyResponse(
+                ok=False,
+                status_code=404,
+                text="The model `gpt-image-2` does not exist or is not available for this account.",
+                data={
+                    "error": {
+                        "message": "The model `gpt-image-2` does not exist or is not available for this account.",
+                        "code": "model_not_found",
+                        "type": "invalid_request_error",
+                    }
+                },
+            )
+        return DummyResponse(ok=True, data={"data": [{"b64_json": "DDDD"}]})
+
+    monkeypatch.setattr(vton, "_openai_images_edit", fake_openai_edit)
+
+    result = await vton.generate_try_on(
+        [io.BytesIO(sample_image_bytes)],
+        [io.BytesIO(sample_image_bytes)],
+        category="upper_body",
+        garment_metadata={"description": "black t-shirt"},
+        user_attributes=None,
+        main_index=0,
+        user_quality_flags=None,
+    )
+
+    assert result["image_url"] == "data:image/jpeg;base64,DDDD"
+    assert seen_models[:2] == ["gpt-image-2", "gpt-image-1.5"]
+    assert any(
+        info.get("strategy") == "openai_model_fallback"
+        for info in result.get("retry_info", [])
+        if isinstance(info, dict)
+    )
+
+
+@pytest.mark.asyncio
 async def test_vton_can_use_openrouter_content_fallback_after_safety_rewrites(monkeypatch, sample_image_bytes):
     from services import vton
 

@@ -28,6 +28,7 @@ import {
   LayoutGrid,
   Loader2,
   Plus,
+  RefreshCw,
   Search,
   Shirt,
   SlidersHorizontal,
@@ -348,6 +349,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const wardrobeUploadInputRef = useRef<HTMLInputElement | null>(null);
   const actionFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const modelPhotoProcessingRunRef = useRef(0);
+  const modelPhotoAutoRunKeyRef = useRef<string | null>(null);
 
   const withRetry = useCallback(
     async function withRetryFn<T>(fn: () => Promise<T>, retries = 2, delayMs = 1500): Promise<T> {
@@ -538,10 +540,30 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     (files: File[]) => {
       setUserImages(files);
       setError(null);
+      modelPhotoAutoRunKeyRef.current = null;
       void preprocessModelPhotos(files);
     },
     [preprocessModelPhotos]
   );
+
+  useEffect(() => {
+    if (pitchDemoEnabled || backendAvailability !== 'healthy' || userImages.length === 0) {
+      return;
+    }
+    if (modelPhotoStatus !== 'idle') {
+      return;
+    }
+
+    const uploadKey = userImages
+      .map((file) => `${file.name}:${file.size}:${file.lastModified}`)
+      .join('|');
+    if (modelPhotoAutoRunKeyRef.current === uploadKey) {
+      return;
+    }
+
+    modelPhotoAutoRunKeyRef.current = uploadKey;
+    void preprocessModelPhotos(userImages);
+  }, [backendAvailability, modelPhotoStatus, pitchDemoEnabled, preprocessModelPhotos, userImages]);
 
   const handleLoaderStageChange = useCallback((stageId: number) => {
     logger.info('try_on_stage', { stageId, ts: Date.now() });
@@ -753,11 +775,16 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   });
   const lacksCredits =
     !isBypass && !isOnTrial && billingStatus === 'ready' && (!billing || !hasCreditsAvailable);
+  const modelPhotoReadyForTryOn =
+    pitchDemoEnabled ||
+    userImages.length === 0 ||
+    modelPhotoStatus === 'ready';
   const canAttemptTryOn =
     (isAuthenticated || pitchDemoEnabled) &&
     !isGenerating &&
     modelPhotoStatus !== 'processing' &&
     modelPhotoStatus !== 'error' &&
+    modelPhotoReadyForTryOn &&
     (backendAvailability === 'healthy' || pitchDemoEnabled);
 
   const reportUiAction = useCallback(
@@ -3744,6 +3771,19 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                     {modelPhotoStatus === 'ready' && <CheckCircle2 size={14} />}
                     <span>{modelPhotoMessage}</span>
                   </div>
+                  {modelPhotoStatus === 'error' && userImages.length > 0 && backendAvailability === 'healthy' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        modelPhotoAutoRunKeyRef.current = null;
+                        void preprocessModelPhotos(userImages);
+                      }}
+                      className="mt-2 inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-50"
+                    >
+                      <RefreshCw size={12} />
+                      Retry analysis
+                    </button>
+                  )}
                 </div>
               )}
             </section>
@@ -3859,6 +3899,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   min-h-[52px] touch-manipulation select-none
                   ${isGenerating 
                     ? 'bg-slate-200 text-slate-500 cursor-not-allowed border border-slate-300 pointer-events-none'
+                    : modelPhotoStatus === 'processing' || modelPhotoStatus === 'error' || !modelPhotoReadyForTryOn
+                      ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
                     : backendAvailability !== 'healthy'
                       ? pitchDemoEnabled
                         ? 'bg-[#101114] text-white hover:bg-[#20232a] active:scale-[0.98] border border-[#101114]'
@@ -3873,6 +3915,16 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   <>
                     <Loader2 size={18} className="sm:w-5 sm:h-5 animate-spin" />
                     <span>Generating your look...</span>
+                  </>
+                ) : modelPhotoStatus === 'processing' || !modelPhotoReadyForTryOn ? (
+                  <>
+                    <Loader2 size={18} className="sm:w-5 sm:h-5 animate-spin" />
+                    <span>Analysing photos...</span>
+                  </>
+                ) : modelPhotoStatus === 'error' ? (
+                  <>
+                    <WandSparkles size={18} className="sm:w-5 sm:h-5" />
+                    <span>Fix photo analysis</span>
                   </>
                 ) : isGuestPitchDemo ? (
                   <>
@@ -4197,10 +4249,26 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
               disabled={!canAttemptTryOn}
               className={`
                 min-w-[120px] rounded-lg px-4 py-3 text-xs font-bold
-                ${isGenerating ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : !isAuthenticated && !pitchDemoEnabled ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-900 active:bg-gray-800'}
+                ${
+                  isGenerating || modelPhotoStatus === 'processing' || modelPhotoStatus === 'error' || !modelPhotoReadyForTryOn
+                    ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                    : !isAuthenticated && !pitchDemoEnabled
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-black text-white hover:bg-gray-900 active:bg-gray-800'
+                }
               `}
             >
-              {isGenerating ? 'Working...' : !isAuthenticated && !pitchDemoEnabled ? 'Sign in to try on' : isGuestPitchDemo ? 'Launch demo' : 'Try it on'}
+              {isGenerating
+                ? 'Working...'
+                : modelPhotoStatus === 'processing' || !modelPhotoReadyForTryOn
+                ? 'Analysing...'
+                : modelPhotoStatus === 'error'
+                ? 'Retry analysis'
+                : !isAuthenticated && !pitchDemoEnabled
+                ? 'Sign in to try on'
+                : isGuestPitchDemo
+                ? 'Launch demo'
+                : 'Try it on'}
             </button>
           </div>
       </div>

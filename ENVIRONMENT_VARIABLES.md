@@ -37,7 +37,7 @@ Set these in the **Render service** for the backend (see `render.yaml`).
 | `GEMINI_API_KEY` | Optional Google Gemini API key for rewrite/safety helpers and Gemini-backed analysis paths | (none) | `AIzaSy...` |
 | `GOOGLE_API_KEY` | Alternative name for GEMINI_API_KEY (fallback) | (none) | `AIzaSy...` |
 | `OPENAI_TRYON_IMAGE_MODEL` | OpenAI model for main try-on image edits | `gpt-image-2` | `gpt-image-2` |
-| `OPENAI_MODEL_PHOTO_ANALYSIS_MODEL` | OpenAI vision model for model-photo metadata extraction | `gpt-5.4-mini` | `gpt-5.4-mini` |
+| `OPENAI_MODEL_PHOTO_ANALYSIS_MODEL` | OpenAI vision model for model-photo metadata extraction | `gpt-5-mini` | `gpt-5-mini` |
 | `OPENAI_MODEL_PHOTO_COMPOSITE_MODEL` | OpenAI image model for multi-photo model composites | `gpt-image-2` | `gpt-image-2` |
 | `OPENROUTER_API_KEY` | OpenRouter fallback key used when OpenAI billing/quota is exhausted, and for optional safety-rewrite fallback | (none) | `sk-or-...` |
 | `OPENROUTER_TRYON_IMAGE_MODEL` | OpenRouter image-output fallback model for try-on generation | `google/gemini-3.1-flash-image-preview` | `google/gemini-3.1-flash-image-preview` |

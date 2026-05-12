@@ -15,7 +15,7 @@ from PIL import Image
 
 from .image_metadata import embed_structured_metadata, utc_now_iso
 from .image_normalize import normalize_image_bytes, normalize_image_bytes_with_budget
-from .model_registry import get_openai_model
+from .model_registry import get_openai_model, get_openai_model_candidates
 from .storage import get_storage_backend
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,37 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
     raise ValueError("model photo analysis did not contain a JSON object")
 
 
+def _response_error_details(response: httpx.Response) -> Tuple[str, str]:
+    code = str(response.status_code)
+    message = response.text[:800]
+    try:
+        err = response.json().get("error", {})
+        if isinstance(err, dict):
+            code = str(err.get("code") or err.get("type") or code)
+            message = str(err.get("message") or message)
+    except Exception:
+        pass
+    return code, message
+
+
+def _is_openai_model_unsupported_error(*, status_code: int, code: str, message: str) -> bool:
+    haystack = f"{code} {message}".lower()
+    if status_code not in {400, 404}:
+        return False
+    return "model" in haystack and any(
+        marker in haystack
+        for marker in (
+            "does not exist",
+            "not found",
+            "not supported",
+            "unsupported",
+            "invalid model",
+            "unknown model",
+            "not available",
+        )
+    )
+
+
 async def _post_with_retries(
     client: httpx.AsyncClient,
     *,
@@ -80,15 +111,7 @@ async def _post_with_retries(
             response = await client.request(method, url, **kwargs)
             if response.is_success:
                 return response
-            code = str(response.status_code)
-            message = response.text[:800]
-            try:
-                err = response.json().get("error", {})
-                if isinstance(err, dict):
-                    code = str(err.get("code") or err.get("type") or code)
-                    message = str(err.get("message") or message)
-            except Exception:
-                pass
+            code, message = _response_error_details(response)
             last_error = f"{code}: {message}"
             logger.error(
                 "%s %s failed attempt=%s code=%s message=%s",
@@ -98,7 +121,15 @@ async def _post_with_retries(
                 code,
                 message,
             )
+            if _is_openai_model_unsupported_error(
+                status_code=response.status_code,
+                code=code,
+                message=message,
+            ):
+                raise ModelPhotoProcessingError(provider, "model_unsupported", last_error)
         except Exception as exc:
+            if isinstance(exc, ModelPhotoProcessingError) and exc.code == "model_unsupported":
+                raise
             last_error = str(exc)
             logger.error(
                 "%s %s failed attempt=%s code=exception message=%s",
@@ -162,7 +193,11 @@ async def analyze_model_photo_set(
     if not api_key:
         raise ModelPhotoProcessingError("OpenAI", "missing_api_key", "OPENAI_API_KEY is required")
 
-    model_name = os.getenv("OPENAI_MODEL_PHOTO_ANALYSIS_MODEL") or get_openai_model("model_photo_analysis")
+    preferred_model = os.getenv("OPENAI_MODEL_PHOTO_ANALYSIS_MODEL") or get_openai_model("model_photo_analysis")
+    model_candidates = get_openai_model_candidates(
+        "model_photo_analysis",
+        extra_models=[preferred_model],
+    )
     prompt = """
 Analyze the uploaded model reference photos for a virtual try-on pipeline.
 
@@ -204,44 +239,58 @@ Do not identify the person. Do not infer sensitive identity traits. Keep all mea
             }
         )
 
-    payload = {
-        "model": model_name,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a computer-vision analyst for a virtual fashion try-on system.",
-            },
-            {"role": "user", "content": content},
-        ],
-        "temperature": 0.0,
-        "max_tokens": 1200,
-        "response_format": {"type": "json_object"},
-    }
-
+    last_model_error: Optional[ModelPhotoProcessingError] = None
     async with httpx.AsyncClient(timeout=90.0) as client:
-        response = await _post_with_retries(
-            client,
-            provider="OpenAI",
-            request_name="model_photo_analysis",
-            max_retries=int(os.getenv("MODEL_PHOTO_API_MAX_RETRIES", "2")),
-            method="POST",
-            url=OPENAI_CHAT_COMPLETIONS_URL,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=payload,
-        )
+        for model_name in model_candidates:
+            payload = {
+                "model": model_name,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a computer-vision analyst for a virtual fashion try-on system.",
+                    },
+                    {"role": "user", "content": content},
+                ],
+                "temperature": 0.0,
+                "max_tokens": 1200,
+                "response_format": {"type": "json_object"},
+            }
+            try:
+                response = await _post_with_retries(
+                    client,
+                    provider="OpenAI",
+                    request_name=f"model_photo_analysis:{model_name}",
+                    max_retries=int(os.getenv("MODEL_PHOTO_API_MAX_RETRIES", "2")),
+                    method="POST",
+                    url=OPENAI_CHAT_COMPLETIONS_URL,
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json=payload,
+                )
+            except ModelPhotoProcessingError as exc:
+                if exc.code == "model_unsupported":
+                    last_model_error = exc
+                    logger.warning("OpenAI model photo analysis model unsupported; trying next candidate: %s", exc.message)
+                    continue
+                raise
 
-    data = response.json()
-    text = (
-        (data.get("choices") or [{}])[0]
-        .get("message", {})
-        .get("content", "")
+            data = response.json()
+            text = (
+                (data.get("choices") or [{}])[0]
+                .get("message", {})
+                .get("content", "")
+            )
+            if not isinstance(text, str):
+                raise ModelPhotoProcessingError("OpenAI", "invalid_response", "model photo analysis returned non-text content")
+            analysis = _extract_json_object(text)
+            analysis["provider"] = "openai"
+            analysis["model"] = model_name
+            return analysis
+
+    raise last_model_error or ModelPhotoProcessingError(
+        "OpenAI",
+        "model_analysis_unavailable",
+        "No OpenAI model-photo analysis candidate succeeded",
     )
-    if not isinstance(text, str):
-        raise ModelPhotoProcessingError("OpenAI", "invalid_response", "model photo analysis returned non-text content")
-    analysis = _extract_json_object(text)
-    analysis["provider"] = "openai"
-    analysis["model"] = model_name
-    return analysis
 
 
 def _extract_openai_image(data: Dict[str, Any], *, output_mime: str) -> bytes:
@@ -264,7 +313,11 @@ async def generate_composite_model_photo(
     if len(images) <= 1:
         return images[0][1], images[0][2]
 
-    model_name = os.getenv("OPENAI_MODEL_PHOTO_COMPOSITE_MODEL") or get_openai_model("tryon_image")
+    preferred_model = os.getenv("OPENAI_MODEL_PHOTO_COMPOSITE_MODEL") or get_openai_model("tryon_image")
+    model_candidates = get_openai_model_candidates(
+        "tryon_image",
+        extra_models=[preferred_model],
+    )
     output_format = os.getenv("MODEL_PHOTO_COMPOSITE_OUTPUT_FORMAT", "jpeg").strip().lower()
     if output_format not in {"jpeg", "png", "webp"}:
         output_format = "jpeg"
@@ -286,27 +339,42 @@ async def generate_composite_model_photo(
         ext = "png" if mime_type == "image/png" else "jpg"
         files.append(("image[]", (f"model_reference_{index + 1}_{_safe_filename_part(filename)}.{ext}", image_bytes, mime_type)))
 
+    last_model_error: Optional[ModelPhotoProcessingError] = None
     async with httpx.AsyncClient(timeout=240.0) as client:
-        response = await _post_with_retries(
-            client,
-            provider="OpenAI",
-            request_name="model_photo_composite",
-            max_retries=int(os.getenv("MODEL_PHOTO_API_MAX_RETRIES", "2")),
-            method="POST",
-            url=OPENAI_IMAGES_EDITS_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-            data={
-                "model": model_name,
-                "prompt": prompt,
-                "size": size,
-                "quality": quality,
-                "output_format": output_format,
-                "moderation": os.getenv("OPENAI_TRYON_MODERATION", "auto"),
-            },
-            files=files,
-        )
+        for model_name in model_candidates:
+            try:
+                response = await _post_with_retries(
+                    client,
+                    provider="OpenAI",
+                    request_name=f"model_photo_composite:{model_name}",
+                    max_retries=int(os.getenv("MODEL_PHOTO_API_MAX_RETRIES", "2")),
+                    method="POST",
+                    url=OPENAI_IMAGES_EDITS_URL,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    data={
+                        "model": model_name,
+                        "prompt": prompt,
+                        "size": size,
+                        "quality": quality,
+                        "output_format": output_format,
+                        "moderation": os.getenv("OPENAI_TRYON_MODERATION", "auto"),
+                    },
+                    files=files,
+                )
+            except ModelPhotoProcessingError as exc:
+                if exc.code == "model_unsupported":
+                    last_model_error = exc
+                    logger.warning("OpenAI composite image model unsupported; trying next candidate: %s", exc.message)
+                    continue
+                raise
 
-    return _extract_openai_image(response.json(), output_mime=output_mime), output_mime
+            return _extract_openai_image(response.json(), output_mime=output_mime), output_mime
+
+    raise last_model_error or ModelPhotoProcessingError(
+        "OpenAI",
+        "model_composite_unavailable",
+        "No OpenAI model-photo composite candidate succeeded",
+    )
 
 
 async def process_model_photos(

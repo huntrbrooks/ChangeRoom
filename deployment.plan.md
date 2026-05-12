@@ -17,10 +17,10 @@
    - Update root [`render.yaml`](render.yaml) with a new web service referencing this Dockerfile, env vars, secrets, volume for `/tmp`.
 
 4. **Frontend Production Build (`my-yolov8-app/frontend/…`)**
-   - Add `.env.example` with `REACT_APP_API_URL`.
-   - Enhance UX: drag-drop, file size hints, inference duration, display detection table (update `src/App.js`/`App.css`).
-   - Optimize build (CRA build, asset compression) and add lint/test scripts.
-   - Create `render.yaml` static-site entry (build: `npm ci && npm run build`, publish `build/`).
+   - Add `.env.example` with `VITE_API_URL`.
+   - Enhance UX: drag-drop, file size hints, inference duration, display detection table (update `src/App.jsx`/`App.css`).
+   - Optimize build (Vite build, asset compression) and add lint/test scripts.
+   - Create `render.yaml` static-site entry (build: `npm ci && npm run build`, publish `dist/`).
 
 5. **Docs & Operations**
    - Write `my-yolov8-app/README.md` covering local setup, Docker usage, Render deployment, env vars, testing.
@@ -31,4 +31,3 @@
    - Add backend smoke tests (pytest) and sample image fixtures.
    - Add frontend CI (GitHub Action) to build/test before deploy.
    - Provide manual validation checklist (upload success, CORS, health check) before Render deploy.
-

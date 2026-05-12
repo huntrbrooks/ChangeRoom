@@ -58,18 +58,38 @@ OPENAI_TASKS = {
     "tryon_image": TaskModelConfig(
         env_keys=("OPENAI_TRYON_IMAGE_MODEL", "OPENAI_IMAGE_MODEL"),
         default_model="gpt-image-2",
+        fallback_models=(
+            "gpt-image-1.5",
+            "gpt-image-1",
+            "gpt-image-1-mini",
+        ),
     ),
     "model_photo_analysis": TaskModelConfig(
         env_keys=("OPENAI_MODEL_PHOTO_ANALYSIS_MODEL", "OPENAI_VISION_MODEL", "OPENAI_MODEL"),
-        default_model="gpt-5.4-mini",
+        default_model="gpt-5-mini",
+        fallback_models=(
+            "gpt-5-mini-2025-08-07",
+            "gpt-4.1-mini",
+            "gpt-4o-mini",
+        ),
     ),
     "clothing_analysis": TaskModelConfig(
         env_keys=("OPENAI_CLOTHING_ANALYZE_MODEL", "OPENAI_VISION_MODEL", "OPENAI_MODEL"),
-        default_model="gpt-5.4",
+        default_model="gpt-5-mini",
+        fallback_models=(
+            "gpt-5-mini-2025-08-07",
+            "gpt-4.1-mini",
+            "gpt-4o-mini",
+        ),
     ),
     "clothing_preprocess": TaskModelConfig(
         env_keys=("OPENAI_PREPROCESS_CLOTHING_MODEL", "OPENAI_VISION_MODEL", "OPENAI_MODEL"),
-        default_model="gpt-5-mini-2025-08-07",
+        default_model="gpt-5-mini",
+        fallback_models=(
+            "gpt-5-mini-2025-08-07",
+            "gpt-4.1-mini",
+            "gpt-4o-mini",
+        ),
     ),
 }
 
@@ -113,6 +133,20 @@ def get_openai_model(task_name: str) -> str:
         if env_value:
             return env_value
     return config.default_model
+
+
+def get_openai_model_candidates(
+    task_name: str,
+    *,
+    extra_models: Optional[Iterable[Optional[str]]] = None,
+) -> List[str]:
+    config = get_task_config("openai", task_name)
+    configured_models = [(os.getenv(env_key) or "").strip() for env_key in config.env_keys]
+    models = list(extra_models or [])
+    models.extend(configured_models)
+    models.append(config.default_model)
+    models.extend(config.fallback_models)
+    return unique_model_names(models)
 
 
 def get_gemini_configured_model(task_name: str) -> str:

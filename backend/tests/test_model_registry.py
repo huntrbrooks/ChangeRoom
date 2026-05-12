@@ -5,15 +5,17 @@ def test_get_openai_model_defaults(monkeypatch):
     from services.model_registry import get_openai_model
 
     monkeypatch.delenv("OPENAI_CLOTHING_ANALYZE_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_MODEL_PHOTO_ANALYSIS_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_PREPROCESS_CLOTHING_MODEL", raising=False)
     monkeypatch.delenv("OPENAI_TRYON_IMAGE_MODEL", raising=False)
     monkeypatch.delenv("OPENAI_IMAGE_MODEL", raising=False)
     monkeypatch.delenv("OPENAI_VISION_MODEL", raising=False)
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
 
     assert get_openai_model("tryon_image") == "gpt-image-2"
-    assert get_openai_model("model_photo_analysis") == "gpt-5.4-mini"
-    assert get_openai_model("clothing_analysis") == "gpt-5.4"
-    assert get_openai_model("clothing_preprocess") == "gpt-5-mini-2025-08-07"
+    assert get_openai_model("model_photo_analysis") == "gpt-5-mini"
+    assert get_openai_model("clothing_analysis") == "gpt-5-mini"
+    assert get_openai_model("clothing_preprocess") == "gpt-5-mini"
 
 
 def test_get_openai_model_prefers_specific_override(monkeypatch):
@@ -25,6 +27,16 @@ def test_get_openai_model_prefers_specific_override(monkeypatch):
 
     assert get_openai_model("clothing_analysis") == "gpt-4.1"
     assert get_openai_model("tryon_image") == "custom-image-model"
+
+
+def test_get_openai_model_candidates_include_image_fallbacks(monkeypatch):
+    from services.model_registry import get_openai_model_candidates
+
+    monkeypatch.setenv("OPENAI_TRYON_IMAGE_MODEL", "gpt-image-2")
+    candidates = get_openai_model_candidates("tryon_image")
+
+    assert candidates[:3] == ["gpt-image-2", "gpt-image-1.5", "gpt-image-1"]
+    assert candidates.count("gpt-image-2") == 1
 
 
 def test_get_gemini_model_candidates_dedupes_and_respects_override(monkeypatch):

@@ -12,8 +12,8 @@ my-yolov8-app/
 │   ├── env.example
 │   ├── Dockerfile / .dockerignore
 │   └── uploads/ (ephemeral tmp folder, gitignored)
-└── frontend/     # React SPA (create-react-app)
-    ├── src/App.js / App.css
+└── frontend/     # React SPA (Vite)
+    ├── src/App.jsx / App.css
     ├── env.example
     └── package.json
 ```
@@ -82,7 +82,7 @@ cp env.example .env
 npm start
 ```
 
-`REACT_APP_API_URL` (default `http://localhost:5000`) must point at the Flask service. The SPA now offers drag-and-drop uploads, inference timing, detection tables, and a short history of recent runs.
+`VITE_API_URL` (default `http://localhost:5000`) must point at the Flask service. The SPA now offers drag-and-drop uploads, inference timing, detection tables, and a short history of recent runs.
 
 ### Production Build
 
@@ -90,19 +90,19 @@ For Render's static site:
 
 ```bash
 npm run build
-serve -s build  # optional preview
+npm run preview  # optional preview
 ```
 
 Render build settings:
 
 - **Build Command:** `npm ci && npm run build`
-- **Publish Directory:** `my-yolov8-app/frontend/build`
-- **Env Vars:** `REACT_APP_API_URL=https://yolo-backend.onrender.com`
+- **Publish Directory:** `my-yolov8-app/frontend/dist`
+- **Env Vars:** `VITE_API_URL=https://yolo-backend.onrender.com`
 
 ## Render Deployment Flow
 
 1. **Backend:** The root `render.yaml` now defines a `yolo-backend` Docker service that uses `my-yolov8-app/backend/Dockerfile`. Configure env vars + secrets in Render and deploy. Health check path is `/health`.
-2. **Frontend:** Create a Render Static Site (or add a new entry to `render.yaml`) pointing to `my-yolov8-app/frontend`. Set `REACT_APP_API_URL` to the backend URL so builds bake in the correct endpoint.
+2. **Frontend:** Create a Render Static Site (or add a new entry to `render.yaml`) pointing to `my-yolov8-app/frontend`. Set `VITE_API_URL` to the backend URL so builds bake in the correct endpoint.
 3. **Verification:** After both deploys finish, confirm:
    - `https://<backend>/health` returns `{"status":"ok"...}`
    - Uploading via the SPA returns annotated imagery
@@ -111,7 +111,7 @@ Render build settings:
 ## Testing
 
 - Backend: add sample fixtures under `tests/` (see plan) and run `pytest`.
-- Frontend: `npm test` for CRA Jest runs.
+- Frontend: `npm run build` for Vite production compilation.
 - Manual smoke: upload small (<15 MB) image, verify detection count, confirm inference time reported.
 
 ## Next Steps

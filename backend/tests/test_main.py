@@ -121,6 +121,42 @@ def test_preprocess_clothing_too_many_files(client: TestClient, sample_image_byt
     assert response.status_code == 400
     assert "5" in response.json()["detail"]
 
+
+def test_preprocess_model_photos_endpoint_returns_processed_reference(client: TestClient, sample_image_bytes, monkeypatch):
+    """Model-photo upload should call the processor and return the enriched reference image."""
+    from services import model_photo_processor
+
+    async def fake_process_model_photos(image_files, original_filenames, *, output_dir="uploads"):
+        assert len(image_files) == 2
+        assert original_filenames == ["front.png", "side.png"]
+        return {
+            "status": "success",
+            "primary": {
+                "image_url": "/uploads/model/test-reference.jpg",
+                "file_url": "/uploads/model/test-reference.jpg",
+                "metadata": {
+                    "model:bodyPose": "front and side standing",
+                    "model:analysisVersion": "model-photo-v1",
+                },
+                "source": "composite",
+                "mime_type": "image/jpeg",
+            },
+        }
+
+    monkeypatch.setattr(model_photo_processor, "process_model_photos", fake_process_model_photos)
+
+    files = [
+        ("model_images", ("front.png", sample_image_bytes, "image/png")),
+        ("model_images", ("side.png", sample_image_bytes, "image/png")),
+    ]
+    response = client.post("/api/preprocess-model-photos", files=files)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["primary"]["image_url"] == "/uploads/model/test-reference.jpg"
+    assert payload["primary"]["metadata"]["model:analysisVersion"] == "model-photo-v1"
+
+
 def test_cors_preflight_preprocess_clothing_allows_request_id_headers(client: TestClient):
     """
     The frontend may include X-Request-Id / X-ChangeRoom-Request-Id headers (for correlation),
@@ -178,4 +214,3 @@ def test_read_metadata_rejects_path_traversal(client: TestClient):
     """Should reject path traversal attempts."""
     response = client.get("/api/read-image-metadata?image_path=../secrets.txt")
     assert response.status_code == 400
-

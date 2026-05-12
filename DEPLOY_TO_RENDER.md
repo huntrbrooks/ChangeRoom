@@ -76,8 +76,8 @@ The repository now ships with `my-yolov8-app/`, which should run as its own Rend
 1. Create a Render **Static Site** using context `my-yolov8-app/frontend`.
 2. Build config:
    - **Build Command:** `npm ci && npm run build`
-   - **Publish Directory:** `my-yolov8-app/frontend/build`
-3. Add env var `REACT_APP_API_URL=https://<yolo-backend>.onrender.com`.
+   - **Publish Directory:** `my-yolov8-app/frontend/dist`
+3. Add env var `VITE_API_URL=https://<yolo-backend>.onrender.com`.
 4. Deploy and validate uploads complete successfully.
 
 > The `render.yaml` at the repo root already defines the `yolo-backend` service so you can manage it via Git infra-as-code.
@@ -106,4 +106,3 @@ If you get authentication errors after deployment:
 2. **Verify the refresh token** is correct (no extra spaces)
 3. **Check logs** in Render dashboard for specific error messages
 4. **Wait a few minutes** after adding variables before testing
-
