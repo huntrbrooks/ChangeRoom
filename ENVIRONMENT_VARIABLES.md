@@ -36,12 +36,18 @@ Set these in the **Render service** for the backend (see `render.yaml`).
 | `MAX_TOTAL_SIZE` | Max bytes per request across all images | `52428800` | `52428800` |
 | `GEMINI_API_KEY` | Optional Google Gemini API key for rewrite/safety helpers and Gemini-backed analysis paths | (none) | `AIzaSy...` |
 | `GOOGLE_API_KEY` | Alternative name for GEMINI_API_KEY (fallback) | (none) | `AIzaSy...` |
-| `OPENAI_TRYON_IMAGE_MODEL` | OpenAI model for main try-on image edits | `gpt-image-1.5` | `gpt-image-1.5` |
-| `OPENROUTER_API_KEY` | OpenRouter fallback key used when OpenAI billing/quota is exhausted | (none) | `sk-or-...` |
+| `OPENAI_TRYON_IMAGE_MODEL` | OpenAI model for main try-on image edits | `gpt-image-2` | `gpt-image-2` |
+| `OPENAI_MODEL_PHOTO_ANALYSIS_MODEL` | OpenAI vision model for model-photo metadata extraction | `gpt-5.4-mini` | `gpt-5.4-mini` |
+| `OPENAI_MODEL_PHOTO_COMPOSITE_MODEL` | OpenAI image model for multi-photo model composites | `gpt-image-2` | `gpt-image-2` |
+| `OPENROUTER_API_KEY` | OpenRouter fallback key used when OpenAI billing/quota is exhausted, and for optional safety-rewrite fallback | (none) | `sk-or-...` |
 | `OPENROUTER_TRYON_IMAGE_MODEL` | OpenRouter image-output fallback model for try-on generation | `google/gemini-3.1-flash-image-preview` | `google/gemini-3.1-flash-image-preview` |
 | `OPENROUTER_VISION_MODEL` | OpenRouter vision/text fallback model for clothing preprocessing | `google/gemini-3.1-flash-lite` | `google/gemini-3.1-flash-lite` |
+| `OPENROUTER_TRYON_CONTENT_FALLBACK_ENABLED` | Enable OpenRouter try-on fallback after OpenAI content-safety blocks only after safety rewrites; keeps a general-audience safety contract | `0` | `0` |
 | `OPENROUTER_TRYON_IMAGE_SIZE` | OpenRouter fallback image size hint | `1K` | `1K` |
 | `OPENROUTER_TRYON_ASPECT_RATIO` | OpenRouter fallback aspect ratio hint | derived from OpenAI size | `2:3` |
+| `XAI_API_KEY` | xAI API key for final Grok image fallback | (none) | `xai-...` |
+| `XAI_TRYON_IMAGE_MODEL` | xAI/Grok image model for final fallback | `grok-imagine-image-quality` | `grok-imagine-image-quality` |
+| `TRYON_PROVIDER_MAX_RETRIES` | Retry count per provider before provider fallback | `2` | `2` |
 | `OPENAI_TRYON_IMAGE_SIZE` | Output size for try-on image edits | `1024x1536` | `1024x1536` |
 | `OPENAI_TRYON_QUALITY` | Output quality for try-on image edits | `high` | `medium` |
 | `OPENAI_TRYON_OUTPUT_FORMAT` | Output format for try-on results | `jpeg` | `png` |

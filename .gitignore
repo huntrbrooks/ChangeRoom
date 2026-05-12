@@ -12,6 +12,7 @@ build/
 *.tsbuildinfo
 .cursor/debug.log
 .cursor/plans/
+.claude/
 .vercel
 .vscode/
 backend/ChangeRoom.env

@@ -11,6 +11,7 @@ from PIL.ExifTags import TAGS, GPSTAGS
 import io
 from datetime import datetime
 from .image_normalize import normalize_image_bytes_with_budget
+from .image_metadata import embed_structured_metadata
 from .model_registry import get_openai_model
 
 logger = logging.getLogger(__name__)
@@ -646,75 +647,17 @@ def embed_metadata_in_image(image_bytes: bytes, metadata: Dict[str, Any]) -> byt
     Returns:
         bytes: Image bytes with embedded metadata
     """
-    try:
-        # Open image from bytes
-        image = Image.open(io.BytesIO(image_bytes))
-        
-        # Convert metadata to JSON string for embedding
-        # Use ensure_ascii=False to handle Unicode characters properly
-        metadata_json = json.dumps(metadata, indent=2, ensure_ascii=False)
-        
-        # Create a new image with embedded metadata
-        output = io.BytesIO()
-        
-        # For JPEG images, use EXIF to embed metadata
-        if image.format == 'JPEG':
-            if PIEXIF_AVAILABLE:
-                try:
-                    # Load existing EXIF or create new
-                    try:
-                        exif_dict = piexif.load(image_bytes)
-                    except:
-                        exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
-                    
-                    # Embed metadata in EXIF UserComment (tag 37510)
-                    # Store JSON in ImageDescription (tag 270) and UserComment
-                    exif_dict["0th"][piexif.ImageIFD.ImageDescription] = metadata_json.encode('utf-8')
-                    exif_dict["Exif"][piexif.ExifIFD.UserComment] = metadata_json.encode('utf-8')
-                    
-                    # Add custom tags for key metadata fields
-                    # Store category, color, style in EXIF tags
-                    if metadata.get("category"):
-                        exif_dict["0th"][piexif.ImageIFD.Software] = f"IGetDressed.Online-{metadata['category']}".encode('utf-8')
-                    
-                    # Convert EXIF dict to bytes
-                    exif_bytes = piexif.dump(exif_dict)
-                    
-                    # Save image with EXIF
-                    image.save(output, format='JPEG', quality=95, exif=exif_bytes)
-                except Exception as e:
-                    logger.warning(f"Error embedding EXIF with piexif: {e}. Falling back to basic save.")
-                    # Fallback: save without EXIF
-                    image.save(output, format='JPEG', quality=95)
-            else:
-                # Fallback: try to preserve existing EXIF
-                exif_bytes = image.info.get('exif')
-                if exif_bytes:
-                    image.save(output, format='JPEG', quality=95, exif=exif_bytes)
-                else:
-                    image.save(output, format='JPEG', quality=95)
-            
-        elif image.format == 'PNG':
-            # PNG supports text chunks
-            # Store metadata as a text chunk
-            png_info = image.info.copy()
-            png_info['clothing_metadata'] = metadata_json
-            # Also add individual fields as text chunks for better compatibility
-            for key, value in metadata.items():
-                if isinstance(value, (str, int, float)):
-                    png_info[f'clothing_{key}'] = str(value)
-            image.save(output, format='PNG', **png_info)
-        else:
-            # For other formats, just save the image
-            image.save(output, format=image.format or 'JPEG')
-        
-        output.seek(0)
-        return output.read()
-        
-    except Exception as e:
-        logger.error(f"Error embedding metadata in image: {e}", exc_info=True)
-        # Return original bytes if embedding fails
-        return image_bytes
+    namespaced_metadata = {
+        **metadata,
+        "clothing:category": metadata.get("category") or metadata.get("body_region") or "unknown",
+        "clothing:bodyZone": metadata.get("body_region") or metadata.get("category") or "unknown",
+        "clothing:colours": metadata.get("color") or metadata.get("colours") or "unknown",
+        "clothing:pattern": metadata.get("patterns") or metadata.get("pattern") or "unknown",
+        "clothing:fitType": metadata.get("fit") or metadata.get("fit_type") or "regular",
+        "clothing:analysisVersion": metadata.get("analysis_version") or "clothing-v2",
+        "clothing:analysedAt": metadata.get("analysed_at") or datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+    }
+    return embed_structured_metadata(image_bytes, namespaced_metadata)
 
 
 async def save_image_with_metadata(

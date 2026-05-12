@@ -10,7 +10,8 @@ def test_get_openai_model_defaults(monkeypatch):
     monkeypatch.delenv("OPENAI_VISION_MODEL", raising=False)
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
 
-    assert get_openai_model("tryon_image") == "gpt-image-1.5"
+    assert get_openai_model("tryon_image") == "gpt-image-2"
+    assert get_openai_model("model_photo_analysis") == "gpt-5.4-mini"
     assert get_openai_model("clothing_analysis") == "gpt-5.4"
     assert get_openai_model("clothing_preprocess") == "gpt-5-mini-2025-08-07"
 

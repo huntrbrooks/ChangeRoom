@@ -145,7 +145,7 @@ async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_byt
     assert openai_calls["n"] == 3
     assert rewrite_calls["n"] >= 1
     first_payload = captured_payloads[0]["data"]
-    assert first_payload["model"] == "gpt-image-1.5"
+    assert first_payload["model"] == "gpt-image-2"
     assert "real body" in first_payload["prompt"]
     assert "neutral, seamless studio environment" in first_payload["prompt"]
     assert "BODY FIDELITY IS PARAMOUNT" in first_payload["prompt"]
@@ -222,6 +222,71 @@ async def test_vton_falls_back_to_openrouter_when_openai_credit_exhausted(monkey
         for info in result.get("retry_info", [])
         if isinstance(info, dict)
     )
+
+
+@pytest.mark.asyncio
+async def test_vton_can_use_openrouter_content_fallback_after_safety_rewrites(monkeypatch, sample_image_bytes):
+    from services import vton
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.setenv("XAI_API_KEY", "test-xai-key")
+    monkeypatch.setenv("OPENROUTER_TRYON_CONTENT_FALLBACK_ENABLED", "1")
+    monkeypatch.setenv("OPENROUTER_TRYON_IMAGE_MODEL", "google/gemini-3.1-flash-image-preview")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    openai_calls = {"n": 0}
+    xai_calls = {"n": 0}
+    captured_payloads = []
+
+    async def fake_openai_edit(_client, *, url, headers, data, files):
+        openai_calls["n"] += 1
+        return DummyResponse(
+            ok=False,
+            status_code=400,
+            text="Blocked by content policy",
+            data={
+                "error": {"message": "Blocked by content policy"}
+            },
+        )
+
+    async def fake_xai_edit(_client, *, url, headers, payload):
+        xai_calls["n"] += 1
+        captured_payloads.append(payload)
+        return DummyResponse(
+            ok=True,
+            data={
+                "data": [{"b64_json": "CCCC"}]
+            },
+        )
+
+    monkeypatch.setattr(vton, "_openai_images_edit", fake_openai_edit)
+    monkeypatch.setattr(vton, "_xai_images_edit", fake_xai_edit)
+
+    result = await vton.generate_try_on(
+        [io.BytesIO(sample_image_bytes)],
+        [io.BytesIO(sample_image_bytes)],
+        category="upper_body",
+        garment_metadata={"description": "black t-shirt"},
+        user_attributes=None,
+        main_index=0,
+        user_quality_flags=None,
+    )
+
+    assert result["image_url"] == "data:image/jpeg;base64,CCCC"
+    assert openai_calls["n"] == 3
+    assert xai_calls["n"] == 1
+    assert captured_payloads[0]["model"] == "grok-imagine-image-quality"
+    assert any(
+        info.get("strategy") == "xai_after_openai_nsfw"
+        for info in result.get("retry_info", [])
+        if isinstance(info, dict)
+    )
+    user_message = captured_payloads[0]["prompt"]
+    assert "XAI/GROK FALLBACK CONTRACT" in user_message
+    assert "Do not generate nudity" in user_message
+    assert "general-audience" in user_message
 
 
 def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeypatch):

@@ -26,7 +26,7 @@ if sys.stderr.encoding != 'utf-8':
 # Add current directory to path to find services module
 sys.path.insert(0, str(Path(__file__).parent))
 
-from services import vton, gemini, shop, analyze_clothing, analyze_user
+from services import vton, gemini, shop, analyze_clothing, analyze_user, model_photo_processor
 from services import preprocess_clothing
 from services.image_normalize import normalize_image_bytes, ensure_heif_registered
 from services.auth import require_backend_auth
@@ -243,6 +243,79 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 async def root():
     return {"message": "IGetDressed.Online API is running"}
 
+
+@app.post("/api/preprocess-model-photos", dependencies=[Depends(require_backend_auth)])
+async def preprocess_model_photos_endpoint(
+    request: Request,
+    model_images: List[UploadFile] = File(...),
+):
+    """
+    Analyze, normalize, metadata-embed, and store model reference photos.
+
+    When multiple photos are uploaded this returns a generated composite model image
+    intended to be the single person reference for the try-on call.
+    """
+    try:
+        ip = get_client_ip(request)
+        if not check_rate_limit(f"preprocess-model:{ip}", limit=12, window_seconds=60):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
+
+        if len(model_images) > 5:
+            raise HTTPException(status_code=400, detail="Maximum 5 model photos allowed")
+        if len(model_images) == 0:
+            raise HTTPException(status_code=400, detail="At least one model photo is required")
+
+        image_bytes_list: List[bytes] = []
+        original_filenames: List[str] = []
+        total_size = 0
+        for index, image_file in enumerate(model_images):
+            is_valid, error_msg = validate_image_file(image_file)
+            if not is_valid:
+                raise HTTPException(status_code=400, detail=f"Model image validation failed: {error_msg}")
+
+            raw = await image_file.read()
+            if len(raw) > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Model image too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB",
+                )
+            total_size += len(raw)
+            if total_size > MAX_TOTAL_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Total upload size too large. Maximum: {MAX_TOTAL_SIZE / (1024*1024):.1f}MB",
+                )
+
+            image_bytes_list.append(raw)
+            original_filenames.append(image_file.filename or f"model_{index + 1}.jpg")
+
+        result = await model_photo_processor.process_model_photos(
+            image_bytes_list,
+            original_filenames,
+            output_dir=str(UPLOADS_DIR),
+        )
+        logger.info(
+            "Model photo preprocessing complete: count=%s source=%s",
+            len(model_images),
+            result.get("primary", {}).get("source"),
+        )
+        return result
+    except HTTPException:
+        raise
+    except model_photo_processor.ModelPhotoProcessingError as e:
+        logger.error(
+            "Model photo preprocessing failed provider=%s code=%s message=%s",
+            e.provider,
+            e.code,
+            e.message,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=502, detail=f"{e.provider} {e.code}: {e.message}")
+    except Exception as e:
+        logger.error(f"Error in preprocess-model-photos endpoint: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/try-on", dependencies=[Depends(require_backend_auth)])
 async def try_on(
     request: Request,
@@ -252,6 +325,7 @@ async def try_on(
     clothing_image: Optional[UploadFile] = File(None),  # Single image for backward compatibility
     category: Optional[str] = Form(None),
     garment_metadata: Optional[str] = Form(None),  # JSON string of metadata
+    model_metadata: Optional[str] = Form(None),  # JSON string from /api/preprocess-model-photos
     clothing_file_urls: Optional[str] = Form(None),  # Comma-separated URLs to saved files
     clothing_file_url: Optional[str] = Form(None),  # Single URL for backward compatibility
     main_index: Optional[int] = Form(None)  # Optional main reference index from frontend
@@ -456,6 +530,15 @@ async def try_on(
                         metadata = json.loads(cleaned)
                 except:
                     logger.error(f"Failed to clean and parse metadata: {e}")
+
+        parsed_model_metadata: Dict[str, Any] = {}
+        if model_metadata:
+            try:
+                parsed = json.loads(model_metadata) if isinstance(model_metadata, str) else model_metadata
+                if isinstance(parsed, dict):
+                    parsed_model_metadata = parsed
+            except Exception as e:
+                logger.warning(f"Could not parse model_metadata: {e}")
         
         # Use category from metadata if available, otherwise use provided or default
         final_category = category or (metadata.get('category') if metadata else None) or "upper_body"
@@ -473,6 +556,18 @@ async def try_on(
             user_attributes = await analyze_user.analyze_user_attributes(user_image_files)
         except Exception as e:
             logger.warning(f"User attribute analysis failed (continuing without it): {e}")
+
+        if parsed_model_metadata:
+            user_attributes = {
+                **(user_attributes or {}),
+                "body_pose": parsed_model_metadata.get("model:bodyPose") or parsed_model_metadata.get("body_pose"),
+                "skin_tone": parsed_model_metadata.get("model:skinTone") or parsed_model_metadata.get("skin_tone") or (user_attributes or {}).get("skin_tone"),
+                "approximate_measurements": parsed_model_metadata.get("model:approximateMeasurements") or parsed_model_metadata.get("approximate_measurements"),
+                "proportions": parsed_model_metadata.get("model:proportions") or parsed_model_metadata.get("proportions"),
+                "lighting_condition": parsed_model_metadata.get("model:lightingCondition") or parsed_model_metadata.get("lighting_condition"),
+                "background_type": parsed_model_metadata.get("model:backgroundType") or parsed_model_metadata.get("background_type"),
+                "model_metadata": parsed_model_metadata,
+            }
         
         result = None
         result_url = None

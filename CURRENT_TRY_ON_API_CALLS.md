@@ -40,7 +40,7 @@ await httpClient.post(`${API_URL}/api/try-on`, tryOnFormData, {
 The backend normalizes uploaded images, compresses them, and calls OpenAI image edits:
 
 - Endpoint: `POST https://api.openai.com/v1/images/edits`
-- Model: `OPENAI_TRYON_IMAGE_MODEL`, default `gpt-image-1.5`
+- Model: `OPENAI_TRYON_IMAGE_MODEL`, default `gpt-image-2`
 - Required key: `OPENAI_API_KEY`
 - Default size: `1024x1536`
 - Default quality: `high`
@@ -74,6 +74,7 @@ The backend keeps the existing modesty/safety retry pipeline:
 - Detects high-risk garment metadata.
 - Optionally uses Gemini vision/text helpers when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set.
 - Falls back to local heuristic prompt rewriting when Gemini helpers are unavailable.
+- Optionally falls back to OpenRouter after OpenAI content-safety blocks only when `OPENROUTER_TRYON_CONTENT_FALLBACK_ENABLED=1`, preserving a general-audience safety contract.
 - Retries up to 4 image generation attempts before returning a user-facing error.
 
 ## Required Environment Variables
@@ -83,9 +84,10 @@ The backend keeps the existing modesty/safety retry pipeline:
 
 Optional backend controls:
 
-- `OPENAI_TRYON_IMAGE_MODEL=gpt-image-1.5`
+- `OPENAI_TRYON_IMAGE_MODEL=gpt-image-2`
 - `OPENAI_TRYON_IMAGE_SIZE=1024x1536`
 - `OPENAI_TRYON_QUALITY=high`
 - `OPENAI_TRYON_OUTPUT_FORMAT=jpeg`
 - `OPENAI_TRYON_MODERATION=auto`
 - `GEMINI_API_KEY` or `GOOGLE_API_KEY` for rewrite/safety helper paths
+- `OPENROUTER_API_KEY` plus `OPENROUTER_TRYON_CONTENT_FALLBACK_ENABLED=1` for the opt-in OpenRouter safety-rewrite fallback

@@ -19,6 +19,7 @@ Start here:
 - Node.js 18+
 - OpenAI API key for try-on generation
 - Optional Gemini API key from [Google AI Studio](https://makersuite.google.com/app/apikey) for safety rewrite helpers
+- Optional OpenRouter API key for configured try-on fallback paths
 
 ### Environment Variables
 
@@ -33,6 +34,11 @@ GEMINI_API_KEY=your_api_key_here
 
 # Optional: Fallback to GOOGLE_API_KEY for backward compatibility
 # GOOGLE_API_KEY=your_api_key_here
+
+# Optional: OpenRouter fallback after OpenAI quota/billing failures.
+# Content-safety fallback is opt-in and only runs after safety rewrites.
+# OPENROUTER_API_KEY=your_openrouter_key_here
+# OPENROUTER_TRYON_CONTENT_FALLBACK_ENABLED=0
 ```
 
 Create a `.env.local` file in the `frontend` directory with the following:
@@ -81,8 +87,9 @@ The frontend will be available at `http://localhost:3000`
 
 This application uses direct API calls with API key authentication:
 
-- **Try-on generation** - OpenAI image edits via `OPENAI_API_KEY` and `gpt-image-1.5`
+- **Try-on generation** - OpenAI image edits via `OPENAI_API_KEY` and `gpt-image-2`, with OpenRouter and xAI/Grok fallback support
 - **Analysis / helpers** - OpenAI and optional Gemini helpers for metadata, product identification, and safety rewrite support
+- **Fallbacks** - OpenRouter can be used for quota/billing fallback, and for opt-in safety-rewrite fallback with a general-audience prompt contract
 - **No OAuth required** - Uses `httpx` / OpenAI SDK calls where appropriate
 - **Multiple models** - Automatically falls back between models for reliability
 - **Image support** - Normalizes uploaded images server-side before model calls

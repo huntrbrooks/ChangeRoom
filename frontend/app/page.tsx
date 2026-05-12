@@ -6,6 +6,7 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useUser, useAuth } from '@clerk/nextjs';
 import { httpClient } from '@/lib/httpClient';
+import { fetchWithRequestId } from '@/lib/fetchWithRequestId';
 import { UploadZone } from './components/UploadZone';
 import { BulkUploadZone } from './components/BulkUploadZone';
 import { TryOnFromUrl } from './components/TryOnFromUrl';
@@ -74,6 +75,14 @@ interface ActionFeedback {
   id: number;
   tone: ActionFeedbackTone;
   message: string;
+}
+
+interface ProcessedModelPhoto {
+  imageUrl: string;
+  metadata: Record<string, unknown>;
+  source: 'single' | 'composite' | string;
+  storagePath?: string;
+  mimeType?: string;
 }
 
 interface BillingInfo {
@@ -267,6 +276,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const pitchDemoEnabled = false;
   const tryOnFromUrlEnabled = useMemo(() => isTryOnFromUrlEnabled(), []);
   const [userImages, setUserImages] = useState<File[]>([]);
+  const [processedModelPhoto, setProcessedModelPhoto] = useState<ProcessedModelPhoto | null>(null);
+  const [modelPhotoStatus, setModelPhotoStatus] = useState<'idle' | 'processing' | 'ready' | 'error'>('idle');
+  const [modelPhotoMessage, setModelPhotoMessage] = useState<string | null>(null);
   
   // Updated state structure to track images with their analyses
   interface ImageWithAnalysis {
@@ -335,6 +347,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const selfUploadInputRef = useRef<HTMLInputElement | null>(null);
   const wardrobeUploadInputRef = useRef<HTMLInputElement | null>(null);
   const actionFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const modelPhotoProcessingRunRef = useRef(0);
 
   const withRetry = useCallback(
     async function withRetryFn<T>(fn: () => Promise<T>, retries = 2, delayMs = 1500): Promise<T> {
@@ -429,6 +442,105 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       return null;
     },
     [backendApi.apiUrl, backendApi.reason, backendAvailability, backendAvailabilityMessage, setError]
+  );
+
+  const preprocessModelPhotos = useCallback(
+    async (files: File[]) => {
+      const runId = modelPhotoProcessingRunRef.current + 1;
+      modelPhotoProcessingRunRef.current = runId;
+
+      if (files.length === 0) {
+        setProcessedModelPhoto(null);
+        setModelPhotoStatus('idle');
+        setModelPhotoMessage(null);
+        return;
+      }
+
+      if (pitchDemoEnabled || backendAvailability !== 'healthy') {
+        setProcessedModelPhoto(null);
+        setModelPhotoStatus('idle');
+        setModelPhotoMessage(null);
+        return;
+      }
+
+      const API_URL = getBackendApiUrl('Model photo preprocessing');
+      if (!API_URL) {
+        setProcessedModelPhoto(null);
+        setModelPhotoStatus('error');
+        setModelPhotoMessage('Model photo analysis is unavailable.');
+        return;
+      }
+
+      try {
+        setModelPhotoStatus('processing');
+        setModelPhotoMessage(
+          files.length > 1
+            ? 'Analysing model photos and creating a try-on reference...'
+            : 'Analysing model photo...'
+        );
+
+        const formData = new FormData();
+        files.slice(0, 5).forEach((file) => {
+          formData.append('model_images', file);
+        });
+        const headers = await getBackendAuthHeaders();
+        const response = await fetchWithRequestId(`${API_URL}/api/preprocess-model-photos`, {
+          method: 'POST',
+          body: formData,
+          headers,
+        }, { prefix: 'model-preprocess', force: true });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+          throw new Error(errorData.detail || errorData.error || `Model analysis failed: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        if (modelPhotoProcessingRunRef.current !== runId) {
+          return;
+        }
+
+        const primary = result?.primary || {};
+        const rawUrl = primary.image_url || primary.file_url;
+        const imageUrl = ensureAbsoluteUrl(rawUrl) || rawUrl;
+        if (!imageUrl) {
+          throw new Error('Model preprocessing returned no image URL.');
+        }
+
+        setProcessedModelPhoto({
+          imageUrl,
+          metadata: primary.metadata || result.metadata || {},
+          source: primary.source || (files.length > 1 ? 'composite' : 'single'),
+          storagePath: primary.storage_path,
+          mimeType: primary.mime_type,
+        });
+        setModelPhotoStatus('ready');
+        setModelPhotoMessage(
+          files.length > 1
+            ? 'Composite model reference ready for try-on.'
+            : 'Model reference ready for try-on.'
+        );
+      } catch (error) {
+        if (modelPhotoProcessingRunRef.current !== runId) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : 'Model photo analysis failed.';
+        console.error('Model photo preprocessing failed', error);
+        setProcessedModelPhoto(null);
+        setModelPhotoStatus('error');
+        setModelPhotoMessage(message);
+      }
+    },
+    [backendAvailability, getBackendApiUrl, getBackendAuthHeaders, pitchDemoEnabled]
+  );
+
+  const updateUserImagesAndPreprocess = useCallback(
+    (files: File[]) => {
+      setUserImages(files);
+      setError(null);
+      void preprocessModelPhotos(files);
+    },
+    [preprocessModelPhotos]
   );
 
   const handleLoaderStageChange = useCallback((stageId: number) => {
@@ -644,6 +756,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const canAttemptTryOn =
     (isAuthenticated || pitchDemoEnabled) &&
     !isGenerating &&
+    modelPhotoStatus !== 'processing' &&
+    modelPhotoStatus !== 'error' &&
     (backendAvailability === 'healthy' || pitchDemoEnabled);
 
   const reportUiAction = useCallback(
@@ -722,7 +836,10 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   }, [shopProductOffset, shopProductsForDisplay]);
 
   const mirrorPlaceholderImage =
-    generatedImage || PREVIEW_MIRROR_THUMBNAILS[activeMirrorThumb]?.src || '/preview-assets/mirror-look.png';
+    generatedImage ||
+    processedModelPhoto?.imageUrl ||
+    PREVIEW_MIRROR_THUMBNAILS[activeMirrorThumb]?.src ||
+    '/preview-assets/mirror-look.png';
 
   useEffect(() => {
     setShopProductOffset(0);
@@ -1585,10 +1702,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         .slice(0, 5);
       if (files.length === 0) return;
       if (!requireAuth()) return;
-      setError(null);
-      setUserImages(files);
+      updateUserImagesAndPreprocess(files);
     },
-    [requireAuth]
+    [requireAuth, updateUserImagesAndPreprocess]
   );
 
   const handleWardrobeFilesSelected = useCallback(
@@ -1620,14 +1736,13 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       if (!requireAuth()) return;
       try {
         const file = await loadPublicAssetAsFile(sample.src, sample.filename);
-        setError(null);
-        setUserImages([file]);
+        updateUserImagesAndPreprocess([file]);
       } catch (selectError) {
         console.error('Failed to select sample model', selectError);
         setError('Could not load that sample. Please upload a photo instead.');
       }
     },
-    [loadPublicAssetAsFile, requireAuth]
+    [loadPublicAssetAsFile, requireAuth, updateUserImagesAndPreprocess]
   );
 
   const handleWardrobePreviewSelect = useCallback(
@@ -2083,14 +2198,35 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           ? crypto.randomUUID()
           : `req-${Date.now()}`;
         const tryOnFormData = new FormData();
-        // Append all user images
-        userImages.forEach((img) => {
+        let modelImagesForRequest = userImages;
+        if (processedModelPhoto?.imageUrl) {
+          try {
+            const processedResponse = await fetch(processedModelPhoto.imageUrl);
+            if (!processedResponse.ok) {
+              throw new Error(`Could not fetch processed model image: ${processedResponse.status}`);
+            }
+            const processedBlob = await processedResponse.blob();
+            const extension = processedBlob.type === 'image/png' ? 'png' : processedBlob.type === 'image/webp' ? 'webp' : 'jpg';
+            modelImagesForRequest = [
+              new File(
+                [processedBlob],
+                `model_reference_${processedModelPhoto.source || 'processed'}.${extension}`,
+                { type: processedBlob.type || processedModelPhoto.mimeType || 'image/jpeg' }
+              ),
+            ];
+          } catch (processedFetchError) {
+            console.warn('Falling back to original model photos for try-on request.', processedFetchError);
+          }
+        }
+
+        // Append processed model reference when available; otherwise append uploaded user photos.
+        modelImagesForRequest.forEach((img) => {
           tryOnFormData.append('user_images', img);
         });
         
         // Also append the first one as 'user_image' for backward compatibility
-        if (userImages.length > 0) {
-           tryOnFormData.append('user_image', userImages[0]);
+        if (modelImagesForRequest.length > 0) {
+           tryOnFormData.append('user_image', modelImagesForRequest[0]);
         }
 
       // Send main reference index (current first image after any reordering)
@@ -2309,6 +2445,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           'upper_body';
         
         tryOnFormData.append('garment_metadata', JSON.stringify(metadata));
+        if (processedModelPhoto?.metadata) {
+          tryOnFormData.append('model_metadata', JSON.stringify(processedModelPhoto.metadata));
+        }
         tryOnFormData.append('category', inferredCategory);
         logger.info("tryon_metadata_prepared", { metadataKeys: Object.keys(metadata) });
 
@@ -2482,7 +2621,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         const looksLikeBlockedByPolicy =
           /blocked|safety filter|image_safety|content/i.test(detailText.toLowerCase());
         const looksLikeNoImageAfterRetries =
-          /no image generated after\s*4\s*attempts/i.test(detailText) ||
+          /no image generated after\s*\d+\s*attempts/i.test(detailText) ||
           /finish reason:\s*image_/i.test(detailText);
 
         // Some backend failures currently surface as 500 with the "No image generated after 4 attempts..."
@@ -3567,14 +3706,14 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 selectedFiles={userImages} 
                 showInlineTip={true}
                 highlightMainReference={true}
-                onOrderChange={(files) => setUserImages(files)}
+                onOrderChange={(files) => updateUserImagesAndPreprocess(files)}
                 onFilesSelect={(files) => {
                   if (!requireAuth()) {
                     return;
                   }
-                  setUserImages(files);
+                  updateUserImagesAndPreprocess(files);
                 }}
-                onClear={() => setUserImages([])}
+                onClear={() => updateUserImagesAndPreprocess([])}
                 isAuthenticated={isAuthenticated || pitchDemoEnabled}
                 onAuthRequired={requireAuth}
                 blockedMessage="Please sign in to upload your photo."
@@ -3590,6 +3729,23 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
               <p className="mt-2 text-[11px] sm:text-xs text-slate-500">
                 Tip: Drag to reorder; the first photo is used as the main reference. Aim for front / 45° / profile in good light.
               </p>
+              {modelPhotoStatus !== 'idle' && modelPhotoMessage && (
+                <div
+                  className={`rounded-lg border px-3 py-2 text-xs sm:text-sm ${
+                    modelPhotoStatus === 'ready'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                      : modelPhotoStatus === 'error'
+                      ? 'border-red-200 bg-red-50 text-red-700'
+                      : 'border-slate-200 bg-slate-50 text-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    {modelPhotoStatus === 'processing' && <Loader2 size={14} className="animate-spin" />}
+                    {modelPhotoStatus === 'ready' && <CheckCircle2 size={14} />}
+                    <span>{modelPhotoMessage}</span>
+                  </div>
+                </div>
+              )}
             </section>
 
             <section className={`${cardClass} ${cardPadding} space-y-4`}>

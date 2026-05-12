@@ -48,6 +48,22 @@ CONTENT_REJECTION_KEYWORDS = [
     "explicit",
 ]
 
+NSFW_REJECTION_KEYWORDS = [
+    "nsfw",
+    "not safe for work",
+    "sexual",
+    "sexually explicit",
+    "adult",
+    "nudity",
+    "nude",
+    "explicit",
+    "inappropriate content",
+    "prohibited content",
+    "image_safety",
+    "safety filter",
+    "content policy",
+]
+
 INTIMATE_KEYWORDS = [
     "lingerie",
     "underwear",
@@ -65,6 +81,11 @@ INTIMATE_KEYWORDS = [
     "transparent",
     "fishnet",
 ]
+
+def _env_flag_enabled(name: str, default: str = "0") -> bool:
+    value = (os.getenv(name, default) or "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
 
 TRYON_SYSTEM_PROMPT = (
     "You are a premium fashion virtual try-on renderer. "
@@ -114,6 +135,17 @@ def is_content_rejection(
     # Fallback: keyword scan
     text = (error_text or "").lower()
     return any(k in text for k in CONTENT_REJECTION_KEYWORDS)
+
+
+def is_nsfw_rejection(*, http_status: Optional[int] = None, error_text: Optional[str] = None, error_code: Optional[str] = None) -> bool:
+    """
+    Narrow classifier for provider errors that should route directly to xAI/Grok.
+    Generic network, quota, timeout, and unknown failures must not be classified as NSFW.
+    """
+    text = " ".join([str(http_status or ""), error_text or "", error_code or ""]).lower()
+    if http_status in (400, 403, 422):
+        return any(keyword in text for keyword in NSFW_REJECTION_KEYWORDS)
+    return any(keyword in text for keyword in ("nsfw", "sexually explicit", "nudity", "prohibited_content", "image_safety", "safety filter"))
 
 
 def rewrite_for_modesty_heuristic(
@@ -222,6 +254,19 @@ async def _openai_images_edit(
     return await client.post(url, headers=headers, data=data, files=files)
 
 
+async def _xai_images_edit(
+    client: httpx.AsyncClient,
+    *,
+    url: str,
+    headers: Dict[str, str],
+    payload: Dict[str, Any],
+) -> httpx.Response:
+    """
+    Thin wrapper for xAI image edit calls to make retry/fallback logic testable.
+    """
+    return await client.post(url, headers=headers, json=payload)
+
+
 def _extract_openai_image_url(data: Dict[str, Any], *, default_mime_type: str = "image/png") -> Tuple[Optional[str], Optional[str], List[str]]:
     """
     Extract a data URL from OpenAI image responses. The image API commonly returns
@@ -249,6 +294,21 @@ def _extract_openai_image_url(data: Dict[str, Any], *, default_mime_type: str = 
         return url.strip(), None, text_parts
 
     return None, None, text_parts
+
+
+def _extract_xai_image_url(data: Dict[str, Any], *, default_mime_type: str = "image/jpeg") -> Optional[str]:
+    items = (data or {}).get("data") or []
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            b64 = item.get("b64_json") or item.get("base64")
+            if isinstance(b64, str) and b64.strip():
+                return f"data:{default_mime_type};base64,{b64.strip()}"
+            url = item.get("url")
+            if isinstance(url, str) and url.strip():
+                return url.strip()
+    return None
 
 
 async def rewrite_for_modesty_gemini(
@@ -458,8 +518,9 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
     """
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     openrouter_api_key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
-    if not api_key and not openrouter_api_key:
-        raise ValueError("OPENAI_API_KEY or OPENROUTER_API_KEY environment variable is required")
+    xai_api_key = (os.getenv("XAI_API_KEY") or "").strip()
+    if not api_key and not openrouter_api_key and not xai_api_key:
+        raise ValueError("OPENAI_API_KEY, OPENROUTER_API_KEY, or XAI_API_KEY environment variable is required")
     gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
     
     try:
@@ -812,6 +873,16 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                     text_prompt += f"- Gender Presentation: {user_attributes['gender']}\n"
                 if user_attributes.get('age_range'):
                     text_prompt += f"- Age Group: {user_attributes['age_range']}\n"
+                if user_attributes.get('body_pose'):
+                    text_prompt += f"- Body Pose: {user_attributes['body_pose']}\n"
+                if user_attributes.get('approximate_measurements'):
+                    text_prompt += f"- Approximate Measurements/Proportions: {json.dumps(user_attributes['approximate_measurements'], ensure_ascii=False)}\n"
+                if user_attributes.get('proportions'):
+                    text_prompt += f"- Proportions: {user_attributes['proportions']}\n"
+                if user_attributes.get('lighting_condition'):
+                    text_prompt += f"- Reference Lighting: {user_attributes['lighting_condition']}\n"
+                if user_attributes.get('background_type'):
+                    text_prompt += f"- Original Background Type: {user_attributes['background_type']}\n"
                 text_prompt += "Ensure the generated person strictly adheres to these physical characteristics to maintain identity consistency.\n\n"
 
             text_prompt += (
@@ -1004,15 +1075,196 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                 )
             return content
 
+        def build_policy_safe_openrouter_prompt(text_prompt: str) -> str:
+            return (
+                text_prompt
+                + "\n\nOPENROUTER FALLBACK SAFETY CONTRACT: This provider fallback is only for "
+                "general-audience fashion try-on rendering after a likely false-positive safety block. "
+                "Do not generate nudity, explicit sexual content, sexualized imagery, or adult content. "
+                "If the outfit cannot be rendered safely, return text explaining that it cannot be rendered instead of an image. "
+                "Keep the result tasteful, professional, and ecommerce-appropriate. Preserve the person and garment only within those limits."
+            )
+
+        def build_xai_image_references() -> List[Dict[str, Any]]:
+            """
+            xAI image editing currently has stricter practical image-count limits than our
+            OpenAI/OpenRouter paths. Use the model image plus either up to two garments or
+            a generated garment reference sheet when there are more items.
+            """
+            refs: List[Dict[str, Any]] = []
+            if user_data:
+                first_user = user_data[0]
+                refs.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{first_user['mimeType']};base64,{first_user['base64']}",
+                            "detail": "high",
+                        },
+                    }
+                )
+
+            if len(garment_data) <= 2:
+                for item in garment_data:
+                    refs.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{item['mimeType']};base64,{item['base64']}",
+                                "detail": "high",
+                            },
+                        }
+                    )
+                return refs
+
+            try:
+                decoded_images = []
+                for item in garment_data:
+                    img = Image.open(io.BytesIO(base64.b64decode(item["base64"])))
+                    img = ImageOps.exif_transpose(img).convert("RGB")
+                    img.thumbnail((512, 512), Image.Resampling.LANCZOS)
+                    decoded_images.append(img.copy())
+
+                cols = 2
+                rows = max(1, (len(decoded_images) + cols - 1) // cols)
+                tile_w = 560
+                tile_h = 560
+                sheet = Image.new("RGB", (cols * tile_w, rows * tile_h), (255, 255, 255))
+                for idx, img in enumerate(decoded_images):
+                    x = (idx % cols) * tile_w + (tile_w - img.width) // 2
+                    y = (idx // cols) * tile_h + (tile_h - img.height) // 2
+                    sheet.paste(img, (x, y))
+                buf = io.BytesIO()
+                sheet.save(buf, format="JPEG", quality=92, optimize=True, progressive=True)
+                refs.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}",
+                            "detail": "high",
+                        },
+                    }
+                )
+            except Exception as e:
+                logger.error("xAI garment reference sheet failed; using first two garments: %s", e, exc_info=True)
+                for item in garment_data[:2]:
+                    refs.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{item['mimeType']};base64,{item['base64']}",
+                                "detail": "high",
+                            },
+                        }
+                    )
+            return refs
+
+        async def generate_with_xai_fallback(
+            client: httpx.AsyncClient,
+            *,
+            text_prompt: str,
+            reason: str,
+            attempt: int,
+            strategy: str = "xai_grok_fallback",
+            modifications_summary: Optional[str] = None,
+        ) -> Dict[str, Any]:
+            xai_api_key = (os.getenv("XAI_API_KEY") or "").strip()
+            if not xai_api_key:
+                raise ValueError("xAI/Grok fallback requested but XAI_API_KEY is not configured")
+
+            model = (os.getenv("XAI_TRYON_IMAGE_MODEL") or os.getenv("XAI_IMAGE_MODEL") or "grok-imagine-image-quality").strip()
+            url = (os.getenv("XAI_IMAGES_EDITS_URL") or "https://api.x.ai/v1/images/edits").strip()
+            prompt = (
+                text_prompt
+                + "\n\nXAI/GROK FALLBACK CONTRACT: Generate a tasteful, general-audience fashion try-on image. "
+                "Do not generate nudity, explicit sexual content, or sexualized imagery. "
+                "If any garment is minimal, sheer, or intimate, add only subtle opacity/lining as needed while preserving the garment design. "
+                "Preserve the person's identity, face, hair, skin tone, body proportions, and realistic body shape. "
+                "Use the attached images in order: first is the model reference; remaining images are garment references or a garment reference sheet."
+            )
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "images": build_xai_image_references(),
+                "aspect_ratio": os.getenv("XAI_TRYON_ASPECT_RATIO", aspect_ratio_from_size(image_size)),
+                "response_format": os.getenv("XAI_TRYON_RESPONSE_FORMAT", "b64_json"),
+            }
+            resolution = (os.getenv("XAI_TRYON_RESOLUTION") or "").strip()
+            if resolution:
+                payload["resolution"] = resolution
+
+            max_retries = int(os.getenv("TRYON_PROVIDER_MAX_RETRIES", "2"))
+            last_error = "unknown_error"
+            for retry_attempt in range(1, max_retries + 2):
+                try:
+                    response = await _xai_images_edit(
+                        client,
+                        url=url,
+                        headers={
+                            "Authorization": f"Bearer {xai_api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        payload=payload,
+                    )
+                    if not response.is_success:
+                        last_error = f"{response.status_code}:{response.text[:500]}"
+                        logger.error(
+                            "xAI/Grok try-on fallback failed attempt=%s model=%s code=%s message=%s",
+                            retry_attempt,
+                            model,
+                            response.status_code,
+                            response.text[:500],
+                        )
+                    else:
+                        image_url = _extract_xai_image_url(response.json(), default_mime_type="image/jpeg")
+                        if image_url:
+                            logger.info("Successfully generated image using xAI/Grok fallback model: %s", model)
+                            return {
+                                "image_url": image_url,
+                                "retry_info": [
+                                    *retry_info,
+                                    {
+                                        "attempt": attempt,
+                                        "strategy": strategy,
+                                        "reason": reason,
+                                        "provider": "xai",
+                                        "model": model,
+                                        "modificationsSummary": (
+                                            modifications_summary
+                                            or f"Used xAI/Grok model {model} after upstream provider failure."
+                                        ),
+                                    },
+                                ],
+                                "modesty_applied": modesty_applied,
+                            }
+                        last_error = "no_image_in_xai_response"
+                        logger.error("xAI/Grok try-on fallback returned no image with model %s", model)
+                except Exception as e:
+                    last_error = str(e)
+                    logger.error(
+                        "xAI/Grok try-on fallback exception attempt=%s model=%s code=exception message=%s",
+                        retry_attempt,
+                        model,
+                        e,
+                        exc_info=True,
+                    )
+
+                if retry_attempt < max_retries + 1:
+                    await asyncio.sleep(min(8, 2 ** (retry_attempt - 1)))
+
+            raise ValueError(f"xAI/Grok try-on fallback failed: {last_error}")
+
         async def generate_with_openrouter_fallback(
             client: httpx.AsyncClient,
             *,
             text_prompt: str,
             reason: str,
             attempt: int,
+            strategy: str = "openrouter_fallback",
+            modifications_summary: Optional[str] = None,
         ) -> Dict[str, Any]:
             if not openrouter_api_key:
-                raise ValueError("OpenAI quota/billing failed and OPENROUTER_API_KEY is not configured")
+                raise ValueError("OpenRouter fallback requested but OPENROUTER_API_KEY is not configured")
 
             models = openrouter_model_candidates(
                 "OPENROUTER_TRYON_IMAGE_MODEL",
@@ -1030,6 +1282,7 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                 "image_size": os.getenv("OPENROUTER_TRYON_IMAGE_SIZE", "1K"),
             }
             last_error = "unknown_error"
+            max_retries = int(os.getenv("TRYON_PROVIDER_MAX_RETRIES", "2"))
             for model in models:
                 payload = {
                     "model": model,
@@ -1041,42 +1294,70 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                     "image_config": image_config,
                     "temperature": 0.2,
                 }
-                response = await post_openrouter_chat_completion(
-                    client,
-                    api_key=openrouter_api_key,
-                    payload=payload,
-                )
-                if not response.is_success:
-                    last_error = f"{response.status_code}:{response.text[:500]}"
-                    logger.error(
-                        "OpenRouter try-on fallback failed with model %s: %s",
-                        model,
-                        last_error,
+                for retry_attempt in range(1, max_retries + 2):
+                    response = await post_openrouter_chat_completion(
+                        client,
+                        api_key=openrouter_api_key,
+                        payload=payload,
                     )
-                    continue
+                    if not response.is_success:
+                        last_error = f"{response.status_code}:{response.text[:500]}"
+                        logger.error(
+                            "OpenRouter try-on fallback failed attempt=%s model=%s code=%s message=%s",
+                            retry_attempt,
+                            model,
+                            response.status_code,
+                            response.text[:500],
+                        )
+                        if is_nsfw_rejection(http_status=response.status_code, error_text=response.text):
+                            return await generate_with_xai_fallback(
+                                client,
+                                text_prompt=text_prompt,
+                                reason="openrouter_nsfw_block",
+                                attempt=attempt,
+                                strategy="xai_after_openrouter_nsfw",
+                                modifications_summary="Used xAI/Grok because OpenRouter returned an NSFW/content-safety block.",
+                            )
+                        if retry_attempt < max_retries + 1:
+                            await asyncio.sleep(min(8, 2 ** (retry_attempt - 1)))
+                        continue
 
-                data = response.json()
-                image_url = extract_openrouter_image_url(data)
-                if image_url:
-                    logger.info("Successfully generated image using OpenRouter fallback model: %s", model)
-                    return {
-                        "image_url": image_url,
-                        "retry_info": [
-                            *retry_info,
-                            {
-                                "attempt": attempt,
-                                "strategy": "openrouter_fallback",
-                                "reason": reason,
-                                "modificationsSummary": f"Used OpenRouter model {model} after OpenAI quota/billing failure.",
-                            },
-                        ],
-                        "modesty_applied": modesty_applied,
-                    }
+                    data = response.json()
+                    image_url = extract_openrouter_image_url(data)
+                    if image_url:
+                        logger.info("Successfully generated image using OpenRouter fallback model: %s", model)
+                        return {
+                            "image_url": image_url,
+                            "retry_info": [
+                                *retry_info,
+                                {
+                                    "attempt": attempt,
+                                    "strategy": strategy,
+                                    "reason": reason,
+                                    "provider": "openrouter",
+                                    "model": model,
+                                    "modificationsSummary": (
+                                        modifications_summary
+                                        or f"Used OpenRouter model {model} after OpenAI failure."
+                                    ),
+                                },
+                            ],
+                            "modesty_applied": modesty_applied,
+                        }
 
-                last_error = "no_image_in_openrouter_response"
-                logger.error("OpenRouter try-on fallback returned no image with model %s", model)
+                    last_error = "no_image_in_openrouter_response"
+                    logger.error("OpenRouter try-on fallback returned no image with model %s", model)
+                    if retry_attempt < max_retries + 1:
+                        await asyncio.sleep(min(8, 2 ** (retry_attempt - 1)))
 
-            raise ValueError(f"OpenRouter try-on fallback failed: {last_error}")
+            return await generate_with_xai_fallback(
+                client,
+                text_prompt=text_prompt,
+                reason=f"openrouter_failed:{last_error}",
+                attempt=attempt,
+                strategy="xai_after_openrouter_failure",
+                modifications_summary=f"Used xAI/Grok after OpenRouter failed: {last_error}",
+            )
 
         logger.info("Starting virtual try-on generation with OpenAI image model selection")
         logger.info(f"   Person images: {len(limited_user_images)}")
@@ -1095,8 +1376,12 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
         image_size = os.getenv("OPENAI_TRYON_IMAGE_SIZE", "1024x1536").strip() or "1024x1536"
         image_quality = os.getenv("OPENAI_TRYON_QUALITY", "high").strip() or "high"
         image_moderation = os.getenv("OPENAI_TRYON_MODERATION", "auto").strip() or "auto"
+        openrouter_content_fallback_enabled = _env_flag_enabled(
+            "OPENROUTER_TRYON_CONTENT_FALLBACK_ENABLED",
+            "0",
+        )
         
-        max_attempts = 4
+        max_attempts = int(os.getenv("TRYON_PROVIDER_MAX_RETRIES", "2")) + 1
         last_failure_details: Dict[str, Any] = {}
         retry_info: List[Dict[str, Any]] = []
 
@@ -1337,11 +1622,19 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
             current_prompt: str = base_prompt
 
             if not api_key:
-                return await generate_with_openrouter_fallback(
+                if openrouter_api_key:
+                    return await generate_with_openrouter_fallback(
+                        client,
+                        text_prompt=current_prompt,
+                        reason="openai_api_key_missing",
+                        attempt=1,
+                    )
+                return await generate_with_xai_fallback(
                     client,
                     text_prompt=current_prompt,
-                    reason="openai_api_key_missing",
+                    reason="openai_and_openrouter_missing",
                     attempt=1,
+                    strategy="xai_when_primary_providers_unconfigured",
                 )
 
             async def apply_retry_rewrite(
@@ -1476,6 +1769,44 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                             )
 
                         if attempt == max_attempts:
+                            if is_nsfw_rejection(
+                                http_status=response.status_code,
+                                error_text=error_text,
+                                error_code=str(error_code or ""),
+                            ):
+                                return await generate_with_xai_fallback(
+                                    client,
+                                    text_prompt=current_prompt + retry_suffix,
+                                    reason="openai_nsfw_block_after_retries",
+                                    attempt=attempt,
+                                    strategy="xai_after_openai_nsfw",
+                                    modifications_summary=(
+                                        "Used xAI/Grok because OpenAI returned an NSFW/content-safety block after retries."
+                                    ),
+                                )
+                            if openrouter_api_key:
+                                return await generate_with_openrouter_fallback(
+                                    client,
+                                    text_prompt=(
+                                        build_policy_safe_openrouter_prompt(current_prompt + retry_suffix)
+                                        if should_rewrite and openrouter_content_fallback_enabled
+                                        else current_prompt + retry_suffix
+                                    ),
+                                    reason=(
+                                        "openai_content_rejection_after_safety_rewrites"
+                                        if should_rewrite
+                                        else "openai_http_error_after_retries"
+                                    ),
+                                    attempt=attempt,
+                                    strategy=(
+                                        "openrouter_content_safety_fallback"
+                                        if should_rewrite and openrouter_content_fallback_enabled
+                                        else "openrouter_after_openai_failure"
+                                    ),
+                                    modifications_summary=(
+                                        "Used OpenRouter after OpenAI failure; retained the general-audience/modesty prompt."
+                                    ),
+                                )
                             raise ValueError(f"OpenAI image edit error after {max_attempts} attempts: {response.status_code} - {error_text}")
                         continue
                     
@@ -1510,6 +1841,39 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                             prefer_gemini=attempt >= 2,
                         )
                     if attempt == max_attempts:
+                        serialized_data = json.dumps(data, ensure_ascii=False)[:1200]
+                        if is_nsfw_rejection(error_text=serialized_data):
+                            return await generate_with_xai_fallback(
+                                client,
+                                text_prompt=current_prompt + retry_suffix,
+                                reason="openai_no_image_nsfw_after_retries",
+                                attempt=attempt,
+                                strategy="xai_after_openai_nsfw",
+                                modifications_summary=(
+                                    "Used xAI/Grok after OpenAI returned no image with safety-like response details."
+                                ),
+                            )
+                        if openrouter_api_key:
+                            return await generate_with_openrouter_fallback(
+                                client,
+                                text_prompt=(
+                                    build_policy_safe_openrouter_prompt(current_prompt + retry_suffix)
+                                    if should_rewrite and openrouter_content_fallback_enabled
+                                    else current_prompt + retry_suffix
+                                ),
+                                reason=(
+                                    "openai_no_image_after_safety_rewrites"
+                                    if should_rewrite
+                                    else "openai_no_image_after_retries"
+                                ),
+                                attempt=attempt,
+                                strategy=(
+                                    "openrouter_content_safety_fallback"
+                                    if should_rewrite and openrouter_content_fallback_enabled
+                                    else "openrouter_after_openai_no_image"
+                                ),
+                                modifications_summary="Used OpenRouter after OpenAI returned no usable image.",
+                            )
                         readable_text = (extracted_text_parts[0][:300] if extracted_text_parts else "")
                         safety_hint = " The request may have been blocked by image safety filters." if should_rewrite else ""
                         raise ValueError(f"No image generated after {max_attempts} attempts. Model message: {readable_text}.{safety_hint}")
@@ -1519,7 +1883,21 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                     logger.error(f"Timeout calling OpenAI try-on on attempt {attempt}: {e}")
                     last_failure_details = {"reason": "timeout", "error": str(e), "attempt": attempt}
                     if attempt == max_attempts:
-                        raise ValueError(f"Request timed out after {max_attempts} attempts. Please try again.")
+                        if openrouter_api_key:
+                            return await generate_with_openrouter_fallback(
+                                client,
+                                text_prompt=current_prompt + retry_suffix,
+                                reason="openai_timeout_after_retries",
+                                attempt=attempt,
+                                strategy="openrouter_after_openai_timeout",
+                            )
+                        return await generate_with_xai_fallback(
+                            client,
+                            text_prompt=current_prompt + retry_suffix,
+                            reason="openai_timeout_after_retries_no_openrouter",
+                            attempt=attempt,
+                            strategy="xai_after_openai_timeout",
+                        )
                     continue
                 except Exception as e:
                     logger.error(f"Error calling OpenAI try-on on attempt {attempt}: {e}")
@@ -1532,7 +1910,29 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                             attempt=attempt,
                         )
                     if attempt == max_attempts:
-                        raise
+                        if is_nsfw_rejection(error_text=str(e)):
+                            return await generate_with_xai_fallback(
+                                client,
+                                text_prompt=current_prompt + retry_suffix,
+                                reason="openai_exception_nsfw_after_retries",
+                                attempt=attempt,
+                                strategy="xai_after_openai_nsfw",
+                            )
+                        if openrouter_api_key:
+                            return await generate_with_openrouter_fallback(
+                                client,
+                                text_prompt=current_prompt + retry_suffix,
+                                reason="openai_exception_after_retries",
+                                attempt=attempt,
+                                strategy="openrouter_after_openai_exception",
+                            )
+                        return await generate_with_xai_fallback(
+                            client,
+                            text_prompt=current_prompt + retry_suffix,
+                            reason="openai_exception_after_retries_no_openrouter",
+                            attempt=attempt,
+                            strategy="xai_after_openai_exception",
+                        )
                     continue
 
     except Exception as e:

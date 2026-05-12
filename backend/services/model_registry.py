@@ -57,7 +57,11 @@ GEMINI_TASKS = {
 OPENAI_TASKS = {
     "tryon_image": TaskModelConfig(
         env_keys=("OPENAI_TRYON_IMAGE_MODEL", "OPENAI_IMAGE_MODEL"),
-        default_model="gpt-image-1.5",
+        default_model="gpt-image-2",
+    ),
+    "model_photo_analysis": TaskModelConfig(
+        env_keys=("OPENAI_MODEL_PHOTO_ANALYSIS_MODEL", "OPENAI_VISION_MODEL", "OPENAI_MODEL"),
+        default_model="gpt-5.4-mini",
     ),
     "clothing_analysis": TaskModelConfig(
         env_keys=("OPENAI_CLOTHING_ANALYZE_MODEL", "OPENAI_VISION_MODEL", "OPENAI_MODEL"),
