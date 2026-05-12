@@ -125,6 +125,55 @@ const formatCurrency = (value?: number | null, currency?: string | null) => {
   }
 };
 
+const DATA_IMAGE_URL_PATTERN = /^data:image\/[a-zA-Z0-9.+-]+;base64,/i;
+const HTTP_IMAGE_URL_PATTERN = /^https?:\/\//i;
+const BLOB_URL_PATTERN = /^blob:/i;
+const BASE64_IMAGE_PATTERN = /^[A-Za-z0-9+/=\s]+$/;
+const IMAGE_PATH_PATTERN = /(?:^|\/)(?:uploads|images|generated|results|static|tmp)\//i;
+const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|webp|gif|avif)(?:[?#].*)?$/i;
+
+const normalizeTryOnResultImageUrl = (
+  rawUrl: unknown,
+  backendBaseUrl: string
+): string | null => {
+  if (typeof rawUrl !== 'string') {
+    return null;
+  }
+
+  const trimmed = rawUrl.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (
+    DATA_IMAGE_URL_PATTERN.test(trimmed) ||
+    HTTP_IMAGE_URL_PATTERN.test(trimmed) ||
+    BLOB_URL_PATTERN.test(trimmed)
+  ) {
+    return trimmed;
+  }
+
+  const compact = trimmed.replace(/\s+/g, '');
+  if (compact.length > 1000 && BASE64_IMAGE_PATTERN.test(compact)) {
+    return `data:image/png;base64,${compact}`;
+  }
+
+  if (
+    trimmed.startsWith('/') ||
+    IMAGE_PATH_PATTERN.test(trimmed) ||
+    IMAGE_EXTENSION_PATTERN.test(trimmed)
+  ) {
+    return ensureAbsoluteUrl(trimmed, backendBaseUrl) || null;
+  }
+
+  return null;
+};
+
+const addImageCacheBust = (url: string): string =>
+  DATA_IMAGE_URL_PATTERN.test(url) || BLOB_URL_PATTERN.test(url)
+    ? url
+    : `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+
 const PREVIEW_SAMPLE_MODELS = [
   {
     label: 'Studio front',
@@ -575,6 +624,16 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       resultImageLoadTimerRef.current = null;
     }
     setIsTryOnLoading(false);
+  }, []);
+
+  const handleResultImageError = useCallback((message: string) => {
+    if (resultImageLoadTimerRef.current) {
+      clearTimeout(resultImageLoadTimerRef.current);
+      resultImageLoadTimerRef.current = null;
+    }
+    setError(message);
+    setIsTryOnLoading(false);
+    setIsGenerating(false);
   }, []);
 
   useEffect(() => {
@@ -2523,7 +2582,16 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         if (tryOnRes.data.image_url) {
           // Reset content-block warning state after a successful generation
           contentBlockWarnedRef.current = false;
-          const imageUrl = tryOnRes.data.image_url;
+          const imageUrl = normalizeTryOnResultImageUrl(tryOnRes.data.image_url, API_URL);
+          if (!imageUrl) {
+            logger.error("tryon_invalid_image_url", {
+              requestId,
+              rawImageUrl: tryOnRes.data.image_url,
+            });
+            throw new Error(
+              "The try-on service returned an invalid image URL. Please try again."
+            );
+          }
           
           captureEvent(ANALYTICS_EVENTS.TRY_ON_SUCCESS, {
             request_id: requestId,
@@ -2541,12 +2609,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             });
           }
           
-          // For data URLs (base64), we can't add a timestamp, but React will update if the URL changes
-          // For regular URLs, add timestamp to force refresh on repeated uses
-          let finalImageUrl = imageUrl;
-          if (!imageUrl.startsWith('data:')) {
-            finalImageUrl = `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
-          }
+          const finalImageUrl = addImageCacheBust(imageUrl);
           
           // Force state update by setting to null first, then to new URL
           // Finalize the hold for audit purposes (idempotent; does not change visible balance).
@@ -3342,6 +3405,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   onDownloadClean={redirectToPricing}
                   onTryAnother={redirectToPricing}
                   onImageLoaded={handleResultImageLoaded}
+                  onImageError={handleResultImageError}
                   showResultActions={false}
                   className={`h-full min-h-[420px] rounded-none border-0 lg:min-h-0 lg:aspect-auto ${
                     mirrorMode === 'zoom' ? 'scale-[1.035]' : ''
@@ -3989,6 +4053,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 onDownloadClean={redirectToPricing}
                 onTryAnother={redirectToPricing}
                 onImageLoaded={handleResultImageLoaded}
+                onImageError={handleResultImageError}
               />
               {generatedImage && modestyApplied && (
                 <div className="mt-3 rounded-lg border border-white/15 bg-white/10 p-3 text-xs text-slate-200">

@@ -1,7 +1,15 @@
 'use client'
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import Image from 'next/image'
+import {
+  Check,
+  Images,
+  type LucideIcon,
+  ScanSearch,
+  Shirt,
+  Sparkles,
+  WandSparkles,
+} from 'lucide-react'
 
 type TryOnProgressLoaderProps = {
   /** Whether generation is currently running */
@@ -22,50 +30,44 @@ type Stage = {
   id: number
   label: string
   description: string
-  imageSrc: string
-  imageAlt: string
+  Icon: LucideIcon
   targetPercent: number
 }
 
 const STAGES: Stage[] = [
   {
     id: 1,
-    label: 'Analyzing images',
+    label: 'Reading photos',
     description: 'Reading your photos and garments',
-    imageSrc: '/loader%20reference/icons%20for%20loader-01.png',
-    imageAlt: 'Clothing analysis icon',
+    Icon: ScanSearch,
     targetPercent: 8,
   },
   {
     id: 2,
-    label: 'Constructing outfit',
+    label: 'Styling outfit',
     description: 'Pairing pieces for the best look',
-    imageSrc: '/loader%20reference/icons%20for%20loader-02.png',
-    imageAlt: 'Outfit construction icon',
+    Icon: Shirt,
     targetPercent: 28,
   },
   {
     id: 3,
-    label: 'Dressing model',
+    label: 'Fitting garments',
     description: 'Applying garments on your model',
-    imageSrc: '/loader%20reference/icons%20for%20loader-03.png',
-    imageAlt: 'Model dressing icon',
+    Icon: Images,
     targetPercent: 58,
   },
   {
     id: 4,
-    label: 'Final Details',
+    label: 'Polishing render',
     description: 'Polishing lighting and fit',
-    imageSrc: '/loader%20reference/icons%20for%20loader-04.png',
-    imageAlt: 'Final details icon',
+    Icon: WandSparkles,
     targetPercent: 82,
   },
   {
     id: 5,
-    label: 'Complete',
+    label: 'Ready',
     description: 'Your look is ready',
-    imageSrc: '/loader%20reference/icons%20for%20loader-05.png',
-    imageAlt: 'Complete try-on icon',
+    Icon: Check,
     targetPercent: 100,
   },
 ]
@@ -326,10 +328,12 @@ export function TryOnProgressLoader({
   const stage = useMemo(() => STAGES[Math.min(stageIndex, STAGES.length - 1)], [stageIndex])
   const percentInt = Math.round(progress)
   const isError = status === 'error'
+  const CurrentIcon = isError ? Sparkles : stage.Icon
   const displayLabel = isError ? 'Generation failed' : stage.label
   const displayDescription = isError
     ? failureMessage || 'We could not generate this look. Please try again.'
     : stage.description
+  const ringDegrees = Math.max(8, Math.min(100, percentInt)) * 3.6
 
   useEffect(() => {
     onStageChange?.(stage.id)
@@ -338,8 +342,8 @@ export function TryOnProgressLoader({
   return (
     <div
       className={`
-        absolute inset-0 z-10 flex flex-col items-center justify-center 
-        bg-white/96 backdrop-blur-[2px]
+        absolute inset-0 z-10 flex flex-col items-center justify-center
+        bg-[#f8f6f2]/95 backdrop-blur-[3px]
         ${isExiting ? 'opacity-0' : 'opacity-100'}
       `}
       style={{
@@ -354,42 +358,88 @@ export function TryOnProgressLoader({
       aria-label={`Processing stage ${stage.id} of 5: ${stage.label}`}
       role="status"
     >
-      <div className="flex w-full max-w-[34rem] flex-col items-center px-3 text-center sm:px-6">
-        <div className="grid w-full grid-cols-6 items-start gap-x-1 gap-y-4 sm:gap-x-3 sm:gap-y-5">
+      <style>
+        {`
+          @keyframes tryon-ring-spin {
+            to { transform: rotate(360deg); }
+          }
+          @keyframes tryon-sweep {
+            0% { transform: translateX(-120%); opacity: 0; }
+            18% { opacity: .8; }
+            55% { opacity: .45; }
+            100% { transform: translateX(220%); opacity: 0; }
+          }
+          @keyframes tryon-float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+          }
+        `}
+      </style>
+
+      <div className="flex w-full max-w-[31rem] flex-col items-center px-5 text-center sm:px-6">
+        <div
+          className="relative flex h-36 w-36 items-center justify-center sm:h-44 sm:w-44"
+          style={{ animation: isError ? undefined : 'tryon-float 3.8s ease-in-out infinite' }}
+        >
+          <div
+            className="absolute inset-0 rounded-full p-[4px] shadow-[0_18px_55px_rgba(16,17,20,0.13)]"
+            style={{
+              background: `conic-gradient(${isError ? '#ef4444' : '#f47a20'} ${ringDegrees}deg, rgba(16,17,20,0.13) 0deg)`,
+            }}
+            aria-hidden="true"
+          >
+            <div className="h-full w-full rounded-full bg-[#f8f6f2]" />
+          </div>
+          <div
+            className="absolute inset-3 rounded-full border border-black/10"
+            style={{ animation: isError ? undefined : 'tryon-ring-spin 9s linear infinite' }}
+            aria-hidden="true"
+          >
+            <span className="absolute left-1/2 top-[-3px] h-2.5 w-8 -translate-x-1/2 rounded-full bg-[#f47a20] shadow-[0_0_18px_rgba(244,122,32,0.45)]" />
+            <span className="absolute bottom-[-2px] right-6 h-1.5 w-5 rounded-full bg-[#0f766e]/70" />
+          </div>
+          <div className="relative flex h-24 w-24 items-center justify-center rounded-full border border-black/10 bg-white shadow-[0_16px_42px_rgba(15,23,42,0.12)] sm:h-28 sm:w-28">
+            <CurrentIcon
+              size={42}
+              strokeWidth={1.65}
+              className={isError ? 'text-red-500' : 'text-[#101114]'}
+              aria-hidden="true"
+            />
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-1.5">
+          <p className="text-lg font-black leading-tight text-[#101114] sm:text-2xl">{displayLabel}</p>
+          <p className={`text-sm sm:text-[15px] ${isError ? 'text-red-600' : 'text-[#454a52]'}`}>{displayDescription}</p>
+        </div>
+
+        <div className="mt-5 grid w-full grid-cols-5 gap-1.5 sm:gap-2">
           {STAGES.map((s, idx) => {
             const isActiveStage = !isError && idx === stageIndex
             const isCompletedStage = !isError && idx < stageIndex
             const isPendingStage = !isError && idx > stageIndex
-            const placement = s.id === 4 ? 'col-span-2 col-start-2' : s.id === 5 ? 'col-span-2 col-start-4' : 'col-span-2'
+            const StageIcon = s.Icon
 
             return (
-              <div key={s.id} className={`${placement} flex flex-col items-center`}>
+              <div key={s.id} className="flex min-w-0 flex-col items-center">
                 <div
                   className={`
-                    relative aspect-square w-20 rounded-full transition-all duration-500
-                    sm:w-24
-                    ${isActiveStage ? 'scale-110 drop-shadow-[0_0_18px_rgba(249,115,22,0.42)]' : ''}
-                    ${isCompletedStage ? 'opacity-95 saturate-110' : ''}
-                    ${isPendingStage ? 'opacity-45 grayscale-[20%]' : ''}
-                    ${isError ? 'opacity-55 grayscale' : ''}
+                    flex h-9 w-9 items-center justify-center rounded-full border transition-all duration-500 sm:h-10 sm:w-10
+                    ${isActiveStage ? 'border-[#f47a20] bg-[#101114] text-white shadow-[0_0_18px_rgba(244,122,32,0.32)]' : ''}
+                    ${isCompletedStage ? 'border-[#0f766e]/30 bg-[#0f766e] text-white' : ''}
+                    ${isPendingStage ? 'border-black/10 bg-white text-black/38' : ''}
+                    ${isError ? 'border-red-200 bg-white text-red-400' : ''}
                   `}
                 >
-                  <Image
-                    src={s.imageSrc}
-                    alt={s.imageAlt}
-                    fill
-                    sizes="(max-width: 640px) 80px, 96px"
-                    className="object-contain"
-                    priority={s.id <= 3}
-                  />
+                  <StageIcon size={17} strokeWidth={1.9} aria-hidden="true" />
                 </div>
                 <p
                   className={`
-                    mt-1.5 max-w-[7rem] text-[11px] font-bold leading-tight text-black transition-colors duration-300
-                    sm:mt-2 sm:text-sm
-                    ${isActiveStage ? 'text-black' : ''}
-                    ${isPendingStage ? 'text-black/55' : ''}
-                    ${isError ? 'text-black/55' : ''}
+                    mt-1.5 max-w-[4.6rem] text-[10px] font-bold leading-tight transition-colors duration-300 sm:max-w-[5.6rem] sm:text-[11px]
+                    ${isActiveStage ? 'text-[#101114]' : ''}
+                    ${isCompletedStage ? 'text-[#0f766e]' : ''}
+                    ${isPendingStage ? 'text-black/46' : ''}
+                    ${isError ? 'text-black/48' : ''}
                   `}
                 >
                   {s.label}
@@ -399,27 +449,25 @@ export function TryOnProgressLoader({
           })}
         </div>
 
-        <div className="mt-5 w-full max-w-xs space-y-2 sm:mt-6">
-          <div className="space-y-1">
-            <p className="text-sm font-bold text-black sm:text-base">{displayLabel}</p>
-            <p className={`text-xs sm:text-sm ${isError ? 'text-red-600' : 'text-black/68'}`}>{displayDescription}</p>
-          </div>
-
-          <div className="pt-1.5">
-            <div className="h-2 w-full overflow-hidden rounded-full bg-black/10">
+        <div className="mt-5 w-full max-w-sm space-y-2 sm:mt-6">
+          <div className="h-2.5 w-full overflow-hidden rounded-full bg-black/10">
             <div
-              className="h-full rounded-full bg-[#f47a20] shadow-[0_0_12px_rgba(244,122,32,0.4)] transition-[width] duration-500 ease-out"
+              className="relative h-full overflow-hidden rounded-full bg-[#101114] shadow-[0_0_12px_rgba(16,17,20,0.18)] transition-[width] duration-500 ease-out"
               style={{ width: `${percentInt}%` }}
-            />
+            >
+              <span
+                className="absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-transparent via-[#f47a20]/80 to-transparent"
+                style={{ animation: isError ? undefined : 'tryon-sweep 2.2s ease-in-out infinite' }}
+                aria-hidden="true"
+              />
+            </div>
           </div>
-          <div className="mt-1 flex justify-between text-[11px] text-black/60 sm:text-xs">
+          <div className="mt-1 flex justify-between text-[11px] font-medium text-black/58 sm:text-xs">
             <span>Stage {stage.id}/5</span>
             <span>{percentInt}%</span>
           </div>
-        </div>
         </div>
       </div>
     </div>
   )
 }
-

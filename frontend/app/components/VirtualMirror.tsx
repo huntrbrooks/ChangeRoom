@@ -12,6 +12,7 @@ interface VirtualMirrorProps {
   onDownloadClean?: () => void;
   onTryAnother?: () => void;
   onImageLoaded?: () => void;
+  onImageError?: (message: string) => void;
   placeholderImageUrl?: string;
   showResultActions?: boolean;
   className?: string;
@@ -26,6 +27,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
   onDownloadClean,
   onTryAnother,
   onImageLoaded,
+  onImageError,
   placeholderImageUrl,
   showResultActions = true,
   className = '',
@@ -33,22 +35,28 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
   const [showLoader, setShowLoader] = useState(false);
   const [hasRun, setHasRun] = useState(false);
   const [imageReady, setImageReady] = useState(false);
+  const [imageLoadError, setImageLoadError] = useState<string | null>(null);
   const imgElRef = useRef<HTMLImageElement | null>(null);
+  const imageRetryAttemptedRef = useRef(false);
   const loaderFallbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const LOADER_FADE_MS = 2400;
 
   const displayImageUrl = imageUrl || placeholderImageUrl || null;
   const hasResult = Boolean(imageUrl);
-  const hasError = Boolean(errorMessage);
+  const hasImageLoadError = Boolean(imageLoadError);
+  const hasError = Boolean(errorMessage || imageLoadError);
   const status: 'pending' | 'success' | 'error' =
     hasError ? 'error' : imageReady ? 'success' : isLoading ? 'pending' : hasResult ? 'success' : 'pending';
   const canCompleteLoader = hasError ? true : imageReady;
+  const resolvedErrorMessage = errorMessage || imageLoadError;
 
   useEffect(() => {
     if (isLoading) {
       setHasRun(true);
       setShowLoader(true);
       setImageReady(false);
+      setImageLoadError(null);
+      imageRetryAttemptedRef.current = false;
     }
   }, [isLoading]);
 
@@ -56,8 +64,22 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
     // Reset readiness whenever a new image URL is provided
     if (imageUrl) {
       setImageReady(false);
+      setImageLoadError(null);
+      imageRetryAttemptedRef.current = false;
     }
   }, [imageUrl]);
+
+  const failImageLoad = React.useCallback(
+    (failedUrl: string | null) => {
+      const message =
+        "The try-on finished, but the generated image could not be loaded. Please try again.";
+      logger.error('tryon_image_load_failed', { imageUrl: failedUrl });
+      setImageReady(false);
+      setImageLoadError(message);
+      onImageError?.(message);
+    },
+    [onImageError]
+  );
 
   // Failproof: mark ready even if the browser doesn't fire onLoad (cached/instant render)
   useEffect(() => {
@@ -155,13 +177,13 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
           isActive={showLoader}
           status={status}
           canComplete={canCompleteLoader}
-          failureMessage={hasError ? errorMessage || undefined : undefined}
+          failureMessage={hasError ? resolvedErrorMessage || undefined : undefined}
           onStageChange={onStageChange}
           onFinished={handleLoaderFinished}
         />
       )}
 
-      {displayImageUrl ? (
+      {displayImageUrl && !hasImageLoadError ? (
         <>
           <img
             key={displayImageUrl}
@@ -175,6 +197,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
             onLoad={() => {
               if (imageUrl) {
                 setImageReady(true);
+                setImageLoadError(null);
                 onImageLoaded?.();
                 logger.info('tryon_image_loaded');
               }
@@ -183,21 +206,15 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
               console.error('Error loading try-on image:', displayImageUrl);
               const img = e.target as HTMLImageElement;
               // Try to reload without timestamp if it was added
-              if (imageUrl?.includes('?t=')) {
+              if (imageUrl?.includes('?t=') && !imageRetryAttemptedRef.current) {
                 const urlWithoutTimestamp = imageUrl.split('?')[0];
                 if (urlWithoutTimestamp !== imageUrl && img.src !== urlWithoutTimestamp) {
+                  imageRetryAttemptedRef.current = true;
                   img.src = urlWithoutTimestamp;
-                }
-              } else {
-                // For data URLs, try reloading after a short delay
-                if (imageUrl?.startsWith('data:')) {
-                  setTimeout(() => {
-                    if (img.src === imageUrl) {
-                      img.src = imageUrl;
-                    }
-                  }, 100);
+                  return;
                 }
               }
+              failImageLoad(displayImageUrl);
             }}
           />
           {isPreview && (
@@ -240,7 +257,9 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
             <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-white shadow-sm">
               <Share2 size={18} className="text-[#6d5dfc]" />
             </div>
-            <p className="text-xs sm:text-sm">Your virtual reflection appears here</p>
+            <p className={`text-xs sm:text-sm ${hasImageLoadError ? 'text-red-600' : ''}`}>
+              {hasImageLoadError ? resolvedErrorMessage : 'Your virtual reflection appears here'}
+            </p>
           </div>
         </div>
       )}

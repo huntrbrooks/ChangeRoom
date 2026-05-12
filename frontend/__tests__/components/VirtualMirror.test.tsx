@@ -43,5 +43,29 @@ describe('VirtualMirror', () => {
 
     expect(handleImageLoaded).toHaveBeenCalled()
   })
-})
 
+  it('reports a result image load failure instead of leaving the loader pending', () => {
+    const handleImageError = jest.fn()
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+
+    render(
+      <VirtualMirror
+        imageUrl="https://example.com/missing-result.png"
+        isLoading
+        onImageError={handleImageError}
+      />,
+    )
+
+    const img = screen.getByAltText(/Virtual Try-On Result/i)
+    act(() => {
+      fireEvent.error(img)
+    })
+
+    expect(handleImageError).toHaveBeenCalledWith(
+      'The try-on finished, but the generated image could not be loaded. Please try again.',
+    )
+    expect(screen.getByText(/generated image could not be loaded/i)).toBeInTheDocument()
+
+    consoleErrorSpy.mockRestore()
+  })
+})
