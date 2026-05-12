@@ -5,6 +5,15 @@ const nextConfig: NextConfig = {
   // Skip static generation for pages that use Clerk
   output: 'standalone',
   async headers() {
+    const connectSrc = [
+      "'self'",
+      "https:",
+      "wss:",
+      ...(process.env.NODE_ENV === 'production'
+        ? []
+        : ["http://localhost:8000", "http://127.0.0.1:8000"]),
+    ].join(' ');
+
     const contentSecurityPolicy = [
       "default-src 'self'",
       "base-uri 'self'",
@@ -14,7 +23,7 @@ const nextConfig: NextConfig = {
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self' data:",
-      "connect-src 'self' https: wss:",
+      `connect-src ${connectSrc}`,
       "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://*.clerk.com https://*.clerk.accounts.dev https://clerk.igetdressed.online",
       "worker-src 'self' blob:",
       "manifest-src 'self'",

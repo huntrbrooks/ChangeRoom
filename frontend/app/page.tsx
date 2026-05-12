@@ -51,6 +51,7 @@ import { trackTrialConsumed, trackOutfitGenerated } from '@/lib/userEvents';
 import { getBillingBannerState } from '@/lib/billingBanner';
 import { getDemoTryOnImageUrl, getDemoTryOnProducts } from '@/lib/pitchDemo';
 import { logger } from '@/lib/logger';
+import { recordClientDiagnostic } from '@/lib/clientDiagnostics';
 
 // Force dynamic rendering to prevent static generation issues with Clerk
 export const dynamic = 'force-dynamic';
@@ -62,6 +63,17 @@ interface Product {
   link: string;
   thumbnail: string;
   source: string;
+}
+
+type WardrobeAudience = 'Women' | 'Men' | 'Unisex';
+type MirrorMode = 'fit' | 'zoom';
+type LookFeedback = 'liked' | 'disliked' | null;
+type ActionFeedbackTone = 'info' | 'success' | 'warning' | 'error';
+
+interface ActionFeedback {
+  id: number;
+  tone: ActionFeedbackTone;
+  message: string;
 }
 
 interface BillingInfo {
@@ -127,38 +139,54 @@ const PREVIEW_WARDROBE_ITEMS = [
     src: '/preview-assets/wardrobe-coat.png',
     filename: 'classic-trench-coat.png',
     category: 'upper_body',
+    audience: ['Women', 'Unisex'] as WardrobeAudience[],
   },
   {
     label: 'Black Blazer',
     src: '/preview-assets/wardrobe-blazer.png',
     filename: 'black-blazer.png',
     category: 'upper_body',
+    audience: ['Women', 'Men', 'Unisex'] as WardrobeAudience[],
   },
   {
     label: 'Ribbed Tank Top',
     src: '/preview-assets/wardrobe-tank.png',
     filename: 'ribbed-tank-top.png',
     category: 'upper_body',
+    audience: ['Women', 'Unisex'] as WardrobeAudience[],
   },
   {
     label: 'High Rise Straight Jeans',
     src: '/preview-assets/wardrobe-jeans.png',
     filename: 'high-rise-straight-jeans.png',
     category: 'lower_body',
+    audience: ['Women', 'Men', 'Unisex'] as WardrobeAudience[],
   },
   {
     label: 'Leather Shoulder Bag',
     src: '/preview-assets/wardrobe-bag.png',
     filename: 'leather-shoulder-bag.png',
     category: 'accessories',
+    audience: ['Women', 'Unisex'] as WardrobeAudience[],
   },
   {
     label: 'Slingback Heels',
     src: '/preview-assets/wardrobe-heels.png',
     filename: 'slingback-heels.png',
     category: 'shoes',
+    audience: ['Women'] as WardrobeAudience[],
   },
 ];
+
+const PREVIEW_MIRROR_THUMBNAILS = [
+  { src: '/preview-assets/mirror-look.png', alt: 'Front look' },
+  { src: '/preview-assets/thumb-back.png', alt: 'Back look' },
+  { src: '/preview-assets/thumb-detail.png', alt: 'Detail look' },
+];
+
+function buildShoppingSearchUrl(query: string): string {
+  return `https://www.google.com/search?tbm=shop&q=${encodeURIComponent(query)}`;
+}
 
 const PREVIEW_SHOP_PRODUCTS = [
   {
@@ -166,35 +194,35 @@ const PREVIEW_SHOP_PRODUCTS = [
     price: '$129.00',
     thumbnail: '/preview-assets/product-coat.png',
     source: 'Preview',
-    link: '#',
+    link: buildShoppingSearchUrl('Classic Trench Coat'),
   },
   {
     title: 'High Rise Straight Jeans',
     price: '$89.00',
     thumbnail: '/preview-assets/product-jeans.png',
     source: 'Preview',
-    link: '#',
+    link: buildShoppingSearchUrl('High Rise Straight Jeans'),
   },
   {
     title: 'Ribbed Tank Top',
     price: '$29.00',
     thumbnail: '/preview-assets/product-tank.png',
     source: 'Preview',
-    link: '#',
+    link: buildShoppingSearchUrl('Ribbed Tank Top'),
   },
   {
     title: 'Leather Shoulder Bag',
     price: '$79.00',
     thumbnail: '/preview-assets/product-bag.png',
     source: 'Preview',
-    link: '#',
+    link: buildShoppingSearchUrl('Leather Shoulder Bag'),
   },
   {
     title: 'Slingback Heels',
     price: '$99.00',
     thumbnail: '/preview-assets/product-heels.png',
     source: 'Preview',
-    link: '#',
+    link: buildShoppingSearchUrl('Slingback Heels'),
   },
 ];
 
@@ -282,6 +310,14 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const [blockedWardrobeIndices, setBlockedWardrobeIndices] = useState<Set<number>>(new Set());
   const [adjustingDescriptionIndices, setAdjustingDescriptionIndices] = useState<Set<number>>(new Set());
   const [lastSafetyBlockDetail, setLastSafetyBlockDetail] = useState<string | null>(null);
+  const [activeWardrobeAudience, setActiveWardrobeAudience] = useState<WardrobeAudience>('Women');
+  const [showWardrobeFilters, setShowWardrobeFilters] = useState(false);
+  const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
+  const [lookFeedback, setLookFeedback] = useState<LookFeedback>(null);
+  const [mirrorMode, setMirrorMode] = useState<MirrorMode>('fit');
+  const [activeMirrorThumb, setActiveMirrorThumb] = useState(0);
+  const [isMirrorExpanded, setIsMirrorExpanded] = useState(false);
+  const [shopProductOffset, setShopProductOffset] = useState(0);
   const [adjustDescriptionFeedback, setAdjustDescriptionFeedback] = useState<
     Map<number, { tone: 'success' | 'warning' | 'error'; message: string }>
   >(new Map());
@@ -298,6 +334,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const mobileActionBarRef = useRef<HTMLDivElement | null>(null);
   const selfUploadInputRef = useRef<HTMLInputElement | null>(null);
   const wardrobeUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const actionFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const withRetry = useCallback(
     async function withRetryFn<T>(fn: () => Promise<T>, retries = 2, delayMs = 1500): Promise<T> {
@@ -317,6 +354,14 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     },
     []
   );
+
+  useEffect(() => {
+    return () => {
+      if (actionFeedbackTimerRef.current) {
+        clearTimeout(actionFeedbackTimerRef.current);
+      }
+    };
+  }, []);
 
   const scrollToVirtualMirror = useCallback(() => {
     const el = virtualMirrorSectionRef.current;
@@ -600,6 +645,230 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     (isAuthenticated || pitchDemoEnabled) &&
     !isGenerating &&
     (backendAvailability === 'healthy' || pitchDemoEnabled);
+
+  const reportUiAction = useCallback(
+    (
+      action: string,
+      status: 'started' | 'completed' | 'blocked' | 'failed',
+      fields: Record<string, unknown> = {},
+      level: 'info' | 'warn' | 'error' = status === 'failed' ? 'error' : status === 'blocked' ? 'warn' : 'info'
+    ) => {
+      recordClientDiagnostic(
+        'ui_action',
+        {
+          action,
+          status,
+          request_id: lastRequestId,
+          authenticated: isAuthenticated,
+          billing_status: billingStatus,
+          ...fields,
+        },
+        level
+      );
+    },
+    [billingStatus, isAuthenticated, lastRequestId]
+  );
+
+  const showActionFeedback = useCallback(
+    (
+      message: string,
+      tone: ActionFeedbackTone = 'info',
+      action = 'ui_feedback',
+      fields: Record<string, unknown> = {}
+    ) => {
+      if (actionFeedbackTimerRef.current) {
+        clearTimeout(actionFeedbackTimerRef.current);
+      }
+      setActionFeedback({
+        id: Date.now(),
+        tone,
+        message,
+      });
+      reportUiAction(
+        action,
+        tone === 'error' ? 'failed' : tone === 'warning' ? 'blocked' : 'completed',
+        { message, ...fields },
+        tone === 'error' ? 'error' : tone === 'warning' ? 'warn' : 'info'
+      );
+      actionFeedbackTimerRef.current = setTimeout(() => {
+        setActionFeedback(null);
+      }, 7000);
+    },
+    [reportUiAction]
+  );
+
+  const filteredPreviewWardrobeItems = useMemo(
+    () =>
+      PREVIEW_WARDROBE_ITEMS.filter((item) =>
+        item.audience.includes(activeWardrobeAudience)
+      ),
+    [activeWardrobeAudience]
+  );
+
+  const shopProductsForDisplay = useMemo(
+    () => (products.length > 0 ? products : PREVIEW_SHOP_PRODUCTS),
+    [products]
+  );
+
+  const orderedShopProducts = useMemo(() => {
+    if (shopProductsForDisplay.length === 0) {
+      return [];
+    }
+    const offset = shopProductOffset % shopProductsForDisplay.length;
+    return [
+      ...shopProductsForDisplay.slice(offset),
+      ...shopProductsForDisplay.slice(0, offset),
+    ];
+  }, [shopProductOffset, shopProductsForDisplay]);
+
+  const mirrorPlaceholderImage =
+    generatedImage || PREVIEW_MIRROR_THUMBNAILS[activeMirrorThumb]?.src || '/preview-assets/mirror-look.png';
+
+  useEffect(() => {
+    setShopProductOffset(0);
+  }, [products]);
+
+  const handleWardrobeAudienceChange = useCallback(
+    (audience: WardrobeAudience) => {
+      setActiveWardrobeAudience(audience);
+      showActionFeedback(
+        `Showing ${audience.toLowerCase()} wardrobe samples.`,
+        'success',
+        'wardrobe_audience_filter',
+        { audience }
+      );
+    },
+    [showActionFeedback]
+  );
+
+  const handleViewAllProducts = useCallback(() => {
+    if (generatedImage && user) {
+      setIsShopSaveOpen(true);
+      reportUiAction('shop_view_all', 'completed', { mode: 'shop_save_modal' });
+      return;
+    }
+
+    const el = document.getElementById('shop-the-look');
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    showActionFeedback(
+      products.length > 0
+        ? 'All current matches are visible below.'
+        : 'These are preview shopping links. Generate a look to unlock live product matches.',
+      products.length > 0 ? 'success' : 'info',
+      'shop_view_all',
+      { hasGeneratedImage: Boolean(generatedImage), productCount: products.length }
+    );
+  }, [generatedImage, products.length, reportUiAction, showActionFeedback, user]);
+
+  const handleProductStep = useCallback(
+    (direction: 1 | -1) => {
+      if (shopProductsForDisplay.length <= 1) {
+        showActionFeedback(
+          'There is only one product to show right now.',
+          'info',
+          'shop_carousel_single_product'
+        );
+        return;
+      }
+      setShopProductOffset((current) => {
+        const next =
+          (current + direction + shopProductsForDisplay.length) %
+          shopProductsForDisplay.length;
+        reportUiAction('shop_carousel_step', 'completed', {
+          direction,
+          nextOffset: next,
+          productCount: shopProductsForDisplay.length,
+        });
+        return next;
+      });
+    },
+    [reportUiAction, shopProductsForDisplay.length, showActionFeedback]
+  );
+
+  const handleProductClick = useCallback(
+    (product: Product) => {
+      reportUiAction('shop_product_open', 'completed', {
+        title: product.title,
+        source: product.source,
+        hasDirectLink: product.source !== 'Preview',
+      });
+    },
+    [reportUiAction]
+  );
+
+  const handleLookFeedback = useCallback(
+    (nextFeedback: Exclude<LookFeedback, null>) => {
+      setLookFeedback(nextFeedback);
+      showActionFeedback(
+        nextFeedback === 'liked'
+          ? 'Saved that you liked this look.'
+          : 'Thanks. Try another wardrobe item or generate a new look.',
+        nextFeedback === 'liked' ? 'success' : 'info',
+        'look_feedback',
+        { feedback: nextFeedback, hasGeneratedImage: Boolean(generatedImage) }
+      );
+    },
+    [generatedImage, showActionFeedback]
+  );
+
+  const downloadImage = useCallback(async (imageUrl: string) => {
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      throw new Error(`Download failed with status ${response.status}`);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `igetdressed-look-${Date.now()}.png`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const handleDownloadLook = useCallback(async () => {
+    if (!generatedImage) {
+      showActionFeedback(
+        'Generate a look first, then the download button will save it.',
+        'info',
+        'download_look_without_result'
+      );
+      return;
+    }
+
+    if (isPreviewResult && !isBypass) {
+      showActionFeedback(
+        'Upgrade to download the clean, watermark-free result.',
+        'warning',
+        'download_preview_requires_upgrade'
+      );
+      redirectToPricing();
+      return;
+    }
+
+    try {
+      reportUiAction('download_look', 'started');
+      await downloadImage(generatedImage);
+      reportUiAction('download_look', 'completed');
+    } catch (downloadError) {
+      reportUiAction('download_look', 'failed', { error: downloadError }, 'error');
+      window.open(generatedImage, '_blank', 'noopener,noreferrer');
+      showActionFeedback(
+        'Download was blocked by the browser, so the image opened in a new tab.',
+        'warning',
+        'download_look_fallback'
+      );
+    }
+  }, [
+    downloadImage,
+    generatedImage,
+    isBypass,
+    isPreviewResult,
+    redirectToPricing,
+    reportUiAction,
+    showActionFeedback,
+  ]);
 
   const requireAuth = useCallback(() => {
     if (pitchDemoEnabled) {
@@ -2489,8 +2758,12 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             {isAuthenticated ? (
               <button
                 type="button"
+                onClick={() => {
+                  reportUiAction('account_menu_open', 'completed', { destination: '/billing' });
+                  router.push('/billing');
+                }}
                 className="flex items-center gap-2"
-                aria-label="Account menu"
+                aria-label="Open account billing"
               >
                 <span className="relative h-10 w-10 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200">
                   {user?.imageUrl ? (
@@ -2535,6 +2808,23 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             <p className="mt-4 text-lg leading-7 text-slate-600">
               See it on you. Shop with confidence.
             </p>
+
+            {actionFeedback && (
+              <div
+                role="status"
+                className={`mt-4 rounded-lg border px-4 py-3 text-sm font-medium ${
+                  actionFeedback.tone === 'success'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                    : actionFeedback.tone === 'warning'
+                    ? 'border-amber-200 bg-amber-50 text-amber-900'
+                    : actionFeedback.tone === 'error'
+                    ? 'border-red-200 bg-red-50 text-red-800'
+                    : 'border-blue-200 bg-blue-50 text-blue-800'
+                }`}
+              >
+                {actionFeedback.message}
+              </div>
+            )}
 
             <div className="mt-5 space-y-3">
               <section className="rounded-xl border border-[#dfe3ea] bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.08)]">
@@ -2609,6 +2899,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                             alt={sample.label}
                             fill
                             sizes="110px"
+                            loading={sample.filename === PREVIEW_SAMPLE_MODELS[0].filename ? 'eager' : 'lazy'}
                             className="object-cover"
                           />
                         </button>
@@ -2659,8 +2950,15 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                     </div>
                     <button
                       type="button"
-                      onClick={() => wardrobeUploadInputRef.current?.click()}
+                      onClick={() => {
+                        setShowWardrobeFilters((current) => !current);
+                        reportUiAction('wardrobe_filters_toggle', 'completed', {
+                          nextOpen: !showWardrobeFilters,
+                        });
+                      }}
                       className="flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
+                      aria-expanded={showWardrobeFilters}
+                      aria-controls="wardrobe-filter-panel"
                     >
                       <SlidersHorizontal size={15} />
                       Filters
@@ -2668,15 +2966,28 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   </div>
                 </div>
 
+                {showWardrobeFilters && (
+                  <div
+                    id="wardrobe-filter-panel"
+                    className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700"
+                  >
+                    Showing {filteredPreviewWardrobeItems.length} sample item
+                    {filteredPreviewWardrobeItems.length === 1 ? '' : 's'} for{' '}
+                    {activeWardrobeAudience.toLowerCase()}.
+                  </div>
+                )}
+
                 <div className="flex items-center gap-7 border-b border-slate-200 text-sm font-medium text-slate-500">
-                  {['Women', 'Men', 'Unisex'].map((tab, index) => (
+                  {(['Women', 'Men', 'Unisex'] as WardrobeAudience[]).map((tab) => (
                     <button
                       key={tab}
                       type="button"
-                      className={`relative pb-3 ${index === 0 ? 'text-[#6b35f4]' : 'hover:text-slate-900'}`}
+                      onClick={() => handleWardrobeAudienceChange(tab)}
+                      aria-pressed={activeWardrobeAudience === tab}
+                      className={`relative pb-3 ${activeWardrobeAudience === tab ? 'text-[#6b35f4]' : 'hover:text-slate-900'}`}
                     >
                       {tab}
-                      {index === 0 && (
+                      {activeWardrobeAudience === tab && (
                         <span className="absolute inset-x-0 bottom-[-1px] h-0.5 rounded-full bg-[#6b35f4]" />
                       )}
                     </button>
@@ -2705,7 +3016,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                           )}
                         </button>
                       ))
-                    : PREVIEW_WARDROBE_ITEMS.map((item, index) => (
+                    : filteredPreviewWardrobeItems.map((item, index) => (
                         <button
                           key={item.filename}
                           type="button"
@@ -2717,7 +3028,14 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                           }`}
                           aria-label={`Choose ${item.label}`}
                         >
-                          <Image src={item.src} alt={item.label} fill sizes="110px" className="object-cover" />
+                          <Image
+                            src={item.src}
+                            alt={item.label}
+                            fill
+                            sizes="110px"
+                            loading={index === 0 ? 'eager' : 'lazy'}
+                            className="object-cover"
+                          />
                           {index === 0 && (
                             <span className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#6b35f4] text-white">
                               <CheckCircle2 size={15} />
@@ -2780,7 +3098,11 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           <section
             ref={virtualMirrorSectionRef}
             id="virtual-mirror"
-            className="scroll-mt-28 overflow-hidden rounded-lg bg-[#10141b] text-white shadow-[0_22px_48px_rgba(15,23,42,0.24)]"
+            className={`overflow-hidden rounded-lg bg-[#10141b] text-white shadow-[0_22px_48px_rgba(15,23,42,0.24)] ${
+              isMirrorExpanded
+                ? 'fixed inset-3 z-50 overflow-y-auto'
+                : 'scroll-mt-28'
+            }`}
           >
             <div className="flex min-h-[66px] items-center justify-between gap-3 border-b border-white/10 px-5">
               <h2 className="flex items-center gap-2 text-base font-semibold text-white">
@@ -2788,15 +3110,46 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 Virtual Mirror
               </h2>
               <div className="flex items-center gap-2 text-sm">
-                <button type="button" className="flex h-9 items-center gap-2 rounded-md border border-white/25 bg-white/5 px-4 text-white">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMirrorMode('fit');
+                    showActionFeedback('Mirror set to fit view.', 'success', 'mirror_fit_view');
+                  }}
+                  aria-pressed={mirrorMode === 'fit'}
+                  className={`flex h-9 items-center gap-2 rounded-md border px-4 text-white ${
+                    mirrorMode === 'fit' ? 'border-white/35 bg-white/15' : 'border-white/25 bg-white/5'
+                  }`}
+                >
                   <UserRound size={15} />
                   Fit view
                 </button>
-                <button type="button" className="hidden h-9 items-center gap-2 rounded-md border border-white/10 bg-white/5 px-4 text-white md:flex">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMirrorMode('zoom');
+                    showActionFeedback('Mirror set to zoom view.', 'success', 'mirror_zoom_view');
+                  }}
+                  aria-pressed={mirrorMode === 'zoom'}
+                  className={`hidden h-9 items-center gap-2 rounded-md border px-4 text-white md:flex ${
+                    mirrorMode === 'zoom' ? 'border-white/35 bg-white/15' : 'border-white/10 bg-white/5'
+                  }`}
+                >
                   <ZoomIn size={15} />
                   Zoom
                 </button>
-                <button type="button" className="flex h-9 w-9 items-center justify-center rounded-md text-white/80 hover:bg-white/10" aria-label="Expand mirror">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMirrorExpanded((current) => !current);
+                    reportUiAction('mirror_expand_toggle', 'completed', {
+                      nextExpanded: !isMirrorExpanded,
+                    });
+                  }}
+                  className="flex h-9 w-9 items-center justify-center rounded-md text-white/80 hover:bg-white/10"
+                  aria-label={isMirrorExpanded ? 'Collapse mirror' : 'Expand mirror'}
+                  aria-pressed={isMirrorExpanded}
+                >
                   <Expand size={17} />
                 </button>
               </div>
@@ -2806,7 +3159,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
               <div className="min-h-[420px] bg-[#e5e1d9] lg:h-[567px] lg:min-h-0">
                 <VirtualMirror
                   imageUrl={generatedImage}
-                  placeholderImageUrl="/preview-assets/mirror-look.png"
+                  placeholderImageUrl={mirrorPlaceholderImage}
                   isLoading={isTryOnLoading}
                   errorMessage={error}
                   onStageChange={handleLoaderStageChange}
@@ -2815,29 +3168,49 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   onTryAnother={redirectToPricing}
                   onImageLoaded={handleResultImageLoaded}
                   showResultActions={false}
-                  className="h-full min-h-[420px] rounded-none border-0 lg:min-h-0 lg:aspect-auto"
+                  className={`h-full min-h-[420px] rounded-none border-0 lg:min-h-0 lg:aspect-auto ${
+                    mirrorMode === 'zoom' ? 'scale-[1.035]' : ''
+                  }`}
                 />
               </div>
               <div className="hidden border-l border-slate-200 bg-white p-5 lg:block">
                 <div className="space-y-4">
-                  {[
-                    { src: '/preview-assets/thumb-front.png', alt: 'Front look' },
-                    { src: '/preview-assets/thumb-back.png', alt: 'Back look' },
-                    { src: '/preview-assets/thumb-detail.png', alt: 'Detail look' },
-                  ].map((thumb, index) => (
+                  {PREVIEW_MIRROR_THUMBNAILS.map((thumb, index) => (
                     <button
                       key={thumb.src}
                       type="button"
+                      onClick={() => {
+                        setActiveMirrorThumb(index);
+                        showActionFeedback(`${thumb.alt} selected.`, 'success', 'mirror_thumbnail_select', {
+                          thumb: thumb.alt,
+                        });
+                      }}
                       className={`relative aspect-[0.72] w-full overflow-hidden rounded-lg border bg-slate-50 ${
-                        index === 0 ? 'border-[#6b35f4] shadow-[0_0_0_2px_#6b35f4]' : 'border-slate-200'
+                        index === activeMirrorThumb ? 'border-[#6b35f4] shadow-[0_0_0_2px_#6b35f4]' : 'border-slate-200'
                       }`}
                       aria-label={thumb.alt}
+                      aria-pressed={index === activeMirrorThumb}
                     >
                       <Image src={thumb.src} alt={thumb.alt} fill sizes="84px" className="object-cover" />
                     </button>
                   ))}
                   <button
                     type="button"
+                    onClick={() => {
+                      if (generatedImage && user) {
+                        setIsShopSaveOpen(true);
+                        reportUiAction('mirror_add_look', 'completed', { mode: 'shop_save_modal' });
+                        return;
+                      }
+                      showActionFeedback(
+                        isAuthenticated
+                          ? 'Generate a look first, then you can save it.'
+                          : 'Sign in and generate a look before saving.',
+                        'info',
+                        'mirror_add_look_blocked',
+                        { hasGeneratedImage: Boolean(generatedImage) }
+                      );
+                    }}
                     className="flex aspect-[0.72] w-full flex-col items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
                   >
                     <Plus size={22} />
@@ -2854,16 +3227,28 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 <span className="sm:hidden">Ready to shop.</span>
               </p>
               <div className="flex items-center gap-5 text-white/80">
-                <button type="button" className="transition-colors hover:text-white" aria-label="Like look">
+                <button
+                  type="button"
+                  onClick={() => handleLookFeedback('liked')}
+                  className={`transition-colors hover:text-white ${lookFeedback === 'liked' ? 'text-[#2dd4cf]' : ''}`}
+                  aria-label="Like look"
+                  aria-pressed={lookFeedback === 'liked'}
+                >
                   <ThumbsUp size={22} />
                 </button>
-                <button type="button" className="transition-colors hover:text-white" aria-label="Dislike look">
+                <button
+                  type="button"
+                  onClick={() => handleLookFeedback('disliked')}
+                  className={`transition-colors hover:text-white ${lookFeedback === 'disliked' ? 'text-[#fca5a5]' : ''}`}
+                  aria-label="Dislike look"
+                  aria-pressed={lookFeedback === 'disliked'}
+                >
                   <ThumbsDown size={22} />
                 </button>
                 <span className="h-7 w-px bg-white/15" />
                 <button
                   type="button"
-                  onClick={generatedImage ? redirectToPricing : undefined}
+                  onClick={() => void handleDownloadLook()}
                   className="transition-colors hover:text-white"
                   aria-label="Download look"
                 >
@@ -2874,23 +3259,33 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           </section>
         </div>
 
-        <section className="mt-5 border-t border-slate-200 pt-4">
+        <section id="shop-the-look" className="mt-5 scroll-mt-28 border-t border-slate-200 pt-4">
           <div className="mb-4 flex items-center justify-between gap-4">
             <div className="flex items-baseline gap-4">
               <h2 className="text-xl font-bold tracking-[-0.02em] text-black">Shop the Look</h2>
               <button
                 type="button"
-                onClick={() => generatedImage && user ? setIsShopSaveOpen(true) : undefined}
+                onClick={handleViewAllProducts}
                 className="text-sm font-semibold text-[#6b35f4] hover:text-[#4c24c8]"
               >
                 View all
               </button>
             </div>
             <div className="flex items-center gap-3">
-              <button type="button" className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:text-black" aria-label="Previous products">
+              <button
+                type="button"
+                onClick={() => handleProductStep(-1)}
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:text-black"
+                aria-label="Previous products"
+              >
                 <ChevronLeft size={18} />
               </button>
-              <button type="button" className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-black shadow-sm" aria-label="Next products">
+              <button
+                type="button"
+                onClick={() => handleProductStep(1)}
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-black shadow-sm"
+                aria-label="Next products"
+              >
                 <ChevronRight size={18} />
               </button>
             </div>
@@ -2903,7 +3298,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           )}
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            {(products.length > 0 ? products : PREVIEW_SHOP_PRODUCTS).map((product, index) => (
+            {orderedShopProducts.map((product, index) => (
               <article
                 key={`${product.title}-${index}`}
                 className="grid min-h-[148px] grid-cols-[90px_minmax(0,1fr)] gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-[0_8px_22px_rgba(15,23,42,0.06)]"
@@ -2924,9 +3319,10 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   </div>
                   <p className="text-sm font-semibold text-black">{product.price}</p>
                   <a
-                    href={product.link || '#'}
-                    target={product.link && product.link !== '#' ? '_blank' : undefined}
-                    rel={product.link && product.link !== '#' ? 'noopener noreferrer' : undefined}
+                    href={product.link}
+                    onClick={() => handleProductClick(product)}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="mt-4 inline-flex h-9 items-center justify-center whitespace-nowrap rounded-md border border-slate-200 px-3 text-sm font-medium text-slate-600 transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
                   >
                     View product

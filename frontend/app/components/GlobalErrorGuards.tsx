@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from "react";
+import { recordClientDiagnostic } from "@/lib/clientDiagnostics";
 
 function isLikelyExtensionMessageChannelError(reason: unknown): boolean {
   const msg =
@@ -32,16 +33,36 @@ export function GlobalErrorGuards() {
         event.preventDefault();
         return;
       }
+      recordClientDiagnostic(
+        "global_unhandled_rejection",
+        { reason: event.reason },
+        "warn"
+      );
       console.warn("[global] unhandledrejection", event.reason);
     };
 
+    const onError = (event: ErrorEvent) => {
+      recordClientDiagnostic(
+        "global_error",
+        {
+          message: event.message,
+          source: event.filename,
+          line: event.lineno,
+          column: event.colno,
+          error: event.error,
+        },
+        "error"
+      );
+    };
+
     window.addEventListener("unhandledrejection", onUnhandledRejection);
+    window.addEventListener("error", onError);
     return () => {
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
+      window.removeEventListener("error", onError);
     };
   }, []);
 
   return null;
 }
-
 
