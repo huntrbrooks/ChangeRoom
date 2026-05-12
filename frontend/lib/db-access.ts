@@ -65,6 +65,18 @@ export interface UserBilling {
   updated_at: Date;
 }
 
+export interface UserProfile {
+  user_id: string;
+  email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  image_url: string | null;
+  clerk_created_at: Date | null;
+  deleted_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export type CreditLedgerEntryType =
   | "grant"
   | "hold"
@@ -209,6 +221,9 @@ const CREDIT_HOLDS_TABLE = "credit_holds";
 const CREDIT_LEDGER_TABLE = "credit_ledger_entries";
 let creditTablesReady: Promise<void> | null = null;
 
+const USER_PROFILES_TABLE = "user_profiles";
+let userProfilesTableReady: Promise<void> | null = null;
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -336,6 +351,113 @@ async function withCreditTables<T>(operation: () => Promise<T>): Promise<T> {
     }
     throw error;
   }
+}
+
+async function createUserProfilesTable(): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS user_profiles (
+      user_id TEXT PRIMARY KEY,
+      email TEXT,
+      first_name TEXT,
+      last_name TEXT,
+      image_url TEXT,
+      clerk_created_at TIMESTAMPTZ,
+      deleted_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS user_profiles_email_idx ON user_profiles (email)`;
+  await sql`CREATE INDEX IF NOT EXISTS user_profiles_deleted_at_idx ON user_profiles (deleted_at)`;
+}
+
+async function ensureUserProfilesTable(forceRefresh = false): Promise<void> {
+  if (forceRefresh) userProfilesTableReady = null;
+  if (!userProfilesTableReady) {
+    userProfilesTableReady = createUserProfilesTable().catch((error) => {
+      userProfilesTableReady = null;
+      throw error;
+    });
+  }
+  return userProfilesTableReady;
+}
+
+async function withUserProfilesTable<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    await ensureUserProfilesTable();
+    return await operation();
+  } catch (error) {
+    if (isMissingRelationError(error, USER_PROFILES_TABLE)) {
+      await ensureUserProfilesTable(true);
+      return await operation();
+    }
+    throw error;
+  }
+}
+
+export async function upsertUserProfileFromClerk(data: {
+  userId: string;
+  email?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  imageUrl?: string | null;
+  clerkCreatedAt?: Date | string | null;
+}): Promise<UserProfile> {
+  const clerkCreatedAt =
+    data.clerkCreatedAt instanceof Date
+      ? data.clerkCreatedAt.toISOString()
+      : data.clerkCreatedAt || null;
+
+  return withUserProfilesTable(async () => {
+    const result = await sql`
+      INSERT INTO user_profiles (
+        user_id,
+        email,
+        first_name,
+        last_name,
+        image_url,
+        clerk_created_at,
+        deleted_at
+      )
+      VALUES (
+        ${data.userId},
+        ${data.email || null},
+        ${data.firstName || null},
+        ${data.lastName || null},
+        ${data.imageUrl || null},
+        ${clerkCreatedAt},
+        NULL
+      )
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        email = EXCLUDED.email,
+        first_name = EXCLUDED.first_name,
+        last_name = EXCLUDED.last_name,
+        image_url = EXCLUDED.image_url,
+        clerk_created_at = COALESCE(EXCLUDED.clerk_created_at, user_profiles.clerk_created_at),
+        deleted_at = NULL,
+        updated_at = now()
+      RETURNING *
+    `;
+
+    return result.rows[0] as UserProfile;
+  });
+}
+
+export async function markUserProfileDeleted(userId: string): Promise<UserProfile> {
+  return withUserProfilesTable(async () => {
+    const result = await sql`
+      INSERT INTO user_profiles (user_id, deleted_at)
+      VALUES (${userId}, now())
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        deleted_at = now(),
+        updated_at = now()
+      RETURNING *
+    `;
+
+    return result.rows[0] as UserProfile;
+  });
 }
 
 /**
@@ -962,19 +1084,7 @@ export async function createCreditHold(params: {
     // Ensure billing exists, then release any stale holds for this user before enforcing available credits.
     await ensureUserBillingWithLock(tx, userId);
     await releaseStaleActiveHoldsInTx(tx as unknown as TransactionSql, userId);
-    let billing = await ensureUserBillingWithLock(tx, userId);
-    // Decrement free trials when user is on free plan with trials remaining
-    if (billing.trials_remaining > 0 && billing.plan === "free") {
-      const trialUpdate = await tx`
-        UPDATE users_billing
-        SET trials_remaining = trials_remaining - 1, updated_at = now()
-        WHERE user_id = ${userId} AND trials_remaining > 0
-        RETURNING *
-      `;
-      if (trialUpdate.rows.length > 0) {
-        billing = trialUpdate.rows[0] as UserBilling;
-      }
-    }
+    const billing = await ensureUserBillingWithLock(tx, userId);
     if (billing.is_frozen) {
       throw new Error("account_frozen");
     }
@@ -1809,11 +1919,24 @@ export async function resetFreeTrial(userId: string): Promise<UserBilling> {
 /**
  * Update user billing plan and reset credits
  */
+type UpdateBillingPlanOptions = {
+  resetCredits?: boolean;
+  clearStripeSubscriptionId?: boolean;
+  ledgerReason?: string;
+  frozen?: boolean;
+};
+
+function toSqlTimestamp(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  return value instanceof Date ? value.toISOString() : value;
+}
+
 export async function updateUserBillingPlan(
   userId: string,
   plan: Plan,
   stripeCustomerId?: string,
-  stripeSubscriptionId?: string
+  stripeSubscriptionId?: string,
+  options: UpdateBillingPlanOptions = {}
 ): Promise<UserBilling> {
   let monthlyCredits = 0;
   if (plan === "standard") {
@@ -1830,14 +1953,27 @@ export async function updateUserBillingPlan(
   await ensureCreditTables();
   return runTransaction(async (tx) => {
     const current = await ensureUserBillingWithLock(tx, userId);
+    const resetCredits = options.resetCredits ?? true;
+    const nextCredits = resetCredits ? monthlyCredits : current.credits_available;
+    const nextRefreshAt =
+      plan === "free"
+        ? null
+        : toSqlTimestamp(current.credits_refresh_at || refreshAt);
+    const nextCustomerId = stripeCustomerId || current.stripe_customer_id;
+    const nextSubscriptionId = options.clearStripeSubscriptionId
+      ? null
+      : stripeSubscriptionId || current.stripe_subscription_id;
+    const nextFrozen = options.frozen ?? current.is_frozen ?? false;
+
     const result = await tx`
       UPDATE users_billing
       SET 
         plan = ${plan},
-        credits_available = ${monthlyCredits},
-        credits_refresh_at = ${plan === "free" ? null : refreshAt.toISOString()},
-        stripe_customer_id = COALESCE(${stripeCustomerId || null}, stripe_customer_id),
-        stripe_subscription_id = COALESCE(${stripeSubscriptionId || null}, stripe_subscription_id),
+        credits_available = ${nextCredits},
+        credits_refresh_at = ${nextRefreshAt},
+        stripe_customer_id = ${nextCustomerId},
+        stripe_subscription_id = ${nextSubscriptionId},
+        is_frozen = ${nextFrozen},
         updated_at = now()
       WHERE user_id = ${userId}
       RETURNING *
@@ -1869,9 +2005,10 @@ export async function updateUserBillingPlan(
           ${delta},
           ${row.credits_available},
           ${JSON.stringify({
-            reason: "plan_reset",
+            reason: options.ledgerReason || "plan_reset",
             from_plan: current.plan,
             to_plan: plan,
+            reset_credits: resetCredits,
           })}
         )
       `;

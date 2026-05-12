@@ -1,14 +1,42 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { clerkClient } from "@clerk/nextjs/server";
-import { stripeConfig } from "@/lib/config";
+import { appConfig, stripeConfig } from "@/lib/config";
 import { ANALYTICS_EVENTS, captureServerEvent } from "@/lib/server-analytics";
+import { logger } from "@/lib/logger";
+import type { Plan } from "@/lib/db-access";
 
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
 function getStripe() {
   return new Stripe(stripeConfig.secretKey, {
-    apiVersion: "2025-03-31.basil",
+    apiVersion: "2026-02-25.clover" as Stripe.LatestApiVersion,
   });
+}
+
+function planForPriceId(priceId: string | null | undefined): Exclude<Plan, "free"> | null {
+  if (priceId === stripeConfig.creatorPriceId) return "standard";
+  if (priceId === stripeConfig.powerPriceId) return "pro";
+  return null;
+}
+
+function monthlyCreditsForPlan(plan: Plan): number {
+  if (plan === "standard") return appConfig.standardMonthlyCredits;
+  if (plan === "pro") return appConfig.proMonthlyCredits;
+  return 0;
+}
+
+function subscriptionIdFromInvoice(invoice: Stripe.Invoice): string | undefined {
+  const raw = (invoice as Stripe.Invoice & { subscription?: unknown }).subscription;
+  if (typeof raw === "string") return raw;
+  if (raw && typeof raw === "object" && "id" in raw && typeof raw.id === "string") {
+    return raw.id;
+  }
+  return undefined;
+}
+
+async function planForSubscription(subscriptionId: string): Promise<Plan | null> {
+  const subscription = await getStripe().subscriptions.retrieve(subscriptionId);
+  return planForPriceId(subscription.items.data[0]?.price.id) || null;
 }
 
 function safeJsonParse(text: string): unknown {
@@ -79,7 +107,7 @@ async function resolveClerkUserIdByVerifiedEmail(emailRaw: string): Promise<stri
 
     return userId;
   } catch (err) {
-    console.warn("resolveClerkUserIdByVerifiedEmail failed", { email, err });
+    logger.warn("stripe_webhook_resolve_clerk_user_by_email_failed", { email, error: err });
     return null;
   }
 }
@@ -122,7 +150,7 @@ export async function POST(req: NextRequest) {
     );
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
-    console.error("Webhook signature verification failed:", error.message);
+    logger.warn("stripe_webhook_signature_verification_failed", { error });
     return NextResponse.json(
       { error: "Webhook signature verification failed" },
       { status: 400 }
@@ -141,7 +169,7 @@ export async function POST(req: NextRequest) {
           (customerId ? (await getUserBillingByStripeCustomer(customerId))?.user_id : undefined);
 
         if (!clerkUserId) {
-          console.error("checkout.session.completed: cannot resolve user", {
+          logger.error("stripe_checkout_completed_user_unresolved", {
             session_id: session.id,
             customer_id: customerId || null,
             has_metadata_user: Boolean(clerkUserIdFromMetadata),
@@ -165,12 +193,14 @@ export async function POST(req: NextRequest) {
         if (session.mode === "subscription") {
           // Handle subscription creation (Creator/Power)
           const subscriptionId = session.subscription as string;
-          let plan: "free" | "standard" | "pro" = "free";
-
-          if (priceIdFromSession === stripeConfig.creatorPriceId) {
-            plan = "standard";
-          } else if (priceIdFromSession === stripeConfig.powerPriceId) {
-            plan = "pro";
+          const plan = planForPriceId(priceIdFromSession);
+          if (!plan) {
+            logger.error("stripe_checkout_completed_unknown_subscription_price", {
+              session_id: session.id,
+              price_id: priceIdFromSession || null,
+              event_id: event.id,
+            });
+            break;
           }
           derivedPlan = plan;
 
@@ -178,10 +208,30 @@ export async function POST(req: NextRequest) {
             clerkUserId,
             plan,
             customerId,
-            subscriptionId
+            subscriptionId,
+            {
+              resetCredits: true,
+              ledgerReason: "subscription_checkout_completed",
+              frozen: false,
+            }
           );
 
-          console.log(`Updated user ${clerkUserId} to plan ${plan}`);
+          logger.info("stripe_subscription_checkout_completed", {
+            user_id: clerkUserId,
+            plan,
+            subscription_id: subscriptionId,
+            event_id: event.id,
+          });
+          await captureServerEvent(
+            ANALYTICS_EVENTS.SUBSCRIPTION_STARTED,
+            {
+              plan,
+              price_id: priceIdFromSession,
+              subscription_id: subscriptionId,
+              session_id: session.id,
+            },
+            clerkUserId
+          );
         } else if (session.mode === "payment") {
           // Handle one-time credit pack purchase
           // Idempotency key MUST be consistent across events: prefer payment_intent id
@@ -194,7 +244,7 @@ export async function POST(req: NextRequest) {
           const paymentStatus =
             (session as unknown as { payment_status?: string }).payment_status || "unknown";
           if (paymentStatus !== "paid") {
-            console.log("checkout.session.completed: not paid yet, skipping credit grant", {
+            logger.info("stripe_checkout_completed_not_paid", {
               session_id: session.id,
               payment_intent_id: paymentIntentId,
               payment_status: paymentStatus,
@@ -223,7 +273,22 @@ export async function POST(req: NextRequest) {
 
             // Get or create billing to ensure customer ID is set
             await grantCredits(clerkUserId, creditAmount, creditMetadata, creditRequestId);
-            console.log(`Added ${creditAmount} credits to user ${clerkUserId}`);
+            logger.info("stripe_credit_pack_granted_from_checkout", {
+              user_id: clerkUserId,
+              credits: creditAmount,
+              payment_intent_id: paymentIntentId,
+              event_id: event.id,
+            });
+            await captureServerEvent(
+              ANALYTICS_EVENTS.CREDIT_GRANTED,
+              {
+                reason: "credit_pack_purchase",
+                credits: creditAmount,
+                payment_intent_id: paymentIntentId,
+                session_id: session.id,
+              },
+              clerkUserId
+            );
           }
         }
         await captureServerEvent(
@@ -315,10 +380,10 @@ export async function POST(req: NextRequest) {
             }
           }
         } catch (err) {
-          console.warn("payment_intent.succeeded: failed to resolve checkout session", {
+          logger.warn("stripe_payment_intent_checkout_session_resolve_failed", {
             payment_intent_id: paymentIntentId,
             event_id: event.id,
-            err,
+            error: err,
           });
         }
 
@@ -363,10 +428,10 @@ export async function POST(req: NextRequest) {
                 try {
                   await setStripeCustomerIdForUser(userIdFromEmail, customerId);
                 } catch (e) {
-                  console.warn("Failed to persist stripe_customer_id for inferred user", {
+                  logger.warn("stripe_payment_intent_customer_mapping_persist_failed", {
                     userIdFromEmail,
                     customerId,
-                    e,
+                    error: e,
                   });
                 }
               }
@@ -375,7 +440,7 @@ export async function POST(req: NextRequest) {
         }
 
         if (!targetUserId) {
-          console.error("payment_intent.succeeded: cannot resolve target user", {
+          logger.error("stripe_payment_intent_target_user_unresolved", {
             payment_intent_id: paymentIntentId,
             event_id: event.id,
             customer_id: customerId || null,
@@ -410,6 +475,17 @@ export async function POST(req: NextRequest) {
 
         // Idempotency: always use payment_intent id
         await grantCredits(targetUserId, inferredCreditAmount, creditMetadata, paymentIntentId);
+        await captureServerEvent(
+          ANALYTICS_EVENTS.CREDIT_GRANTED,
+          {
+            reason: "credit_pack_purchase",
+            credits: inferredCreditAmount,
+            payment_intent_id: paymentIntentId,
+            session_id: sessionId,
+            price_id: priceId,
+          },
+          targetUserId
+        );
         break;
       }
 
@@ -420,27 +496,59 @@ export async function POST(req: NextRequest) {
 
         const billing = await getUserBillingByStripeCustomer(customerId);
         if (!billing) {
-          console.error(`No billing record found for customer ${customerId}`);
+          logger.error("stripe_subscription_billing_record_missing", {
+            customer_id: customerId,
+            subscription_id: subscription.id,
+            event_id: event.id,
+          });
           break;
         }
 
         // Determine plan from price ID (subscriptions mapped via Creator/Power)
         const priceId = subscription.items.data[0]?.price.id;
-        let plan: "free" | "standard" | "pro" = "free";
-        if (priceId === stripeConfig.creatorPriceId) {
-          plan = "standard";
-        } else if (priceId === stripeConfig.powerPriceId) {
-          plan = "pro";
+        const plan = planForPriceId(priceId);
+        if (!plan) {
+          logger.error("stripe_subscription_unknown_price", {
+            customer_id: customerId,
+            subscription_id: subscription.id,
+            price_id: priceId || null,
+            event_id: event.id,
+          });
+          break;
         }
+        const shouldFreeze = ["past_due", "unpaid", "incomplete_expired"].includes(
+          subscription.status
+        );
 
         await updateUserBillingPlan(
           billing.user_id,
           plan,
           customerId,
-          subscription.id
+          subscription.id,
+          {
+            resetCredits: false,
+            ledgerReason: "subscription_metadata_sync",
+            frozen: shouldFreeze,
+          }
         );
 
-        console.log(`Updated subscription for user ${billing.user_id} to plan ${plan}`);
+        logger.info("stripe_subscription_synced", {
+          user_id: billing.user_id,
+          plan,
+          status: subscription.status,
+          subscription_id: subscription.id,
+          event_id: event.id,
+        });
+        await captureServerEvent(
+          ANALYTICS_EVENTS.SUBSCRIPTION_CHANGED,
+          {
+            plan,
+            status: subscription.status,
+            price_id: priceId,
+            subscription_id: subscription.id,
+          },
+          billing.user_id
+        );
         break;
       }
 
@@ -451,12 +559,30 @@ export async function POST(req: NextRequest) {
         const billing = await getUserBillingByStripeCustomer(customerId);
         if (billing) {
           // Downgrade to free plan
-          await updateUserBillingPlan(billing.user_id, "free", customerId, undefined);
-          console.log(`Downgraded user ${billing.user_id} to free plan`);
+          await updateUserBillingPlan(billing.user_id, "free", customerId, undefined, {
+            resetCredits: false,
+            clearStripeSubscriptionId: true,
+            ledgerReason: "subscription_deleted",
+            frozen: false,
+          });
+          logger.info("stripe_subscription_deleted", {
+            user_id: billing.user_id,
+            subscription_id: subscription.id,
+            event_id: event.id,
+          });
+          await captureServerEvent(
+            ANALYTICS_EVENTS.SUBSCRIPTION_CANCELLED,
+            {
+              subscription_id: subscription.id,
+              customer_id: customerId,
+            },
+            billing.user_id
+          );
         }
         break;
       }
 
+      case "invoice.payment_succeeded":
       case "invoice.paid": {
         // Unfreeze on successful payment
         const invoice = event.data.object as Stripe.Invoice;
@@ -464,7 +590,61 @@ export async function POST(req: NextRequest) {
         const billing = await getUserBillingByStripeCustomer(customerId);
         if (billing) {
           await setUserBillingFrozen(billing.user_id, false);
-          console.log(`Unfroze user ${billing.user_id} after invoice paid`);
+
+          const billingReason = String(
+            (invoice as Stripe.Invoice & { billing_reason?: unknown }).billing_reason || ""
+          );
+          if (billingReason === "subscription_cycle") {
+            const subscriptionId = subscriptionIdFromInvoice(invoice);
+            const plan =
+              subscriptionId ? (await planForSubscription(subscriptionId)) || billing.plan : billing.plan;
+            const credits = monthlyCreditsForPlan(plan);
+
+            if (credits > 0) {
+              await grantCredits(
+                billing.user_id,
+                credits,
+                {
+                  source: "stripe",
+                  reason: "subscription_cycle",
+                  invoice_id: invoice.id,
+                  subscription_id: subscriptionId || billing.stripe_subscription_id,
+                  plan,
+                  event_id: event.id,
+                },
+                `stripe_invoice:${invoice.id}:subscription_cycle`
+              );
+            }
+
+            await updateUserBillingPlan(
+              billing.user_id,
+              plan,
+              customerId,
+              subscriptionId || billing.stripe_subscription_id || undefined,
+              {
+                resetCredits: false,
+                ledgerReason: "subscription_cycle_sync",
+                frozen: false,
+              }
+            );
+          }
+
+          logger.info("stripe_invoice_payment_succeeded", {
+            user_id: billing.user_id,
+            invoice_id: invoice.id,
+            billing_reason: billingReason || null,
+            event_type: event.type,
+            event_id: event.id,
+          });
+          await captureServerEvent(
+            ANALYTICS_EVENTS.SUBSCRIPTION_PAYMENT_SUCCEEDED,
+            {
+              invoice_id: invoice.id,
+              billing_reason: billingReason || null,
+              event_type: event.type,
+            },
+            billing.user_id
+          );
         }
         break;
       }
@@ -475,18 +655,30 @@ export async function POST(req: NextRequest) {
         const billing = await getUserBillingByStripeCustomer(customerId);
         if (billing) {
           await setUserBillingFrozen(billing.user_id, true);
-          console.log(`Froze user ${billing.user_id} due to payment failure`);
+          logger.warn("stripe_invoice_payment_failed", {
+            user_id: billing.user_id,
+            invoice_id: invoice.id,
+            event_id: event.id,
+          });
+          await captureServerEvent(
+            ANALYTICS_EVENTS.SUBSCRIPTION_PAYMENT_FAILED,
+            {
+              invoice_id: invoice.id,
+              customer_id: customerId,
+            },
+            billing.user_id
+          );
         }
         break;
       }
 
       default:
-        console.log(`Unhandled event type: ${event.type}`);
+        logger.info("stripe_webhook_event_unhandled", { event_type: event.type, event_id: event.id });
     }
 
     return NextResponse.json({ received: true, eventId: event.id });
   } catch (err: unknown) {
-    console.error("Webhook handler error:", err);
+    logger.error("stripe_webhook_handler_failed", { error: err, event_id: event.id });
     const error = err instanceof Error ? err : new Error(String(err));
     return NextResponse.json(
       { error: "Webhook handler failed", details: error.message, eventId: event.id },
@@ -494,4 +686,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-

@@ -8,6 +8,7 @@ import { useUser } from '@clerk/nextjs';
 import { trackProductView, trackFeatureClick, trackCheckoutInitiated } from '@/lib/clerk-tracking';
 import { ANALYTICS_EVENTS, captureEvent } from '@/lib/analytics';
 import { stripePublicConfig } from '@/lib/config';
+import { logger } from '@/lib/logger';
 
 interface PricingTableProps {
   currentPlan?: PlanType;
@@ -16,13 +17,56 @@ interface PricingTableProps {
   compact?: boolean;
 }
 
+type PricingUser = ReturnType<typeof useUser>['user'];
+
+const hasUsableClerkKey = () => {
+  const key = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim();
+  return Boolean(
+    key &&
+      key.startsWith('pk_') &&
+      key.length >= 20 &&
+      key.length <= 200 &&
+      /^pk_[a-zA-Z0-9_\-=.]+$/.test(key)
+  );
+};
+
 export function PricingTable({
   currentPlan,
   onPlanSelect,
   showCreditPacks = false,
   compact = false,
 }: PricingTableProps) {
+  return hasUsableClerkKey() ? (
+    <PricingTableWithClerk
+      currentPlan={currentPlan}
+      onPlanSelect={onPlanSelect}
+      showCreditPacks={showCreditPacks}
+      compact={compact}
+    />
+  ) : (
+    <PricingTableContent
+      currentPlan={currentPlan}
+      onPlanSelect={onPlanSelect}
+      showCreditPacks={showCreditPacks}
+      compact={compact}
+      user={null}
+    />
+  );
+}
+
+function PricingTableWithClerk(props: PricingTableProps) {
   const { user } = useUser();
+
+  return <PricingTableContent {...props} user={user} />;
+}
+
+function PricingTableContent({
+  currentPlan,
+  onPlanSelect,
+  showCreditPacks = false,
+  compact = false,
+  user,
+}: PricingTableProps & { user: PricingUser | null }) {
   const [loading, setLoading] = React.useState<string | null>(null);
   const products = getAllProducts().filter(p => p.plan !== 'free' || !compact);
 
@@ -43,7 +87,7 @@ export function PricingTable({
     }
 
     if (!params.priceId || !params.priceId.startsWith('price_')) {
-      console.error('Missing/invalid Stripe priceId', params);
+      logger.error('missing_or_invalid_stripe_price_id', params);
       alert('Payment configuration error. Please contact support.');
       return;
     }
@@ -111,7 +155,7 @@ export function PricingTable({
         source: 'pricing_table_main',
       });
     } catch (error: any) {
-      console.error('Checkout error:', error);
+      logger.error('pricing_checkout_error', error);
       const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
       alert(errorMessage);
     } finally {
@@ -385,7 +429,7 @@ export function PricingTable({
                       source: 'pricing_table_small_pack',
                     });
                   } catch (error: any) {
-                    console.error('Checkout error:', error);
+                    logger.error('pricing_checkout_error', error);
                     const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
                     alert(errorMessage);
                   } finally {
@@ -417,7 +461,7 @@ export function PricingTable({
                       source: 'pricing_table_value_pack',
                     });
                   } catch (error: any) {
-                    console.error('Checkout error:', error);
+                    logger.error('pricing_checkout_error', error);
                     const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
                     alert(errorMessage);
                   } finally {
@@ -449,7 +493,7 @@ export function PricingTable({
                       source: 'pricing_table_large_pack',
                     });
                   } catch (error: any) {
-                    console.error('Checkout error:', error);
+                    logger.error('pricing_checkout_error', error);
                     const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
                     alert(errorMessage);
                   } finally {
@@ -488,7 +532,7 @@ export function PricingTable({
                     source: 'pricing_table_creator_subscription',
                   });
                 } catch (error: any) {
-                  console.error('Checkout error:', error);
+                  logger.error('pricing_checkout_error', error);
                   const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
                   alert(errorMessage);
                 } finally {
@@ -520,7 +564,7 @@ export function PricingTable({
                     source: 'pricing_table_power_subscription',
                   });
                 } catch (error: any) {
-                  console.error('Checkout error:', error);
+                  logger.error('pricing_checkout_error', error);
                   const errorMessage = error.response?.data?.error || error.message || 'Failed to start checkout';
                   alert(errorMessage);
                 } finally {
@@ -538,5 +582,3 @@ export function PricingTable({
     </div>
   );
 }
-
-

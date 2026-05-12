@@ -14,6 +14,7 @@ import {
 import { fetchWithRequestId } from '@/lib/fetchWithRequestId';
 import { resolveBackendApiUrl } from '@/lib/backend-url';
 import { buildDemoAnalyses } from '@/lib/pitchDemo';
+import { logger } from '@/lib/logger';
 
 function normalizeCategory(raw: string | undefined | null): string {
   const v = (raw || '').toLowerCase().trim();
@@ -397,7 +398,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
       };
       });
 
-      console.log('Batch preprocessing complete. New items:', allAnalyses);
+      logger.info('batch_preprocessing_complete', { itemCount: allAnalyses.length });
 
       // Update analyzed items - preserve existing, update new ones
       setAnalyzedItems(prev => {
@@ -814,9 +815,16 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
             const currentWearingStyle = wearingStyles.get(idx);
             const defaultWearingStyle = currentWearingStyle || styleOptions[0]?.value || '';
             
-            // Debug logging
             if (isSuccess && item?.analysis) {
-              console.log(`[WearingStyle] Item ${idx}: category="${category}" (raw="${rawCategory}"), itemType="${itemType}", hasOptions=${hasWearingOptions}, styleOptions=${styleOptions.length}, defaultStyle="${defaultWearingStyle}"`);
+              logger.info('wearing_style_options_resolved', {
+                index: idx,
+                category,
+                rawCategory,
+                itemType,
+                hasWearingOptions,
+                styleOptionCount: styleOptions.length,
+                defaultWearingStyle,
+              });
             }
             
             return (

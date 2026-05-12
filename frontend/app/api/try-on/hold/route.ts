@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { randomUUID } from "crypto";
 import { isBypassUser } from "@/lib/bypass-config";
+import { logger } from "@/lib/logger";
+import { z } from "zod";
+
+const holdRequestSchema = z.object({
+  requestId: z.string().trim().min(1).optional(),
+  request_id: z.string().trim().min(1).optional(),
+  idempotencyKey: z.string().trim().min(1).optional(),
+  quality: z.enum(["standard", "hd"]).optional(),
+});
 
 /**
  * POST /api/try-on/hold
@@ -19,7 +28,7 @@ export async function POST(req: NextRequest) {
     ({ auth, currentUser } = await import("@clerk/nextjs/server"));
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("try-on hold: failed to import @clerk/nextjs/server", err);
+    logger.error("tryon_hold_clerk_import_failed", { error: err });
     return NextResponse.json(
       {
         error: "clerk_server_unavailable",
@@ -35,7 +44,7 @@ export async function POST(req: NextRequest) {
     ({ userId } = await auth());
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("try-on hold: auth() failed", err);
+    logger.error("tryon_hold_auth_failed", { error: err });
     return NextResponse.json(
       {
         error: "auth_failed",
@@ -59,13 +68,26 @@ export async function POST(req: NextRequest) {
 
     const reqHeaderId =
       req.headers.get("x-request-id") || req.headers.get("x-changeroom-request-id");
-    const body = await req.json();
-    const quality = (body.quality as "standard" | "hd" | undefined) || "standard";
+    const body = await req.json().catch(() => null);
+    const parsed = holdRequestSchema.safeParse(body ?? {});
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error: "invalid_request",
+          details: parsed.error.issues.map((issue) => ({
+            path: issue.path.join("."),
+            message: issue.message,
+          })),
+        },
+        { status: 400 }
+      );
+    }
+    const quality = parsed.data.quality || "standard";
 
     currentRequestId =
-      (body.requestId as string | undefined) ||
-      (body.request_id as string | undefined) ||
-      (body.idempotencyKey as string | undefined) ||
+      parsed.data.requestId ||
+      parsed.data.request_id ||
+      parsed.data.idempotencyKey ||
       reqHeaderId ||
       randomUUID();
 
@@ -99,9 +121,8 @@ export async function POST(req: NextRequest) {
     } catch (err: unknown) {
       // Log but don't fail - email is only needed for bypass check
       const errMessage = err instanceof Error ? err.message : String(err);
-      console.warn("try-on hold: currentUser() failed, continuing without email context", {
+      logger.warn("tryon_hold_current_user_failed", {
         error: errMessage,
-        // Don't log full error object to avoid exposing sensitive info
       });
     }
     const shouldBypassPayment = isBypassUser(userEmail);
@@ -115,7 +136,7 @@ export async function POST(req: NextRequest) {
       billing = await getOrCreateUserBilling(userId);
     } catch (dbErr: unknown) {
       const dbMessage = dbErr instanceof Error ? dbErr.message : String(dbErr);
-      console.error("try-on hold: getOrCreateUserBilling failed", {
+      logger.error("tryon_hold_billing_fetch_failed", {
         userId,
         error: dbMessage,
       });
@@ -142,6 +163,17 @@ export async function POST(req: NextRequest) {
     if (!shouldBypassPayment && creditCost === 1 && billing.trials_remaining > 0 && isVerifiedEmail) {
       billing = await markFreeTrialUsed(userId);
       usedFreeTrial = true;
+
+      const res = NextResponse.json({
+        ok: true,
+        requestId: currentRequestId,
+        usedFreeTrial,
+        creditsAvailable: billing.credits_available,
+      });
+      res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
+      res.headers.set("X-Request-Id", currentRequestId);
+      res.headers.set("X-ChangeRoom-Request-Id", currentRequestId);
+      return res;
     }
 
     if (shouldBypassPayment) {
@@ -180,7 +212,7 @@ export async function POST(req: NextRequest) {
       return res;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      console.error("try-on hold: createCreditHold failed", {
+      logger.error("tryon_hold_create_failed", {
         userId,
         requestId: currentRequestId,
         error: message,
@@ -199,7 +231,7 @@ export async function POST(req: NextRequest) {
           return res;
         } catch (dbErr: unknown) {
           // If we can't even fetch billing, it's a database issue
-          console.error("try-on hold: failed to fetch billing after insufficient_credits", dbErr);
+          logger.error("tryon_hold_billing_fetch_after_no_credits_failed", { error: dbErr });
           throw new Error(`Database error: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
         }
       }
@@ -225,7 +257,7 @@ export async function POST(req: NextRequest) {
     const stack = error.stack;
 
     // Log full error details for debugging (server-side only)
-    console.error("try-on hold error:", {
+    logger.error("tryon_hold_failed", {
       message,
       stack: stack?.split('\n').slice(0, 5).join('\n'), // First 5 lines of stack
       userId: userId || 'unknown',
@@ -253,10 +285,7 @@ export async function POST(req: NextRequest) {
     ) {
       errorCode = "database_error";
       retryable = true;
-      console.error(
-        "Database error in try-on hold - this may be a transient issue:",
-        message
-      );
+      logger.error("tryon_hold_database_error", { message });
     } else if (
       lowerMessage.includes("auth_failed") ||
       lowerMessage.includes("clerk") ||
@@ -265,7 +294,7 @@ export async function POST(req: NextRequest) {
       // Auth errors should return 401, not 500
       errorCode = "auth_failed";
       statusCode = 401;
-      console.error("Authentication error in try-on hold:", message);
+      logger.error("tryon_hold_auth_error", { message });
     }
 
     const res = NextResponse.json(

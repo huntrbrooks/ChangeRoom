@@ -33,7 +33,6 @@ import {
   Sparkles,
   ThumbsDown,
   ThumbsUp,
-  Upload,
   UserPlus,
   UserRound,
   WandSparkles,
@@ -50,6 +49,7 @@ import { ANALYTICS_EVENTS, captureEvent } from '@/lib/analytics';
 import { trackTrialConsumed, trackOutfitGenerated } from '@/lib/userEvents';
 import { getBillingBannerState } from '@/lib/billingBanner';
 import { getDemoTryOnImageUrl, getDemoTryOnProducts } from '@/lib/pitchDemo';
+import { logger } from '@/lib/logger';
 
 // Force dynamic rendering to prevent static generation issues with Clerk
 export const dynamic = 'force-dynamic';
@@ -393,7 +393,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   );
 
   const handleLoaderStageChange = useCallback((stageId: number) => {
-    console.info('try-on-stage', { stageId, ts: Date.now() });
+    logger.info('try_on_stage', { stageId, ts: Date.now() });
   }, []);
 
   const handleResultImageLoaded = useCallback(() => {
@@ -406,7 +406,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
   useEffect(() => {
     router.prefetch('/pricing');
-    router.prefetch('/billing');
+    if (hasUsableClerkKey()) {
+      router.prefetch('/billing');
+    }
   }, [router]);
 
   useEffect(() => {
@@ -813,7 +815,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     }
   }, [isAuthenticated]);
 
-  const handleBulkUpload = (
+  const handleBulkUpload = useCallback((
     files: File[],
     analyses: AnalyzedItem[],
     shouldReplace: boolean = false
@@ -840,8 +842,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     }
 
     void persistClothingItems(newItems);
-    console.log('Bulk upload complete. Analyzed items:', analyses);
-  };
+    logger.info('bulk_upload_complete', { itemCount: analyses.length });
+  }, [persistClothingItems, requireAuth]);
 
   const handleItemRemove = (index: number) => {
     setWardrobeItems(prev => prev.filter((_, idx) => idx !== index));
@@ -1250,7 +1252,10 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     // Persist the clothing item
     void persistClothingItems([newEntry]);
 
-    console.log('Product added from URL:', product.title, product.productUrl);
+    logger.info('product_added_from_url', {
+      title: product.title,
+      productUrl: product.productUrl,
+    });
   }, [requireAuth, wardrobeItems.length, persistClothingItems]);
 
   const userPreviewUrls = useMemo(() => {
@@ -1574,7 +1579,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         window.dispatchEvent(new Event('outfitSaved'));
       }
       
-      console.log('Outfit saved to My Outfits:', response.data);
+      logger.info('outfit_saved', {
+        outfitId: response.data?.id,
+      });
     } catch (error: unknown) {
       const err =
         typeof error === 'object' && error !== null
@@ -1627,11 +1634,18 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   );
 
   const handleGenerate = async () => {
-    console.log("handleGenerate called", { userImagesCount: userImages.length, wardrobeItems: wardrobeItems.length, billing, isOnTrial });
+    logger.info("tryon_generate_requested", {
+      userImagesCount: userImages.length,
+      wardrobeItems: wardrobeItems.length,
+      billingPlan: billing?.plan ?? null,
+      creditsAvailable: billing?.creditsAvailable ?? null,
+      trialsRemaining: billing?.trialsRemaining ?? null,
+      isOnTrial,
+    });
     
     // Prevent multiple simultaneous calls
     if (isGenerating) {
-      console.log("Already generating, ignoring duplicate call");
+      logger.info("tryon_generate_duplicate_ignored");
       return;
     }
 
@@ -1655,7 +1669,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     
     if (userImages.length === 0) {
       const errorMsg = "Please upload at least one photo of yourself.";
-      console.log("Validation failed:", errorMsg);
+      logger.info("tryon_validation_failed", { error: errorMsg });
       setError(errorMsg);
       return;
     }
@@ -1665,21 +1679,21 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
     if (activeFiles.length === 0) {
       const errorMsg = "Please upload at least one clothing item.";
-      console.log("Validation failed:", errorMsg);
+      logger.info("tryon_validation_failed", { error: errorMsg });
       setError(errorMsg);
       return;
     }
 
     // Check credits before proceeding (unless on trial or bypass user)
     if (lacksCredits) {
-      console.log("No credits available, redirecting to pricing");
+      logger.info("tryon_no_credits_redirecting");
       redirectToPricing();
       return;
     }
 
     // Log bypass for admin
     if (isBypass) {
-      console.log(`Payment bypassed for user: ${userEmail}`);
+      logger.info("tryon_payment_bypassed", { hasUserEmail: Boolean(userEmail) });
     }
 
     // Show paywall if credits are low (3 or less) and not on trial
@@ -1783,13 +1797,13 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         console.error = originalError;
         return;
       }
-      console.log("Using API URL:", API_URL);
+      logger.info("tryon_backend_selected", { apiUrl: API_URL });
       
       // Wake up Render service first (health check)
-      console.log("Waking up Render service...");
+      logger.info("tryon_backend_wakeup_started");
       try {
         const healthCheck = await httpClient.get(`${API_URL}/`, { timeout: 180000 }); // 3 minutes
-        console.log("Service is awake:", healthCheck.data);
+        logger.info("tryon_backend_wakeup_succeeded", { status: healthCheck.status });
       } catch (wakeError: unknown) {
         const error = wakeError instanceof Error ? wakeError : new Error(String(wakeError));
         console.warn("Health check failed (service may be waking up):", error.message);
@@ -1837,7 +1851,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           tryOnFormData.append('clothing_images', file);
         });
         
-        console.log(`Trying on ${preparedTryOnFiles.length} item(s) using direct file uploads to preserve ordering`);
+        logger.info("tryon_uploads_prepared", { itemCount: preparedTryOnFiles.length });
 
         tryOnFormData.append('requestId', requestId);
         tryOnFormData.append('quality', 'standard');
@@ -2019,9 +2033,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         
         tryOnFormData.append('garment_metadata', JSON.stringify(metadata));
         tryOnFormData.append('category', inferredCategory);
-        console.log("Using analyzed metadata for try-on:", metadata);
+        logger.info("tryon_metadata_prepared", { metadataKeys: Object.keys(metadata) });
 
-        console.log("Starting try-on generation...");
+        logger.info("tryon_backend_request_started");
         logIngest({
           event: 'try_on_request_started',
           data: {
@@ -2109,7 +2123,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           // Use requestAnimationFrame to ensure DOM update
           requestAnimationFrame(() => {
             setGeneratedImage(finalImageUrl);
-            console.log("Try-on completed successfully");
+            logger.info("tryon_completed", { requestId });
           });
           
           if (myOutfitsEnabled) {
@@ -2277,7 +2291,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         setProductSearchAttempted(true);
         setProductSearchError(null);
 
-        console.log("Starting product identification...");
+        logger.info("product_identification_started");
         const identifyFormData = new FormData();
         const primaryTryOnFile = preparedTryOnFiles[0] || activeWardrobeItems[0]?.file;
         if (!primaryTryOnFile) {
@@ -2331,7 +2345,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         const queryToUse = searchQueryRaw.trim() || fallbackQuery;
 
         if (queryToUse) {
-          console.log("Product identification successful, searching for products...");
+          logger.info("product_identification_succeeded");
           const shopFormData = new FormData();
           shopFormData.append('query', queryToUse);
           const shopAuthHeaders = await getBackendAuthHeaders();
@@ -2351,7 +2365,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             : [];
           setProducts(results);
           if (results.length > 0) {
-            console.log("Product search completed successfully");
+            logger.info("product_search_completed");
           } else {
             setProductSearchError("No products found for this item.");
             console.warn("Product search returned 0 results", { queryToUse });
@@ -3231,13 +3245,13 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   try {
                     e.preventDefault();
                     e.stopPropagation();
-                    console.log("Try-on button clicked");
+                    logger.info("tryon_button_clicked");
                     if (!isAuthenticated && !pitchDemoEnabled) {
                       setError('Please sign in to try on.');
                       return;
                     }
                     if (isGenerating) {
-                      console.log("Button clicked but already generating, ignoring");
+                      logger.info("tryon_button_duplicate_ignored");
                       return;
                     }
                     if (lacksCredits) {

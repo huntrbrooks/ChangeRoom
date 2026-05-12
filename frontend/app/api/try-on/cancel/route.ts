@@ -1,4 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { logger } from "@/lib/logger";
+
+const requestSchema = z.object({
+  requestId: z.string().trim().min(1).optional(),
+  idempotencyKey: z.string().trim().min(1).optional(),
+  request_id: z.string().trim().min(1).optional(),
+});
 
 /**
  * POST /api/try-on/cancel
@@ -12,7 +20,7 @@ export async function POST(req: NextRequest) {
     ({ auth } = await import("@clerk/nextjs/server"));
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("try-on cancel: failed to import @clerk/nextjs/server", err);
+    logger.error("tryon_cancel_clerk_import_failed", { error: err });
     return NextResponse.json(
       {
         error: "clerk_server_unavailable",
@@ -28,7 +36,7 @@ export async function POST(req: NextRequest) {
     ({ userId } = await auth());
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("try-on cancel: auth() failed", err);
+    logger.error("tryon_cancel_auth_failed", { error: err });
     return NextResponse.json(
       {
         error: "auth_failed",
@@ -45,11 +53,24 @@ export async function POST(req: NextRequest) {
 
   const { getHoldByRequestId, releaseCreditHold } = await import("@/lib/db-access");
 
-  const body = await req.json();
+  const body = await req.json().catch(() => null);
+  const parsed = requestSchema.safeParse(body ?? {});
+  if (!parsed.success) {
+    return NextResponse.json(
+      {
+        error: "invalid_request",
+        details: parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })),
+      },
+      { status: 400 }
+    );
+  }
   const requestId =
-    (body.requestId as string | undefined) ||
-    (body.idempotencyKey as string | undefined) ||
-    (body.request_id as string | undefined);
+    parsed.data.requestId ||
+    parsed.data.idempotencyKey ||
+    parsed.data.request_id;
 
   if (!requestId || !requestId.trim()) {
     return NextResponse.json({ error: "requestId_required" }, { status: 400 });

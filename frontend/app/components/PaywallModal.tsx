@@ -17,6 +17,19 @@ interface PaywallModalProps {
   onTrial?: boolean;
 }
 
+type PaywallUser = ReturnType<typeof useUser>['user'];
+
+const hasUsableClerkKey = () => {
+  const key = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim();
+  return Boolean(
+    key &&
+      key.startsWith('pk_') &&
+      key.length >= 20 &&
+      key.length <= 200 &&
+      /^pk_[a-zA-Z0-9_\-=.]+$/.test(key)
+  );
+};
+
 export function PaywallModal({
   isOpen,
   onClose,
@@ -24,7 +37,40 @@ export function PaywallModal({
   plan,
   onTrial,
 }: PaywallModalProps) {
+  return hasUsableClerkKey() ? (
+    <PaywallModalWithClerk
+      isOpen={isOpen}
+      onClose={onClose}
+      creditsAvailable={creditsAvailable}
+      plan={plan}
+      onTrial={onTrial}
+    />
+  ) : (
+    <PaywallModalContent
+      isOpen={isOpen}
+      onClose={onClose}
+      creditsAvailable={creditsAvailable}
+      plan={plan}
+      onTrial={onTrial}
+      user={null}
+    />
+  );
+}
+
+function PaywallModalWithClerk(props: PaywallModalProps) {
   const { user } = useUser();
+
+  return <PaywallModalContent {...props} user={user} />;
+}
+
+function PaywallModalContent({
+  isOpen,
+  onClose,
+  creditsAvailable,
+  plan,
+  onTrial,
+  user,
+}: PaywallModalProps & { user: PaywallUser | null }) {
   const standardFeatures = getProductFeatures('standard');
   const proFeatures = getProductFeatures('pro');
   const userEmail = user?.emailAddresses?.[0]?.emailAddress;
@@ -227,4 +273,3 @@ export function PaywallModal({
     </div>
   );
 }
-

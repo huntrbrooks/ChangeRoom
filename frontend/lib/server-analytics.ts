@@ -1,4 +1,5 @@
 import { ANALYTICS_EVENTS, type AnalyticsEventName } from './analytics-events';
+import { logger } from './logger';
 
 const key = process.env.POSTHOG_KEY;
 const host = (process.env.POSTHOG_HOST || 'https://us.i.posthog.com').replace(
@@ -33,9 +34,8 @@ export async function captureServerEvent(
       cache: 'no-store',
     });
   } catch (err) {
-    console.error('PostHog capture failed', err);
+    logger.error('posthog_capture_failed', { error: err });
   }
 }
 
 export { ANALYTICS_EVENTS };
-
