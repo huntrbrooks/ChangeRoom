@@ -30,7 +30,7 @@ type SqlRow = Record<string, unknown>;
 type DbClient = {
   query: (queryText: string) => Promise<unknown>;
   sql: typeof sql;
-  release: () => void;
+  release: () => void | Promise<void>;
 };
 type SqlValues = Parameters<typeof sql> extends [TemplateStringsArray, ...infer V]
   ? V
@@ -583,7 +583,7 @@ const runTransaction = async <T>(fn: (tx: typeof sql) => Promise<T>): Promise<T>
   } finally {
     // Always release the client back to the pool
     try {
-      client.release();
+      await client.release();
     } catch (releaseError) {
       // Log but don't throw - the original error (if any) is more important
       console.error("Failed to release database client:", releaseError);

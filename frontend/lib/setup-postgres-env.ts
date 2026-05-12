@@ -1,23 +1,33 @@
 /**
- * Ensure @vercel/postgres sees a connection string even if only DATABASE_URL is set.
- * Production environments sometimes only provide DATABASE_URL, which causes
- * the client to throw and repeatedly spam the console with 500 errors.
+ * Bridge DATABASE_URL into the @vercel/postgres env shape without changing the
+ * connection type. A Neon direct URL must not be copied into POSTGRES_URL,
+ * because @vercel/postgres treats POSTGRES_URL as a pooled connection string.
  */
-const POSTGRES_KEYS = [
-  "POSTGRES_URL",
-  "POSTGRES_PRISMA_URL",
-  "POSTGRES_URL_NON_POOLING",
-] as const;
+const normalizeConnectionString = (value: string | undefined): string | undefined =>
+  value && value !== "undefined" ? value : undefined;
 
-const existingValue = POSTGRES_KEYS.map((key) => process.env[key]).find(Boolean);
-const fallbackUrl = existingValue || process.env.DATABASE_URL;
+const isLocalhostConnectionString = (connectionString: string): boolean => {
+  try {
+    return new URL(connectionString.replace(/^postgresql:\/\//, "https://")).hostname === "localhost";
+  } catch {
+    return false;
+  }
+};
 
-if (!existingValue && fallbackUrl) {
-  POSTGRES_KEYS.forEach((key) => {
-    if (!process.env[key]) {
-      process.env[key] = fallbackUrl;
-    }
-  });
+const isPooledConnectionString = (connectionString: string): boolean =>
+  connectionString.includes("-pooler.");
+
+const isPoolCompatibleConnectionString = (connectionString: string): boolean =>
+  isLocalhostConnectionString(connectionString) || isPooledConnectionString(connectionString);
+
+const fallbackUrl = normalizeConnectionString(process.env.DATABASE_URL);
+
+if (fallbackUrl) {
+  if (isPoolCompatibleConnectionString(fallbackUrl)) {
+    process.env.POSTGRES_URL ||= fallbackUrl;
+    process.env.POSTGRES_PRISMA_URL ||= fallbackUrl;
+  } else {
+    process.env.POSTGRES_URL_NON_POOLING ||= fallbackUrl;
+  }
 }
-
 
