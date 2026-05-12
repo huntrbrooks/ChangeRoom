@@ -1,11 +1,8 @@
 import type { Metadata, Viewport } from "next";
-import {
-  ClerkProvider,
-  UserButton,
-} from '@clerk/nextjs';
-import { auth } from '@clerk/nextjs/server';
+import { ClerkProvider } from '@clerk/nextjs';
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { AuthHeader } from "./components/AuthHeader";
 import { Footer } from "./components/Footer";
 import { GoogleTagManagerBody, GoogleTagManagerHead } from "./components/GoogleTagManager";
 import PwaRegister from "./components/PwaRegister";
@@ -13,7 +10,6 @@ import { PostHogClientProvider } from "./providers/PostHogProvider";
 import { AnalyticsUserSync } from "./components/AnalyticsUserSync";
 import { GlobalErrorGuards } from "./components/GlobalErrorGuards";
 import { PageViewTracker } from "./components/PageViewTracker";
-import Link from "next/link";
 import { CANONICAL_ORIGIN } from "@/lib/domainRouting";
 import { getAllowedRedirectOrigins } from "@/lib/clerkAuthConfig";
 import { getClerkPublishableKey } from "@/lib/clerk-public-config";
@@ -107,14 +103,6 @@ export default async function RootLayout({
     );
   }
 
-  let userId: string | null = null;
-  try {
-    const authResult = await auth();
-    userId = authResult.userId;
-  } catch {
-    userId = null;
-  }
-  
   return (
     <ClerkProvider 
       publishableKey={publishableKey}
@@ -146,26 +134,7 @@ export default async function RootLayout({
                 {statusMessage}
               </div>
             )}
-            <header className="flex justify-end items-center px-4 sm:px-6 py-3 gap-4 min-h-16 bg-white/90 backdrop-blur-md border-b border-slate-200">
-              {!userId ? (
-                <>
-                  <Link
-                    href="/sign-in"
-                    className="text-xs sm:text-sm h-10 sm:h-11 px-4 sm:px-5 inline-flex items-center justify-center font-semibold text-slate-800 hover:text-black transition-colors"
-                  >
-                    Sign in
-                  </Link>
-                  <Link
-                    href="/sign-up"
-                    className="bg-[#101114] text-white rounded-lg font-semibold text-xs sm:text-sm h-10 sm:h-11 px-5 sm:px-6 inline-flex items-center justify-center hover:bg-[#20232a] transition-colors shadow-[0_10px_24px_rgba(16,17,20,0.16)]"
-                  >
-                    Sign Up
-                  </Link>
-                </>
-              ) : (
-                <UserButton />
-              )}
-            </header>
+            <AuthHeader />
             <div className="flex-1">
               {children}
             </div>

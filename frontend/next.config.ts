@@ -4,6 +4,7 @@ const nextConfig: NextConfig = {
   /* config options here */
   // Skip static generation for pages that use Clerk
   output: 'standalone',
+  allowedDevOrigins: ['127.0.0.1'],
   async headers() {
     const connectSrc = [
       "'self'",

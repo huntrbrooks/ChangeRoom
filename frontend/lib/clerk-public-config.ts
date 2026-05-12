@@ -35,7 +35,22 @@ export function getClerkPublishableKey(): string | undefined {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
   );
 
-  return isUsableClerkPublishableKey(key) ? key : undefined;
+  if (!isUsableClerkPublishableKey(key)) {
+    return undefined;
+  }
+
+  const allowLiveKeyInDev =
+    process.env.NEXT_PUBLIC_ALLOW_LIVE_CLERK_IN_DEV === "1";
+
+  if (
+    process.env.NODE_ENV !== "production" &&
+    key?.startsWith("pk_live_") &&
+    !allowLiveKeyInDev
+  ) {
+    return undefined;
+  }
+
+  return key;
 }
 
 export function hasUsableClerkPublishableKey(): boolean {

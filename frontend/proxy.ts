@@ -1,7 +1,7 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse, type NextRequest, type NextMiddleware, type NextFetchEvent } from 'next/server';
 import { buildCanonicalUrl, shouldRedirectToCanonicalHost } from '@/lib/domainRouting';
-import { isUsableClerkPublishableKey } from '@/lib/clerk-public-config';
+import { getClerkPublishableKey } from '@/lib/clerk-public-config';
 
 // Define public routes that don't require authentication
 const isPublicRoute = createRouteMatcher([
@@ -23,7 +23,7 @@ const isPublicRoute = createRouteMatcher([
 
 // Check if Clerk keys are available
 function hasClerkKeys(): boolean {
-  const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const publishableKey = getClerkPublishableKey();
   const secretKey = process.env.CLERK_SECRET_KEY;
 
   const hasSecretKey =
@@ -31,15 +31,18 @@ function hasClerkKeys(): boolean {
     secretKey.trim().startsWith('sk_') &&
     secretKey.trim().length > 10;
 
-  return !!(isUsableClerkPublishableKey(publishableKey) && hasSecretKey);
+  return !!(publishableKey && hasSecretKey);
 }
 
 // Fallback handler when Clerk is not configured
 function fallbackHandler(req: NextRequest) {
   if (process.env.NODE_ENV === 'development') {
-    console.warn(
-      '⚠️  Clerk keys not found. Running without authentication. Set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY to enable auth.'
-    );
+    const rawPublishableKey =
+      process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim() || '';
+    const message = rawPublishableKey.startsWith('pk_live_')
+      ? '⚠️  Clerk auth disabled locally: pk_live keys cannot be used on localhost/127.0.0.1. Set Clerk test keys in frontend/.env.local.'
+      : '⚠️  Clerk keys not found. Running without authentication. Set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_... and CLERK_SECRET_KEY=sk_test_... to enable local auth.';
+    console.warn(message);
     return NextResponse.next();
   }
 

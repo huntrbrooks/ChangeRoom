@@ -2787,13 +2787,22 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 <ChevronDown size={18} className="hidden text-black sm:block" />
               </button>
             ) : (
-              <button
-                type="button"
-                onClick={() => router.push('/sign-in')}
-                className="rounded-lg bg-black px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-800 sm:px-4"
-              >
-                Sign in
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => router.push('/sign-in')}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 transition-colors hover:border-slate-300 hover:text-black sm:px-4"
+                >
+                  Sign in
+                </button>
+                <button
+                  type="button"
+                  onClick={() => router.push('/sign-up')}
+                  className="rounded-lg bg-black px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-800 sm:px-4"
+                >
+                  Sign Up
+                </button>
+              </div>
             )}
           </div>
         </div>
