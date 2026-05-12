@@ -406,10 +406,10 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
   useEffect(() => {
     router.prefetch('/pricing');
-    if (hasUsableClerkKey()) {
+    if (hasUsableClerkKey() && isAuthLoaded && isSignedIn) {
       router.prefetch('/billing');
     }
-  }, [router]);
+  }, [isAuthLoaded, isSignedIn, router]);
 
   useEffect(() => {
     if (!pitchDemoEnabled || typeof window === 'undefined') {
