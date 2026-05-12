@@ -15,6 +15,12 @@ from .model_registry import (
     get_gemini_model_candidates,
     get_openai_model,
 )
+from .openrouter_fallback import (
+    extract_image_url as extract_openrouter_image_url,
+    is_openai_credit_exhausted,
+    openrouter_model_candidates,
+    post_openrouter_chat_completion,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -450,9 +456,10 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
     Returns:
         dict: {"image_url": "data:...base64,...", "retry_info": [...]} (retry_info may be empty)
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is required")
+    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    openrouter_api_key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
+    if not api_key and not openrouter_api_key:
+        raise ValueError("OPENAI_API_KEY or OPENROUTER_API_KEY environment variable is required")
     gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
     
     try:
@@ -953,6 +960,124 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                 files.append(("image[]", (f"garment_{idx + 1}.{ext}", image_bytes, item["mimeType"])))
             return files
 
+        def aspect_ratio_from_size(size_value: str) -> str:
+            match = re.match(r"^\s*(\d+)\s*x\s*(\d+)\s*$", size_value or "")
+            if not match:
+                return "2:3"
+            width = max(1, int(match.group(1)))
+            height = max(1, int(match.group(2)))
+            a, b = width, height
+            while b:
+                a, b = b, a % b
+            return f"{width // a}:{height // a}"
+
+        def build_openrouter_content(text_prompt: str) -> List[Dict[str, Any]]:
+            content: List[Dict[str, Any]] = [
+                {
+                    "type": "text",
+                    "text": text_prompt
+                    + "\n\nUse the attached user reference images and garment images exactly as labeled. "
+                    "Return an image output, not only text.",
+                }
+            ]
+            for idx, item in enumerate(user_data):
+                content.append({"type": "text", "text": f"User reference image {idx + 1}."})
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{item['mimeType']};base64,{item['base64']}",
+                            "detail": "high",
+                        },
+                    }
+                )
+            for idx, item in enumerate(garment_data):
+                content.append({"type": "text", "text": f"Garment image {idx + 1}."})
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{item['mimeType']};base64,{item['base64']}",
+                            "detail": "high",
+                        },
+                    }
+                )
+            return content
+
+        async def generate_with_openrouter_fallback(
+            client: httpx.AsyncClient,
+            *,
+            text_prompt: str,
+            reason: str,
+            attempt: int,
+        ) -> Dict[str, Any]:
+            if not openrouter_api_key:
+                raise ValueError("OpenAI quota/billing failed and OPENROUTER_API_KEY is not configured")
+
+            models = openrouter_model_candidates(
+                "OPENROUTER_TRYON_IMAGE_MODEL",
+                default_model="google/gemini-3.1-flash-image-preview",
+                fallback_models=(
+                    "google/gemini-2.5-flash-image",
+                    "openrouter/auto",
+                ),
+            )
+            image_config = {
+                "aspect_ratio": os.getenv(
+                    "OPENROUTER_TRYON_ASPECT_RATIO",
+                    aspect_ratio_from_size(image_size),
+                ),
+                "image_size": os.getenv("OPENROUTER_TRYON_IMAGE_SIZE", "1K"),
+            }
+            last_error = "unknown_error"
+            for model in models:
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": TRYON_SYSTEM_PROMPT},
+                        {"role": "user", "content": build_openrouter_content(text_prompt)},
+                    ],
+                    "modalities": ["image", "text"],
+                    "image_config": image_config,
+                    "temperature": 0.2,
+                }
+                response = await post_openrouter_chat_completion(
+                    client,
+                    api_key=openrouter_api_key,
+                    payload=payload,
+                )
+                if not response.is_success:
+                    last_error = f"{response.status_code}:{response.text[:500]}"
+                    logger.error(
+                        "OpenRouter try-on fallback failed with model %s: %s",
+                        model,
+                        last_error,
+                    )
+                    continue
+
+                data = response.json()
+                image_url = extract_openrouter_image_url(data)
+                if image_url:
+                    logger.info("Successfully generated image using OpenRouter fallback model: %s", model)
+                    return {
+                        "image_url": image_url,
+                        "retry_info": [
+                            *retry_info,
+                            {
+                                "attempt": attempt,
+                                "strategy": "openrouter_fallback",
+                                "reason": reason,
+                                "modificationsSummary": f"Used OpenRouter model {model} after OpenAI quota/billing failure.",
+                            },
+                        ],
+                        "modesty_applied": modesty_applied,
+                    }
+
+                last_error = "no_image_in_openrouter_response"
+                logger.error("OpenRouter try-on fallback returned no image with model %s", model)
+
+            raise ValueError(f"OpenRouter try-on fallback failed: {last_error}")
+
         logger.info("Starting virtual try-on generation with OpenAI image model selection")
         logger.info(f"   Person images: {len(limited_user_images)}")
         logger.info(f"   Clothing items: {len(limited_garments)}")
@@ -1211,6 +1336,14 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
             base_prompt, _ = build_base_text_prompt(current_metadata)
             current_prompt: str = base_prompt
 
+            if not api_key:
+                return await generate_with_openrouter_fallback(
+                    client,
+                    text_prompt=current_prompt,
+                    reason="openai_api_key_missing",
+                    attempt=1,
+                )
+
             async def apply_retry_rewrite(
                 *,
                 attempt_number: int,
@@ -1303,7 +1436,11 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                             error_obj = error_json.get("error") if isinstance(error_json, dict) else None
                             if isinstance(error_obj, dict) and error_obj.get("message"):
                                 error_text = str(error_obj.get("message"))
+                            error_code = error_obj.get("code") if isinstance(error_obj, dict) else None
+                            error_type = error_obj.get("type") if isinstance(error_obj, dict) else None
                         except Exception:
+                            error_code = None
+                            error_type = None
                             pass
                         logger.error(f"OpenAI try-on failed (attempt {attempt}): {response.status_code} - {error_text}")
                         last_failure_details = {
@@ -1312,6 +1449,19 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                             "error": error_text[:800],
                             "attempt": attempt,
                         }
+
+                        if is_openai_credit_exhausted(
+                            status_code=response.status_code,
+                            error_text=error_text,
+                            error_code=str(error_code or ""),
+                            error_type=str(error_type or ""),
+                        ):
+                            return await generate_with_openrouter_fallback(
+                                client,
+                                text_prompt=current_prompt + retry_suffix,
+                                reason="openai_credit_exhausted",
+                                attempt=attempt,
+                            )
 
                         should_rewrite = is_content_rejection(
                             http_status=response.status_code,
@@ -1374,6 +1524,13 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                 except Exception as e:
                     logger.error(f"Error calling OpenAI try-on on attempt {attempt}: {e}")
                     last_failure_details = {"reason": "exception", "error": str(e), "attempt": attempt}
+                    if is_openai_credit_exhausted(exception=e):
+                        return await generate_with_openrouter_fallback(
+                            client,
+                            text_prompt=current_prompt + retry_suffix,
+                            reason="openai_credit_exhausted",
+                            attempt=attempt,
+                        )
                     if attempt == max_attempts:
                         raise
                     continue

@@ -37,6 +37,11 @@ Set these in the **Render service** for the backend (see `render.yaml`).
 | `GEMINI_API_KEY` | Optional Google Gemini API key for rewrite/safety helpers and Gemini-backed analysis paths | (none) | `AIzaSy...` |
 | `GOOGLE_API_KEY` | Alternative name for GEMINI_API_KEY (fallback) | (none) | `AIzaSy...` |
 | `OPENAI_TRYON_IMAGE_MODEL` | OpenAI model for main try-on image edits | `gpt-image-1.5` | `gpt-image-1.5` |
+| `OPENROUTER_API_KEY` | OpenRouter fallback key used when OpenAI billing/quota is exhausted | (none) | `sk-or-...` |
+| `OPENROUTER_TRYON_IMAGE_MODEL` | OpenRouter image-output fallback model for try-on generation | `google/gemini-3.1-flash-image-preview` | `google/gemini-3.1-flash-image-preview` |
+| `OPENROUTER_VISION_MODEL` | OpenRouter vision/text fallback model for clothing preprocessing | `google/gemini-3.1-flash-lite` | `google/gemini-3.1-flash-lite` |
+| `OPENROUTER_TRYON_IMAGE_SIZE` | OpenRouter fallback image size hint | `1K` | `1K` |
+| `OPENROUTER_TRYON_ASPECT_RATIO` | OpenRouter fallback aspect ratio hint | derived from OpenAI size | `2:3` |
 | `OPENAI_TRYON_IMAGE_SIZE` | Output size for try-on image edits | `1024x1536` | `1024x1536` |
 | `OPENAI_TRYON_QUALITY` | Output quality for try-on image edits | `high` | `medium` |
 | `OPENAI_TRYON_OUTPUT_FORMAT` | Output format for try-on results | `jpeg` | `png` |

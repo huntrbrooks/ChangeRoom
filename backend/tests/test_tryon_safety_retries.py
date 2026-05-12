@@ -60,6 +60,18 @@ def test_extract_openai_image_url_handles_b64_response():
     assert text_parts == ["done"]
 
 
+def test_openai_credit_exhaustion_detection():
+    from services.openrouter_fallback import is_openai_credit_exhausted
+
+    assert is_openai_credit_exhausted(
+        status_code=429,
+        error_text="You exceeded your current quota, please check your plan and billing details.",
+        error_code="insufficient_quota",
+    )
+    assert is_openai_credit_exhausted(status_code=402, error_text="Payment required")
+    assert not is_openai_credit_exhausted(status_code=429, error_text="Rate limit reached for requests")
+
+
 @pytest.mark.asyncio
 async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_bytes):
     from services import vton
@@ -140,6 +152,76 @@ async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_byt
     assert "Do not reuse the original background" in first_payload["prompt"]
     assert "Do not slim, enlarge, lengthen, shorten" in first_payload["prompt"]
     assert len(captured_payloads[0]["files"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_vton_falls_back_to_openrouter_when_openai_credit_exhausted(monkeypatch, sample_image_bytes):
+    from services import vton
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.setenv("OPENROUTER_TRYON_IMAGE_MODEL", "google/gemini-3.1-flash-image-preview")
+
+    openai_calls = {"n": 0}
+    openrouter_calls = {"n": 0}
+    captured_payloads = []
+
+    async def fake_openai_edit(_client, *, url, headers, data, files):
+        openai_calls["n"] += 1
+        return DummyResponse(
+            ok=False,
+            status_code=429,
+            text="You exceeded your current quota, please check your plan and billing details.",
+            data={
+                "error": {
+                    "message": "You exceeded your current quota, please check your plan and billing details.",
+                    "code": "insufficient_quota",
+                    "type": "insufficient_quota",
+                }
+            },
+        )
+
+    async def fake_openrouter_chat(_client, *, api_key, payload):
+        openrouter_calls["n"] += 1
+        captured_payloads.append(payload)
+        return DummyResponse(
+            ok=True,
+            data={
+                "choices": [
+                    {
+                        "message": {
+                            "images": [
+                                {"image_url": {"url": "data:image/png;base64,BBBB"}}
+                            ]
+                        }
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(vton, "_openai_images_edit", fake_openai_edit)
+    monkeypatch.setattr(vton, "post_openrouter_chat_completion", fake_openrouter_chat)
+
+    result = await vton.generate_try_on(
+        [io.BytesIO(sample_image_bytes)],
+        [io.BytesIO(sample_image_bytes)],
+        category="upper_body",
+        garment_metadata={"description": "black t-shirt"},
+        user_attributes=None,
+        main_index=0,
+        user_quality_flags=None,
+    )
+
+    assert result["image_url"] == "data:image/png;base64,BBBB"
+    assert openai_calls["n"] == 1
+    assert openrouter_calls["n"] == 1
+    assert captured_payloads[0]["model"] == "google/gemini-3.1-flash-image-preview"
+    assert captured_payloads[0]["modalities"] == ["image", "text"]
+    assert any(
+        info.get("strategy") == "openrouter_fallback"
+        for info in result.get("retry_info", [])
+        if isinstance(info, dict)
+    )
 
 
 def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeypatch):

@@ -26,12 +26,20 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 import io
 from PIL import Image
+import httpx
 from datetime import datetime
 
 # Shared normalization (handles HEIC/HEIF when pillow-heif is installed)
 from .image_normalize import normalize_image_bytes, normalize_image_bytes_with_budget
 from .analyze_clothing import embed_metadata_in_image
 from .model_registry import get_openai_model
+from .openrouter_fallback import (
+    extract_message_text,
+    is_openai_credit_exhausted,
+    openrouter_model_candidates,
+    parse_json_object_from_text,
+    post_openrouter_chat_completion,
+)
 
 # OpenAI SDK for structured outputs
 try:
@@ -142,7 +150,7 @@ async def analyze_single_clothing_image(
     Returns:
         Dictionary with body_region, item_type, color, style, tags, etc.
     """
-    client = AsyncOpenAI(api_key=api_key)
+    client = AsyncOpenAI(api_key=api_key) if api_key else None
     
     # Normalize + budget guard to reduce OpenAI vision payload size on huge iPhone uploads.
     # Default budget is conservative but can be increased if needed.
@@ -225,10 +233,61 @@ The body_region must strictly match the definitions above."""
             ]
         }
     ]
+
+    async def analyze_with_openrouter(reason: str) -> Dict[str, Any]:
+        openrouter_api_key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
+        if not openrouter_api_key:
+            raise ValueError("OPENROUTER_API_KEY environment variable is required for OpenAI fallback")
+
+        models = openrouter_model_candidates(
+            "OPENROUTER_VISION_MODEL",
+            default_model="google/gemini-3.1-flash-lite",
+            fallback_models=("openrouter/auto",),
+        )
+        payload_base = {
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+            "temperature": 0.0,
+            "max_tokens": 1000,
+        }
+        last_error = "unknown_error"
+        async with httpx.AsyncClient(timeout=120.0) as openrouter_client:
+            for model in models:
+                payload = {**payload_base, "model": model}
+                response = await post_openrouter_chat_completion(
+                    openrouter_client,
+                    api_key=openrouter_api_key,
+                    payload=payload,
+                )
+                if not response.is_success:
+                    last_error = f"{response.status_code}:{response.text[:500]}"
+                    logger.error(
+                        "OpenRouter preprocessing fallback failed for %s with model %s: %s",
+                        original_filename,
+                        model,
+                        last_error,
+                    )
+                    continue
+                text = extract_message_text(response.json())
+                if not text:
+                    last_error = "empty_openrouter_response"
+                    continue
+                data = parse_json_object_from_text(text)
+                logger.info(
+                    "OpenRouter preprocessing fallback succeeded for %s using %s after %s",
+                    original_filename,
+                    model,
+                    reason,
+                )
+                return data
+
+        raise ValueError(f"OpenRouter preprocessing fallback failed: {last_error}")
     
     try:
         # Call OpenAI with JSON mode
         model_name = get_openai_model("clothing_preprocess")
+        if client is None:
+            raise ValueError("OPENAI_API_KEY environment variable is required")
         response = await client.chat.completions.create(
             model=model_name,
             messages=messages,
@@ -258,6 +317,21 @@ The body_region must strictly match the definitions above."""
         
     except Exception as e:
         logger.error(f"OpenAI analysis failed for {original_filename}: {e}", exc_info=True)
+        if not api_key or is_openai_credit_exhausted(exception=e):
+            try:
+                data = await analyze_with_openrouter(
+                    "openai_api_key_missing" if not api_key else "openai_credit_exhausted"
+                )
+                data = normalize_clothing_classification(data)
+                data["brand"] = (data.get("brand") or "unknown").strip() or "unknown"
+                return data
+            except Exception as fallback_error:
+                logger.error(
+                    "OpenRouter analysis fallback failed for %s: %s",
+                    original_filename,
+                    fallback_error,
+                    exc_info=True,
+                )
         # Try to infer body_region from filename as last resort
         filename_lower = original_filename.lower()
         inferred_body_region = None
@@ -310,10 +384,11 @@ async def preprocess_clothing_batch(
         logger.error("OpenAI SDK not available. Install with: pip install openai")
         raise RuntimeError("OpenAI SDK not installed")
     
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        logger.error("OPENAI_API_KEY not set")
-        raise ValueError("OPENAI_API_KEY environment variable is required")
+    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    openrouter_api_key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
+    if not api_key and not openrouter_api_key:
+        logger.error("OPENAI_API_KEY and OPENROUTER_API_KEY are not set")
+        raise ValueError("OPENAI_API_KEY or OPENROUTER_API_KEY environment variable is required")
     
     if len(image_files) != len(original_filenames):
         raise ValueError("Image list and filename list length mismatch")
