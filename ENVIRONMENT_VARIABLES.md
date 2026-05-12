@@ -43,9 +43,9 @@ Set these in the **Render service** for the backend (see `render.yaml`).
 | `OPENAI_TRYON_MODERATION` | OpenAI image moderation setting | `auto` | `auto` |
 | `OPENAI_VISION_MAX_IMAGE_BYTES` | Max bytes per image sent to OpenAI vision calls | `4194304` | `6291456` |
 | `SERPAPI_API_KEY` | SerpAPI key for product search | (none) | `abc123` |
-| `BACKEND_AUTH_MODE` | Protect expensive endpoints: `none`, `clerk`, or `api_key` | `none` | `clerk` |
-| `BACKEND_API_KEY` | Shared secret when `BACKEND_AUTH_MODE=api_key` | (none) | `replace_me` |
-| `CLERK_ISSUER` | Clerk issuer URL for JWT verification when `BACKEND_AUTH_MODE=clerk` | (none) | `https://your-clerk-issuer` |
+| `BACKEND_AUTH_MODE` | Protect expensive endpoints: `none`, `clerk`, `api_key`, or `clerk_or_api_key` | `none` | `clerk_or_api_key` |
+| `BACKEND_API_KEY` | Shared secret when `BACKEND_AUTH_MODE=api_key` or `clerk_or_api_key` | (none) | `replace_me` |
+| `CLERK_ISSUER` | Clerk issuer URL for JWT verification when `BACKEND_AUTH_MODE=clerk` or `clerk_or_api_key` | (none) | `https://your-clerk-issuer` |
 | `CLERK_JWKS_URL` | JWKS URL (optional override if not using issuer) | (derived) | `https://your-clerk-issuer/.well-known/jwks.json` |
 | `CLERK_AUDIENCE` | Optional JWT audience check for Clerk tokens | (none) | `your-audience` |
 | `CLERK_JWKS_CACHE_SECONDS` | JWKS cache TTL in seconds | `300` | `600` |
