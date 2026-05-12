@@ -11,6 +11,7 @@
 
 import { sql } from "./db";
 import { appConfig } from "./config";
+import { isPrivilegedAccountEmail } from "./bypass-config";
 
 function uuid(): string {
   if (typeof globalThis.crypto?.randomUUID === "function") {
@@ -36,6 +37,32 @@ export interface UserBilling {
   is_frozen: boolean;
   created_at: Date;
   updated_at: Date;
+}
+
+async function isPrivilegedUserId(userId: string): Promise<boolean> {
+  try {
+    const result = await sql`
+      SELECT email
+      FROM user_profiles
+      WHERE user_id = ${userId}
+        AND deleted_at IS NULL
+      LIMIT 1
+    `;
+    const email = (result.rows[0] as { email?: string } | undefined)?.email;
+    return isPrivilegedAccountEmail(email);
+  } catch {
+    return false;
+  }
+}
+
+function withUnlimitedBillingAccess(billing: UserBilling): UserBilling {
+  return {
+    ...billing,
+    plan: "pro",
+    credits_available: Number.MAX_SAFE_INTEGER,
+    credits_refresh_at: null,
+    is_frozen: false,
+  };
 }
 
 export type CreditLedgerEntryType =
@@ -144,6 +171,19 @@ export async function applyContentBlockPenalty(params: {
   }
   if (amount <= 0) {
     throw new Error("amount_must_be_positive");
+  }
+
+  if (await isPrivilegedUserId(userId)) {
+    const billing = await sql`
+      INSERT INTO users_billing (user_id, plan, credits_available, is_frozen)
+      VALUES (${userId}, 'free', ${appConfig.freeCredits}, false)
+      ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
+      RETURNING *
+    `;
+    return {
+      charged: false,
+      billing: withUnlimitedBillingAccess(billing.rows[0] as UserBilling),
+    };
   }
 
   // Ensure user row exists (cheap)
@@ -533,4 +573,3 @@ export async function deleteUserOutfit(
   `;
   return result.rows.length > 0;
 }
-

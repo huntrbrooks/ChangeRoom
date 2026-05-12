@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
+import { getUserPrimaryEmail, isBypassUser } from "@/lib/bypass-config";
 
 /**
  * POST /api/my/credits/content-block-penalty
@@ -26,6 +27,38 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    let userEmail: string | null = null;
+    try {
+      const user = await currentUser();
+      userEmail = getUserPrimaryEmail(user);
+      if (user) {
+        const { upsertUserProfileFromClerk } = await import("@/lib/db-access");
+        await upsertUserProfileFromClerk({
+          userId,
+          email: userEmail,
+          firstName: user.firstName || null,
+          lastName: user.lastName || null,
+          imageUrl: user.imageUrl || null,
+          clerkCreatedAt: user.createdAt || null,
+        });
+      }
+    } catch (profileErr) {
+      console.warn("content-block penalty: failed to sync Clerk user profile", profileErr);
+    }
+
+    if (isBypassUser(userEmail)) {
+      const { getEffectiveUserBilling } = await import("@/lib/db-access");
+      const { billing } = await getEffectiveUserBilling(userId, userEmail);
+      return NextResponse.json({
+        ok: true,
+        charged: false,
+        creditsAvailable: billing.credits_available,
+        plan: billing.plan,
+        unlimitedCredits: true,
+        bypass: true,
+      });
+    }
+
     const { applyContentBlockPenalty } = await import("@/lib/db-access-compat");
     const result = await applyContentBlockPenalty({ userId, requestId, amount: 1 });
     return NextResponse.json({
@@ -54,5 +87,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "penalty_failed" }, { status: 500 });
   }
 }
-
 

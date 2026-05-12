@@ -57,3 +57,18 @@ def test_hybrid_mode_falls_back_to_clerk_token(monkeypatch):
     asyncio.run(auth.require_backend_auth(_request_with_bearer("clerk-session-token")))
 
     assert seen["token"] == "clerk-session-token"
+
+
+def test_jwks_url_can_be_derived_from_frontend_api(monkeypatch):
+    monkeypatch.delenv("CLERK_JWKS_URL", raising=False)
+    monkeypatch.delenv("CLERK_ISSUER", raising=False)
+    monkeypatch.setenv("CLERK_FRONTEND_API", "clerk.igetdressed.online")
+
+    assert auth._get_jwks_url() == "https://clerk.igetdressed.online/.well-known/jwks.json"
+
+
+def test_clerk_issuer_can_be_derived_from_frontend_api(monkeypatch):
+    monkeypatch.delenv("CLERK_ISSUER", raising=False)
+    monkeypatch.setenv("NEXT_PUBLIC_CLERK_FRONTEND_API", "clerk.igetdressed.online")
+
+    assert auth._get_clerk_issuer() == "https://clerk.igetdressed.online"

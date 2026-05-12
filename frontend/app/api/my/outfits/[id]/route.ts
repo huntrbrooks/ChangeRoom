@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
+import { getUserPrimaryEmail } from "@/lib/bypass-config";
 
 /**
  * DELETE /api/my/outfits/[id]
@@ -16,7 +17,12 @@ export async function DELETE(
   }
 
   try {
-    const { deleteUserOutfit, getOrCreateUserBilling, hasPaidCreditGrant } = await import(
+    const {
+      deleteUserOutfit,
+      getEffectiveUserBilling,
+      hasPaidCreditGrant,
+      upsertUserProfileFromClerk,
+    } = await import(
       "@/lib/db-access"
     );
     // Handle both sync and async params (Next.js 15+ uses Promise)
@@ -30,9 +36,28 @@ export async function DELETE(
       );
     }
 
-    const billing = await getOrCreateUserBilling(userId);
+    let userEmail: string | null = null;
+    try {
+      const user = await currentUser();
+      userEmail = getUserPrimaryEmail(user);
+      if (user) {
+        await upsertUserProfileFromClerk({
+          userId,
+          email: userEmail,
+          firstName: user.firstName || null,
+          lastName: user.lastName || null,
+          imageUrl: user.imageUrl || null,
+          clerkCreatedAt: user.createdAt || null,
+        });
+      }
+    } catch (profileErr) {
+      console.warn("delete outfit: failed to sync Clerk user profile", profileErr);
+    }
+
+    const { billing, isPrivileged } = await getEffectiveUserBilling(userId, userEmail);
     const hasCredits = (billing.credits_available ?? 0) > 0;
-    const hasPurchase = billing.plan !== "free" || (await hasPaidCreditGrant(userId));
+    const hasPurchase =
+      isPrivileged || billing.plan !== "free" || (await hasPaidCreditGrant(userId));
     const usedFreeTrial = (billing.trials_remaining ?? 2) === 0;
 
     if (usedFreeTrial && !hasCredits && !hasPurchase) {
@@ -61,4 +86,3 @@ export async function DELETE(
     );
   }
 }
-

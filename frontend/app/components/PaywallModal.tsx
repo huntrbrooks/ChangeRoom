@@ -7,7 +7,8 @@ import { appConfig } from '@/lib/config';
 import { getProductFeatures } from '@/lib/products';
 import { useUser } from '@clerk/nextjs';
 import { trackProductView } from '@/lib/clerk-tracking';
-import { isBypassUser } from '@/lib/bypass-config';
+import { getUserPrimaryEmail, isBypassUser } from '@/lib/bypass-config';
+import { hasUsableClerkPublishableKey } from '@/lib/clerk-public-config';
 
 interface PaywallModalProps {
   isOpen: boolean;
@@ -19,16 +20,7 @@ interface PaywallModalProps {
 
 type PaywallUser = ReturnType<typeof useUser>['user'];
 
-const hasUsableClerkKey = () => {
-  const key = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim();
-  return Boolean(
-    key &&
-      key.startsWith('pk_') &&
-      key.length >= 20 &&
-      key.length <= 200 &&
-      /^pk_[a-zA-Z0-9_\-=.]+$/.test(key)
-  );
-};
+const hasUsableClerkKey = hasUsableClerkPublishableKey;
 
 export function PaywallModal({
   isOpen,
@@ -73,7 +65,7 @@ function PaywallModalContent({
 }: PaywallModalProps & { user: PaywallUser | null }) {
   const standardFeatures = getProductFeatures('standard');
   const proFeatures = getProductFeatures('pro');
-  const userEmail = user?.emailAddresses?.[0]?.emailAddress;
+  const userEmail = getUserPrimaryEmail(user);
   const isBypass = isBypassUser(userEmail);
 
   React.useEffect(() => {

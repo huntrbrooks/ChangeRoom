@@ -9,6 +9,7 @@
 
 import { sql } from "./db";
 import { appConfig } from "./config";
+import { isPrivilegedAccountEmail } from "./bypass-config";
 
 // Credit hold expiry:
 // Holds are meant to be short-lived "in-flight" reservations while the Render try-on runs.
@@ -63,6 +64,11 @@ export interface UserBilling {
   is_frozen: boolean;
   created_at: Date;
   updated_at: Date;
+}
+
+export interface EffectiveUserBilling {
+  billing: UserBilling;
+  isPrivileged: boolean;
 }
 
 export interface UserProfile {
@@ -395,17 +401,67 @@ async function withUserProfilesTable<T>(operation: () => Promise<T>): Promise<T>
   }
 }
 
+export async function getUserProfile(userId: string): Promise<UserProfile | null> {
+  return withUserProfilesTable(async () => {
+    const result = await sql`
+      SELECT * FROM user_profiles
+      WHERE user_id = ${userId}
+        AND deleted_at IS NULL
+      LIMIT 1
+    `;
+
+    return (result.rows[0] as UserProfile) || null;
+  });
+}
+
+export async function isPrivilegedUserId(userId: string): Promise<boolean> {
+  try {
+    const profile = await getUserProfile(userId);
+    return isPrivilegedAccountEmail(profile?.email);
+  } catch (error) {
+    console.warn("privileged user lookup failed", error);
+    return false;
+  }
+}
+
+function withUnlimitedBillingAccess(billing: UserBilling): UserBilling {
+  return {
+    ...billing,
+    plan: "pro",
+    credits_available: Number.MAX_SAFE_INTEGER,
+    credits_refresh_at: null,
+    trials_remaining: 0,
+    is_frozen: false,
+  };
+}
+
+export async function getEffectiveUserBilling(
+  userId: string,
+  email?: string | null
+): Promise<EffectiveUserBilling> {
+  const billing = await getOrCreateUserBilling(userId);
+  const isPrivileged =
+    isPrivilegedAccountEmail(email) || (await isPrivilegedUserId(userId));
+
+  return {
+    billing: isPrivileged ? withUnlimitedBillingAccess(billing) : billing,
+    isPrivileged,
+  };
+}
+
 export async function upsertUserProfileFromClerk(data: {
   userId: string;
   email?: string | null;
   firstName?: string | null;
   lastName?: string | null;
   imageUrl?: string | null;
-  clerkCreatedAt?: Date | string | null;
+  clerkCreatedAt?: Date | string | number | null;
 }): Promise<UserProfile> {
   const clerkCreatedAt =
     data.clerkCreatedAt instanceof Date
       ? data.clerkCreatedAt.toISOString()
+      : typeof data.clerkCreatedAt === "number"
+      ? new Date(data.clerkCreatedAt).toISOString()
       : data.clerkCreatedAt || null;
 
   return withUserProfilesTable(async () => {
@@ -1070,6 +1126,25 @@ export async function createCreditHold(params: {
 
   await ensureUsersBillingTable();
   await ensureCreditTables();
+  if (await isPrivilegedUserId(userId)) {
+    const billing = await getOrCreateUserBilling(userId);
+    return {
+      hold: {
+        id: generateUuid(),
+        user_id: userId,
+        request_id: requestId,
+        amount,
+        status: "released",
+        reason: reason || "privileged_bypass",
+        expires_at: effectiveExpiresAt,
+        created_at: new Date(),
+        updated_at: new Date(),
+      },
+      created: false,
+      billing: withUnlimitedBillingAccess(billing),
+    };
+  }
+
   return runTransaction(async (tx) => {
     // Reuse existing hold for idempotency
     const existingHold = await tx`
@@ -1667,6 +1742,10 @@ export async function getCreditDiagnostics(
  * Check whether the user has any recorded paid credit grants (excludes free trial).
  */
 export async function hasPaidCreditGrant(userId: string): Promise<boolean> {
+  if (await isPrivilegedUserId(userId)) {
+    return true;
+  }
+
   await ensureCreditTables();
   return withCreditTables(async () => {
     const result = await sql`
@@ -1693,6 +1772,9 @@ export async function updateUserBillingCredits(
   maybeReset: boolean = false
 ): Promise<UserBilling> {
   const billing = await getOrCreateUserBilling(userId);
+  if (delta < 0 && (await isPrivilegedUserId(userId))) {
+    return withUnlimitedBillingAccess(billing);
+  }
 
   let newCredits = billing.credits_available + delta;
   let refreshAt = billing.credits_refresh_at;
@@ -1750,6 +1832,10 @@ export async function isUserOnFreeTrial(userId: string): Promise<boolean> {
  */
 export async function decrementCreditsIfAvailable(userId: string): Promise<boolean> {
   try {
+    if (await isPrivilegedUserId(userId)) {
+      return true;
+    }
+
     const billing = await getOrCreateUserBilling(userId);
 
     // Check if user has free trials remaining
@@ -1806,6 +1892,11 @@ export async function applyContentBlockPenalty(params: {
 
   await ensureUsersBillingTable();
   await ensureCreditTables();
+
+  if (await isPrivilegedUserId(userId)) {
+    const billing = await getOrCreateUserBilling(userId);
+    return { charged: false, billing: withUnlimitedBillingAccess(billing) };
+  }
 
   return runTransaction(async (tx) => {
     const billing = await ensureUserBillingWithLock(tx, userId);
@@ -1871,6 +1962,11 @@ export async function applyContentBlockPenalty(params: {
  * Returns updated billing or existing if already marked.
  */
 export async function markFreeTrialUsed(userId: string): Promise<UserBilling> {
+  if (await isPrivilegedUserId(userId)) {
+    const billing = await getOrCreateUserBilling(userId);
+    return withUnlimitedBillingAccess(billing);
+  }
+
   return withUsersBillingTable(async () => {
     const result = await sql`
       UPDATE users_billing

@@ -51,6 +51,7 @@ Set these in the **Render service** for the backend (see `render.yaml`).
 | `BACKEND_AUTH_MODE` | Protect expensive endpoints: `none`, `clerk`, `api_key`, or `clerk_or_api_key` | `none` | `clerk_or_api_key` |
 | `BACKEND_API_KEY` | Shared secret when `BACKEND_AUTH_MODE=api_key` or `clerk_or_api_key` | (none) | `replace_me` |
 | `CLERK_ISSUER` | Clerk issuer URL for JWT verification when `BACKEND_AUTH_MODE=clerk` or `clerk_or_api_key` | (none) | `https://your-clerk-issuer` |
+| `CLERK_FRONTEND_API` | Clerk frontend API host used to derive issuer/JWKS when `CLERK_ISSUER`/`CLERK_JWKS_URL` are not set | (none) | `clerk.igetdressed.online` |
 | `CLERK_JWKS_URL` | JWKS URL (optional override if not using issuer) | (derived) | `https://your-clerk-issuer/.well-known/jwks.json` |
 | `CLERK_AUDIENCE` | Optional JWT audience check for Clerk tokens | (none) | `your-audience` |
 | `CLERK_JWKS_CACHE_SECONDS` | JWKS cache TTL in seconds | `300` | `600` |

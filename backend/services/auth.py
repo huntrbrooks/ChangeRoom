@@ -31,6 +31,15 @@ def _get_bearer_token(request: Request) -> Optional[str]:
     return None
 
 
+def _normalize_https_origin(value: str) -> str:
+    normalized = (value or "").strip().rstrip("/")
+    if not normalized:
+        return ""
+    if normalized.startswith(("https://", "http://")):
+        return normalized
+    return f"https://{normalized}"
+
+
 def _is_valid_api_key(token: str) -> bool:
     expected = (os.getenv("BACKEND_API_KEY") or "").strip()
     return bool(expected) and hmac.compare_digest(token, expected)
@@ -43,7 +52,22 @@ def _get_jwks_url() -> str:
     issuer = (os.getenv("CLERK_ISSUER") or "").strip().rstrip("/")
     if issuer:
         return f"{issuer}/.well-known/jwks.json"
+    frontend_api = _normalize_https_origin(
+        os.getenv("CLERK_FRONTEND_API") or os.getenv("NEXT_PUBLIC_CLERK_FRONTEND_API") or ""
+    )
+    if frontend_api:
+        return f"{frontend_api}/.well-known/jwks.json"
     return ""
+
+
+def _get_clerk_issuer() -> Optional[str]:
+    issuer = _normalize_https_origin(os.getenv("CLERK_ISSUER") or "")
+    if issuer:
+        return issuer
+    frontend_api = _normalize_https_origin(
+        os.getenv("CLERK_FRONTEND_API") or os.getenv("NEXT_PUBLIC_CLERK_FRONTEND_API") or ""
+    )
+    return frontend_api or None
 
 
 async def _fetch_jwks() -> List[Dict[str, Any]]:
@@ -81,7 +105,7 @@ async def _verify_clerk_token(token: str) -> Dict[str, Any]:
     if not key:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    issuer = (os.getenv("CLERK_ISSUER") or "").strip() or None
+    issuer = _get_clerk_issuer()
     audience = (os.getenv("CLERK_AUDIENCE") or "").strip() or None
     options = {"verify_aud": bool(audience)}
 

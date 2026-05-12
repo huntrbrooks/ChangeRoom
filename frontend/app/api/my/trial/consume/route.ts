@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
+import { getUserPrimaryEmail, isBypassUser } from "@/lib/bypass-config";
 
 /**
  * POST /api/my/trial/consume
@@ -13,6 +14,38 @@ export async function POST(_req: NextRequest) {
   }
 
   try {
+    let userEmail: string | null = null;
+    try {
+      const user = await currentUser();
+      userEmail = getUserPrimaryEmail(user);
+      if (user) {
+        const { upsertUserProfileFromClerk } = await import("@/lib/db-access");
+        await upsertUserProfileFromClerk({
+          userId,
+          email: userEmail,
+          firstName: user.firstName || null,
+          lastName: user.lastName || null,
+          imageUrl: user.imageUrl || null,
+          clerkCreatedAt: user.createdAt || null,
+        });
+      }
+    } catch (profileErr) {
+      console.warn("trial consume: failed to sync Clerk user profile", profileErr);
+    }
+
+    if (isBypassUser(userEmail)) {
+      const { getEffectiveUserBilling } = await import("@/lib/db-access");
+      const { billing } = await getEffectiveUserBilling(userId, userEmail);
+      return NextResponse.json({
+        plan: billing.plan,
+        creditsAvailable: billing.credits_available,
+        creditsRefreshAt: billing.credits_refresh_at,
+        trialsRemaining: billing.trials_remaining,
+        unlimitedCredits: true,
+        bypass: true,
+      });
+    }
+
     const { markFreeTrialUsed } = await import("@/lib/db-access");
     const billing = await markFreeTrialUsed(userId);
     return NextResponse.json({
@@ -43,4 +76,3 @@ export async function POST(_req: NextRequest) {
     }
   }
 }
-

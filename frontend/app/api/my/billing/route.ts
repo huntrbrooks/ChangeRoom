@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getUserPrimaryEmail } from "@/lib/bypass-config";
 
 /**
  * GET /api/my/billing
@@ -9,8 +10,9 @@ export async function GET() {
   // We dynamically import Clerk + DB helpers so misconfigured env vars don't crash
   // the module at import time (which shows up as an empty 500 in the browser).
   let auth: typeof import("@clerk/nextjs/server").auth;
+  let currentUser: typeof import("@clerk/nextjs/server").currentUser;
   try {
-    ({ auth } = await import("@clerk/nextjs/server"));
+    ({ auth, currentUser } = await import("@clerk/nextjs/server"));
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("billing: failed to import @clerk/nextjs/server", err);
@@ -45,11 +47,34 @@ export async function GET() {
   }
 
   try {
-    const { getOrCreateUserBilling, hasPaidCreditGrant } = await import(
+    const {
+      getEffectiveUserBilling,
+      hasPaidCreditGrant,
+      upsertUserProfileFromClerk,
+    } = await import(
       "@/lib/db-access"
     );
-    const billing = await getOrCreateUserBilling(userId);
+    let userEmail: string | null = null;
+    try {
+      const user = await currentUser();
+      userEmail = getUserPrimaryEmail(user);
+      if (user) {
+        await upsertUserProfileFromClerk({
+          userId,
+          email: userEmail,
+          firstName: user.firstName || null,
+          lastName: user.lastName || null,
+          imageUrl: user.imageUrl || null,
+          clerkCreatedAt: user.createdAt || null,
+        });
+      }
+    } catch (profileErr) {
+      console.warn("billing: failed to sync current Clerk user profile", profileErr);
+    }
+
+    const { billing, isPrivileged } = await getEffectiveUserBilling(userId, userEmail);
     const hasPurchase =
+      isPrivileged ||
       billing.plan !== "free" ||
       Boolean(billing.stripe_subscription_id) ||
       (await hasPaidCreditGrant(userId));
@@ -59,6 +84,8 @@ export async function GET() {
       creditsRefreshAt: billing.credits_refresh_at,
       trialsRemaining: billing.trials_remaining,
       hasPurchase,
+      unlimitedCredits: isPrivileged,
+      isPrivileged,
     });
   } catch (err: unknown) {
     console.error("get billing error:", err);

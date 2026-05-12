@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import type { ClothingItemMetadata } from "@/lib/db-access";
+import { getUserPrimaryEmail } from "@/lib/bypass-config";
 
 const toIsoString = (value: unknown): string => {
   if (value instanceof Date) {
@@ -55,11 +56,35 @@ export async function GET(_req: NextRequest) {
   }
 
   try {
-    const { getUserOutfits, getOrCreateUserBilling, hasPaidCreditGrant } = await import(
+    const {
+      getEffectiveUserBilling,
+      getUserOutfits,
+      hasPaidCreditGrant,
+      upsertUserProfileFromClerk,
+    } = await import(
       "@/lib/db-access"
     );
-    const billing = await getOrCreateUserBilling(userId);
-    const hasPurchase = billing.plan !== "free" || (await hasPaidCreditGrant(userId));
+    let userEmail: string | null = null;
+    try {
+      const user = await currentUser();
+      userEmail = getUserPrimaryEmail(user);
+      if (user) {
+        await upsertUserProfileFromClerk({
+          userId,
+          email: userEmail,
+          firstName: user.firstName || null,
+          lastName: user.lastName || null,
+          imageUrl: user.imageUrl || null,
+          clerkCreatedAt: user.createdAt || null,
+        });
+      }
+    } catch (profileErr) {
+      console.warn("outfits: failed to sync Clerk user profile", profileErr);
+    }
+
+    const { billing, isPrivileged } = await getEffectiveUserBilling(userId, userEmail);
+    const hasPurchase =
+      isPrivileged || billing.plan !== "free" || (await hasPaidCreditGrant(userId));
     // Gate access until a purchase/paid grant exists (credits alone not sufficient)
     if (!hasPurchase) {
       return NextResponse.json({
@@ -153,6 +178,5 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-
 
 

@@ -1,19 +1,9 @@
 import { SignUp } from '@clerk/nextjs';
 import Link from 'next/link';
-
-const hasUsableClerkKey = () => {
-  const key = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim();
-  return Boolean(
-    key &&
-      key.startsWith('pk_') &&
-      key.length >= 20 &&
-      key.length <= 200 &&
-      /^pk_[a-zA-Z0-9_\-=.]+$/.test(key)
-  );
-};
+import { hasUsableClerkPublishableKey } from '@/lib/clerk-public-config';
 
 export default function SignUpPage() {
-  if (!hasUsableClerkKey()) {
+  if (!hasUsableClerkPublishableKey()) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50 px-4">
         <div className="w-full max-w-md rounded-lg bg-white p-6 text-center shadow-lg">

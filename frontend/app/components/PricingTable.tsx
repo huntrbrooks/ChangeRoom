@@ -9,6 +9,7 @@ import { trackProductView, trackFeatureClick, trackCheckoutInitiated } from '@/l
 import { ANALYTICS_EVENTS, captureEvent } from '@/lib/analytics';
 import { stripePublicConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
+import { hasUsableClerkPublishableKey } from '@/lib/clerk-public-config';
 
 interface PricingTableProps {
   currentPlan?: PlanType;
@@ -19,16 +20,7 @@ interface PricingTableProps {
 
 type PricingUser = ReturnType<typeof useUser>['user'];
 
-const hasUsableClerkKey = () => {
-  const key = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim();
-  return Boolean(
-    key &&
-      key.startsWith('pk_') &&
-      key.length >= 20 &&
-      key.length <= 200 &&
-      /^pk_[a-zA-Z0-9_\-=.]+$/.test(key)
-  );
-};
+const hasUsableClerkKey = hasUsableClerkPublishableKey;
 
 export function PricingTable({
   currentPlan,

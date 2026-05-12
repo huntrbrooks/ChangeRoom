@@ -40,7 +40,8 @@ import {
   ZoomIn,
 } from 'lucide-react';
 import { getWearingStylePromptText } from '@/lib/wearingStyles';
-import { isBypassUser } from '@/lib/bypass-config';
+import { getUserPrimaryEmail, isBypassUser } from '@/lib/bypass-config';
+import { hasUsableClerkPublishableKey } from '@/lib/clerk-public-config';
 import { ensureAbsoluteUrl } from '@/lib/url';
 import { resolveBackendApiUrl } from '@/lib/backend-url';
 import { probeBackendHealth } from '@/lib/backendHealth';
@@ -69,6 +70,8 @@ interface BillingInfo {
   creditsRefreshAt: Date | null;
   trialsRemaining: number;
   hasPurchase?: boolean;
+  unlimitedCredits?: boolean;
+  isPrivileged?: boolean;
 }
 
 type BackendAvailability = 'checking' | 'healthy' | 'unavailable';
@@ -83,16 +86,7 @@ interface HomeAuthState {
   isAuthLoaded: boolean;
 }
 
-const hasUsableClerkKey = () => {
-  const key = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.trim();
-  return Boolean(
-    key &&
-      key.startsWith('pk_') &&
-      key.length >= 20 &&
-      key.length <= 200 &&
-      /^pk_[a-zA-Z0-9_\-=.]+$/.test(key)
-  );
-};
+const hasUsableClerkKey = hasUsableClerkPublishableKey;
 
 const formatCurrency = (value?: number | null, currency?: string | null) => {
   if (typeof value !== 'number' || Number.isNaN(value)) {
@@ -474,6 +468,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       setBilling({
         ...response.data,
         hasPurchase: Boolean(response.data?.hasPurchase),
+        unlimitedCredits: Boolean(response.data?.unlimitedCredits),
+        isPrivileged: Boolean(response.data?.isPrivileged),
       });
       setBillingStatus('ready');
     } catch (error: unknown) {
@@ -579,8 +575,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
 
   // Check if user email is in bypass list
-  const userEmail = user?.emailAddresses?.[0]?.emailAddress;
-  const isBypass = isBypassUser(userEmail);
+  const userEmail = getUserPrimaryEmail(user);
+  const isBypass = isBypassUser(userEmail) || Boolean(billing?.unlimitedCredits);
   const redirectToPricing = useCallback(() => {
     router.push('/pricing?promo=xmas');
   }, [router]);
@@ -588,7 +584,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const isOnTrial = billing && (billing.trialsRemaining ?? 0) > 0 && !isBypass;
   const isAuthenticated = isAuthLoaded ? Boolean(isSignedIn) : isLoaded && !!user;
   const isGuestPitchDemo = pitchDemoEnabled && !isAuthenticated;
-  const hasCreditsAvailable = billing ? billing.creditsAvailable > 0 : false;
+  const hasCreditsAvailable = billing ? billing.unlimitedCredits || billing.creditsAvailable > 0 : false;
   const billingBannerState = getBillingBannerState({
     isAuthenticated,
     billing,
@@ -1697,7 +1693,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     }
 
     // Show paywall if credits are low (3 or less) and not on trial
-    if (!isOnTrial && billing && billing.creditsAvailable <= 3 && billing.creditsAvailable > 0) {
+    if (!isBypass && !isOnTrial && billing && billing.creditsAvailable <= 3 && billing.creditsAvailable > 0) {
       const proceed = window.confirm(
         `You have ${billing.creditsAvailable} credit${billing.creditsAvailable !== 1 ? 's' : ''} remaining. Continue?`
       );
@@ -1754,6 +1750,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     let preparedTryOnFiles: File[] = [];
 
     let requestId: string | null = null;
+    let usedFreeTrialForRequest = false;
 
     try {
       const ingestUrl = process.env.NEXT_PUBLIC_INGEST_URL;
@@ -1864,14 +1861,25 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             { requestId, quality: 'standard' },
             { headers: { ...(requestId ? { 'X-Request-Id': requestId } : {}) } }
           );
-          creditHoldAppliedRef.current = true;
+          creditHoldAppliedRef.current = Boolean(holdRes?.data?.creditHoldApplied);
           const creditsAvailable = holdRes?.data?.creditsAvailable;
           const usedFreeTrial = Boolean(holdRes?.data?.usedFreeTrial);
+          const unlimitedCredits = Boolean(holdRes?.data?.unlimitedCredits);
+          usedFreeTrialForRequest = usedFreeTrial;
           setIsPreviewResult(usedFreeTrial);
           if (typeof creditsAvailable === 'number') {
-            setBilling((prev) => (prev ? { ...prev, creditsAvailable } : prev));
+            setBilling((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    creditsAvailable,
+                    unlimitedCredits: prev.unlimitedCredits || unlimitedCredits,
+                    isPrivileged: prev.isPrivileged || unlimitedCredits,
+                  }
+                : prev
+            );
           }
-          if (usedFreeTrial && billing) {
+          if (usedFreeTrial && billing && !isBypass) {
             setBilling((prev) => (prev ? { ...prev, trialsRemaining: Math.max(0, prev.trialsRemaining - 1) } : prev));
           }
         } catch (holdErr: unknown) {
@@ -2131,7 +2139,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           }
           
           // Mark trial as used if backend reported free trial consumption (idempotent)
-          if (tryOnRes?.data?.usedFreeTrial || (billing && billing.trialsRemaining > 0)) {
+          if (!isBypass && (usedFreeTrialForRequest || Boolean(tryOnRes?.data?.usedFreeTrial))) {
             try {
               await httpClient.post('/api/my/trial/consume');
           trialConsumedRef.current = true;
@@ -2228,7 +2236,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             setError(
               "Your try-on was blocked by content safety filters (after automatic retries). " +
                 "Please choose a more modest item or adjust the clothing description. " +
-                "Warning: if your next attempt is blocked again for the same reason, 1 credit will be deducted."
+                (isBypass
+                  ? "Your account will not be charged credits for retrying."
+                  : "Warning: if your next attempt is blocked again for the same reason, 1 credit will be deducted.")
             );
             setIsTryOnLoading(false);
             setIsGenerating(false);
@@ -2238,8 +2248,10 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
           // Second (or later) blocked attempt after warning: apply 1-credit penalty (idempotent by requestId).
           try {
-            if (requestId) {
+            let charged = false;
+            if (!isBypass && requestId) {
               const penaltyRes = await httpClient.post('/api/my/credits/content-block-penalty', { requestId });
+              charged = Boolean(penaltyRes?.data?.charged);
               const creditsAvailable = penaltyRes?.data?.creditsAvailable;
               if (typeof creditsAvailable === 'number') {
                 setBilling((prev) => (prev ? { ...prev, creditsAvailable } : prev));
@@ -2250,7 +2262,10 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             }
             setError(
               "Your try-on was blocked again by content safety filters. " +
-                "1 credit has been deducted. Please choose a different (more modest) item or adjust the description and try again."
+                (charged
+                  ? "1 credit has been deducted. "
+                  : "No credits were deducted. ") +
+                "Please choose a different (more modest) item or adjust the description and try again."
             );
           } catch (penaltyErr: unknown) {
             const pErr = penaltyErr as { response?: { status?: number; data?: { error?: string } } };

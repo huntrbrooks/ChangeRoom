@@ -1,6 +1,7 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse, type NextRequest, type NextMiddleware, type NextFetchEvent } from 'next/server';
 import { buildCanonicalUrl, shouldRedirectToCanonicalHost } from '@/lib/domainRouting';
+import { isUsableClerkPublishableKey } from '@/lib/clerk-public-config';
 
 // Define public routes that don't require authentication
 const isPublicRoute = createRouteMatcher([
@@ -25,17 +26,12 @@ function hasClerkKeys(): boolean {
   const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   const secretKey = process.env.CLERK_SECRET_KEY;
 
-  const hasPublishableKey =
-    publishableKey &&
-    publishableKey.trim().startsWith('pk_') &&
-    publishableKey.trim().length > 10;
-
   const hasSecretKey =
     secretKey &&
     secretKey.trim().startsWith('sk_') &&
     secretKey.trim().length > 10;
 
-  return !!(hasPublishableKey && hasSecretKey);
+  return !!(isUsableClerkPublishableKey(publishableKey) && hasSecretKey);
 }
 
 // Fallback handler when Clerk is not configured

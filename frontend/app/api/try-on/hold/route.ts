@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { randomUUID } from "crypto";
-import { isBypassUser } from "@/lib/bypass-config";
+import { getUserPrimaryEmail, isBypassUser } from "@/lib/bypass-config";
 import { logger } from "@/lib/logger";
 import { z } from "zod";
 
@@ -63,7 +63,14 @@ export async function POST(req: NextRequest) {
   let usedFreeTrial = false;
 
   try {
-    const { createCreditHold, getOrCreateUserBilling, markFreeTrialUsed } =
+    const {
+      createCreditHold,
+      getEffectiveUserBilling,
+      getOrCreateUserBilling,
+      isPrivilegedUserId,
+      markFreeTrialUsed,
+      upsertUserProfileFromClerk,
+    } =
       await import("@/lib/db-access");
 
     const reqHeaderId =
@@ -114,10 +121,20 @@ export async function POST(req: NextRequest) {
     let isVerifiedEmail = false;
     try {
       const user = await currentUser();
-      userEmail = user?.emailAddresses?.[0]?.emailAddress || null;
+      userEmail = getUserPrimaryEmail(user);
       isVerifiedEmail =
         user?.emailAddresses?.some((e) => e.verification?.status === "verified") ||
         false;
+      if (user) {
+        await upsertUserProfileFromClerk({
+          userId,
+          email: userEmail,
+          firstName: user.firstName || null,
+          lastName: user.lastName || null,
+          imageUrl: user.imageUrl || null,
+          clerkCreatedAt: user.createdAt || null,
+        });
+      }
     } catch (err: unknown) {
       // Log but don't fail - email is only needed for bypass check
       const errMessage = err instanceof Error ? err.message : String(err);
@@ -125,7 +142,8 @@ export async function POST(req: NextRequest) {
         error: errMessage,
       });
     }
-    const shouldBypassPayment = isBypassUser(userEmail);
+    const shouldBypassPayment =
+      isBypassUser(userEmail) || (await isPrivilegedUserId(userId));
 
     const creditCost = quality === "hd" ? 2 : 1;
 
@@ -149,7 +167,7 @@ export async function POST(req: NextRequest) {
       }
       throw enhancedError;
     }
-    if (billing.is_frozen) {
+    if (!shouldBypassPayment && billing.is_frozen) {
       return NextResponse.json(
         {
           error: "account_frozen",
@@ -169,6 +187,8 @@ export async function POST(req: NextRequest) {
         requestId: currentRequestId,
         usedFreeTrial,
         creditsAvailable: billing.credits_available,
+        creditHoldApplied: false,
+        billingMode: "free_trial",
       });
       res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
       res.headers.set("X-Request-Id", currentRequestId);
@@ -177,12 +197,16 @@ export async function POST(req: NextRequest) {
     }
 
     if (shouldBypassPayment) {
+      const effectiveBilling = (await getEffectiveUserBilling(userId, userEmail)).billing;
       const res = NextResponse.json({
         ok: true,
         requestId: currentRequestId,
         usedFreeTrial,
-        creditsAvailable: billing.credits_available,
+        creditsAvailable: effectiveBilling.credits_available,
+        unlimitedCredits: true,
         bypass: true,
+        creditHoldApplied: false,
+        billingMode: "bypass",
       });
       res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
       res.headers.set("X-Request-Id", currentRequestId);
@@ -205,6 +229,8 @@ export async function POST(req: NextRequest) {
         requestId: currentRequestId,
         usedFreeTrial,
         creditsAvailable: holdResult.billing.credits_available,
+        creditHoldApplied: true,
+        billingMode: "credits",
       });
       res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
       res.headers.set("X-Request-Id", currentRequestId);

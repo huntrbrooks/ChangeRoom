@@ -18,6 +18,8 @@ interface BillingInfo {
   creditsAvailable: number;
   creditsRefreshAt: Date | null;
   trialsRemaining: number;
+  unlimitedCredits?: boolean;
+  isPrivileged?: boolean;
 }
 
 function BillingPageContent() {
@@ -72,7 +74,8 @@ function BillingPageContent() {
     return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   };
 
-  const isOnTrial = billing && billing.trialsRemaining > 0 ? true : false;
+  const isUnlimited = Boolean(billing?.unlimitedCredits || billing?.isPrivileged);
+  const isOnTrial = billing && billing.trialsRemaining > 0 && !isUnlimited ? true : false;
 
   if (!isLoaded) {
     return (
@@ -133,7 +136,14 @@ function BillingPageContent() {
             <div>
               <h2 className="text-2xl font-bold mb-2">Current Plan</h2>
               <div className="flex items-center gap-3">
-                <span className="text-4xl font-bold capitalize">{billing?.plan || 'Free'}</span>
+                <span className="text-4xl font-bold capitalize">
+                  {isUnlimited ? 'Unlimited' : billing?.plan || 'Free'}
+                </span>
+                {isUnlimited && (
+                  <span className="bg-emerald-100 text-emerald-700 text-sm font-semibold px-3 py-1 rounded-full">
+                    Full Access
+                  </span>
+                )}
                 {isOnTrial && (
                   <span className="bg-blue-100 text-blue-700 text-sm font-semibold px-3 py-1 rounded-full">
                     Free Try-On Available
@@ -141,7 +151,7 @@ function BillingPageContent() {
                 )}
               </div>
             </div>
-            {billing?.plan !== 'free' && (
+            {billing?.plan !== 'free' && !isUnlimited && (
               <button
                 onClick={handleManageSubscription}
                 disabled={portalLoading}
@@ -156,14 +166,18 @@ function BillingPageContent() {
           <div className="grid grid-cols-2 gap-4 mt-4">
             <div>
               <p className="text-sm text-gray-600 mb-1">Credits Available</p>
-              <p className="text-2xl font-bold">{billing?.creditsAvailable || 0}</p>
+              <p className="text-2xl font-bold">
+                {isUnlimited ? 'Unlimited' : billing?.creditsAvailable || 0}
+              </p>
             </div>
             <div>
               <p className="text-sm text-gray-600 mb-1">
-                {billing?.plan !== 'free' ? 'Credits Refresh' : 'Status'}
+                {isUnlimited ? 'Status' : billing?.plan !== 'free' ? 'Credits Refresh' : 'Status'}
               </p>
               <p className="text-lg font-semibold">
-                {billing?.creditsRefreshAt 
+                {isUnlimited
+                  ? 'Unlimited platform access'
+                  : billing?.creditsRefreshAt
                   ? formatDate(billing.creditsRefreshAt)
                   : isOnTrial ? 'Free Try-On Available' : 'No refresh'}
               </p>
@@ -172,7 +186,7 @@ function BillingPageContent() {
         </div>
 
         {/* Upgrade Options */}
-        {billing?.plan === 'free' && (
+        {billing?.plan === 'free' && !isUnlimited && (
           <div className="mb-8">
             <h3 className="text-xl font-bold mb-4">Upgrade Your Plan</h3>
             <div className="grid md:grid-cols-2 gap-6">
@@ -245,7 +259,7 @@ function BillingPageContent() {
         )}
 
         {/* Credit Packs */}
-        <div className="mb-8">
+        {!isUnlimited && <div className="mb-8">
           <h3 className="text-xl font-bold mb-4">Buy Credits</h3>
           <div className="grid md:grid-cols-2 gap-4">
             <div className="border border-gray-200 rounded-lg p-5 hover:border-blue-500 transition-colors">
@@ -280,13 +294,13 @@ function BillingPageContent() {
               </Link>
             </div>
           </div>
-        </div>
+        </div>}
 
         {/* Info Section */}
         <div className="bg-gray-50 rounded-lg p-6">
           <h3 className="text-lg font-semibold mb-3">How It Works</h3>
           <ul className="space-y-2 text-sm text-gray-600">
-            <li>• Each try-on uses 1 credit</li>
+            <li>• {isUnlimited ? 'Your account is not charged credits for try-ons' : 'Each try-on uses 1 credit'}</li>
             <li>• Subscription plans refresh credits monthly</li>
             <li>• Credit packs are added to your balance immediately</li>
             <li>• New users get 2 free try-ons to test the service</li>

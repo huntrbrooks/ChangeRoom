@@ -16,6 +16,7 @@ import { PageViewTracker } from "./components/PageViewTracker";
 import Link from "next/link";
 import { CANONICAL_ORIGIN } from "@/lib/domainRouting";
 import { getAllowedRedirectOrigins } from "@/lib/clerkAuthConfig";
+import { getClerkPublishableKey } from "@/lib/clerk-public-config";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -71,40 +72,15 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // During build, Clerk keys might not be available or invalid
-  const rawKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   const _isBuildTime = process.env.NODE_ENV === 'production' && !process.env.VERCEL_ENV;
-  
-  // Clean and validate key - remove quotes, whitespace, and validate format
-  // Handle cases where key might be wrapped in quotes or have trailing characters
-  let publishableKey: string | undefined;
-  if (rawKey) {
-    // Remove any surrounding quotes and trim whitespace
-    publishableKey = rawKey.trim().replace(/^['"]+|['"]+$/g, '').trim();
-    // Remove any trailing invalid characters (like quotes, truncated keys)
-    publishableKey = publishableKey.replace(/['"]/g, '').trim();
-    // Remove any trailing characters that look like corruption (e.g., "JA" at the end)
-    // Clerk keys should end with base64-like characters, not random letters
-    publishableKey = publishableKey.replace(/[^a-zA-Z0-9_\-=.]$/, '').trim();
-  }
-  
-  // Validate key format - must start with pk_, be at least 20 chars, and match Clerk key pattern
-  // Clerk keys are base64-like strings, so they contain letters, numbers, underscores, dashes, equals, and dots
-  // Valid format: pk_test_... or pk_live_... followed by base64-like string
-  const hasValidKey = publishableKey && 
-    publishableKey.startsWith('pk_') && 
-    publishableKey.length >= 20 &&
-    publishableKey.length <= 200 && // Reasonable max length
-    !publishableKey.includes('"') && // No quotes anywhere (quotes indicate malformed env var)
-    !publishableKey.includes("'") && // No single quotes anywhere
-    /^pk_[a-zA-Z0-9_\-=.]+$/.test(publishableKey); // Allow dots, equals for base64 padding
+  const publishableKey = getClerkPublishableKey();
   
   const statusMessage = process.env.NEXT_PUBLIC_STATUS_BANNER;
   const allowedRedirectOrigins = getAllowedRedirectOrigins();
 
   // If key is invalid or missing, skip ClerkProvider entirely (especially during build)
   // This prevents build failures from invalid Clerk keys
-  if (!hasValidKey || !publishableKey) {
+  if (!publishableKey) {
     return (
       <html lang="en">
         <head>
