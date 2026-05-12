@@ -8,6 +8,7 @@ const isPublicRoute = createRouteMatcher([
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/api/webhooks/stripe(.*)',
+  '/api/webhooks/clerk(.*)',
   '/how-it-works',
   '/about',
   '/pricing',
@@ -38,13 +39,25 @@ function hasClerkKeys(): boolean {
 }
 
 // Fallback handler when Clerk is not configured
-function fallbackHandler(_req: NextRequest) {
+function fallbackHandler(req: NextRequest) {
   if (process.env.NODE_ENV === 'development') {
     console.warn(
       '⚠️  Clerk keys not found. Running without authentication. Set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY to enable auth.'
     );
+    return NextResponse.next();
   }
-  return NextResponse.next();
+
+  if (isPublicRoute(req)) {
+    return NextResponse.next();
+  }
+
+  return NextResponse.json(
+    {
+      error: 'auth_unconfigured',
+      message: 'Authentication is not configured for this deployment.',
+    },
+    { status: 503 }
+  );
 }
 
 // Create Clerk middleware with error handling
@@ -53,12 +66,8 @@ let clerkAuthMiddleware: NextMiddleware | null = null;
 try {
   if (hasClerkKeys()) {
     clerkAuthMiddleware = clerkMiddleware(async (auth, req) => {
-      try {
-        if (!isPublicRoute(req)) {
-          await auth.protect();
-        }
-      } catch (error) {
-        console.error('Proxy auth error:', error);
+      if (!isPublicRoute(req)) {
+        await auth.protect();
       }
     });
   }
@@ -81,25 +90,13 @@ export default function proxy(req: NextRequest, event?: NextFetchEvent) {
   }
 
   if (clerkAuthMiddleware) {
-    try {
-      const fetchEvent =
-        event ??
-        ({
-          waitUntil: () => {},
-        } as unknown as NextFetchEvent);
+    const fetchEvent =
+      event ??
+      ({
+        waitUntil: () => {},
+      } as unknown as NextFetchEvent);
 
-      const result = clerkAuthMiddleware(req, fetchEvent);
-      if (result instanceof Promise) {
-        return result.catch((error) => {
-          console.error('Clerk proxy execution error:', error);
-          return fallbackHandler(req);
-        });
-      }
-      return result;
-    } catch (error) {
-      console.error('Clerk proxy execution error:', error);
-      return fallbackHandler(req);
-    }
+    return clerkAuthMiddleware(req, fetchEvent);
   }
 
   return fallbackHandler(req);

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 
 /**
  * POST /api/webhooks/n8n
@@ -36,7 +37,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Log the webhook event for analytics
-    console.log('[n8n-webhook]', {
+    logger.info('n8n_webhook_received', {
       event,
       userId,
       email: email?.slice(0, 3) + '***', // Mask email for logs
@@ -48,27 +49,27 @@ export async function POST(request: NextRequest) {
     switch (event) {
       case 'welcome_email_sent':
         // Could update user metadata or trigger analytics
-        console.log(`[n8n] Welcome email sent to user ${userId || email}`);
+        logger.info('n8n_welcome_email_sent', { userId, hasEmail: Boolean(email) });
         break;
 
       case 'trial_reminder_sent':
-        console.log(`[n8n] Trial reminder sent to user ${userId || email}`);
+        logger.info('n8n_trial_reminder_sent', { userId, hasEmail: Boolean(email) });
         break;
 
       case 'conversion_email_sent':
-        console.log(`[n8n] Conversion email sent to user ${userId || email}`);
+        logger.info('n8n_conversion_email_sent', { userId, hasEmail: Boolean(email) });
         break;
 
       case 'abandoned_cart_reminder':
-        console.log(`[n8n] Abandoned cart reminder sent to user ${userId || email}`);
+        logger.info('n8n_abandoned_cart_reminder_sent', { userId, hasEmail: Boolean(email) });
         break;
 
       case 'review_request_sent':
-        console.log(`[n8n] Review request sent to user ${userId || email}`);
+        logger.info('n8n_review_request_sent', { userId, hasEmail: Boolean(email) });
         break;
 
       default:
-        console.log(`[n8n] Unknown event: ${event}`);
+        logger.info('n8n_event_unknown', { event });
     }
 
     return NextResponse.json({
@@ -98,4 +99,3 @@ export async function GET() {
     ],
   });
 }
-

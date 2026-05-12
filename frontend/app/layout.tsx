@@ -12,6 +12,7 @@ import PwaRegister from "./components/PwaRegister";
 import { PostHogClientProvider } from "./providers/PostHogProvider";
 import { AnalyticsUserSync } from "./components/AnalyticsUserSync";
 import { GlobalErrorGuards } from "./components/GlobalErrorGuards";
+import { PageViewTracker } from "./components/PageViewTracker";
 import Link from "next/link";
 import { CANONICAL_ORIGIN } from "@/lib/domainRouting";
 import { getAllowedRedirectOrigins } from "@/lib/clerkAuthConfig";
@@ -114,6 +115,7 @@ export default async function RootLayout({
           <PwaRegister />
           <GlobalErrorGuards />
           <PostHogClientProvider>
+            <PageViewTracker />
             {statusMessage && (
               <div className="w-full bg-yellow-300 text-black text-center py-2 text-sm font-semibold border-b border-yellow-700">
                 {statusMessage}
@@ -162,6 +164,7 @@ export default async function RootLayout({
           <GlobalErrorGuards />
           <PostHogClientProvider>
             <AnalyticsUserSync />
+            <PageViewTracker />
             {statusMessage && (
               <div className="w-full bg-yellow-300 text-black text-center py-2 text-sm font-semibold border-b border-yellow-700">
                 {statusMessage}

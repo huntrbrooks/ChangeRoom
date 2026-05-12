@@ -3,6 +3,8 @@
  * Track user interactions with products, features, and pricing
  */
 
+import { logger } from "./logger";
+
 // Type for user from useUser() hook - matches what we actually use
 type ClerkUser = {
   id: string;
@@ -47,7 +49,11 @@ export async function trackUserEvent(
 
     // Log to console in development
     if (process.env.NODE_ENV === 'development') {
-      console.log('📊 User Tracking:', trackingData);
+      logger.info('user_tracking_event', {
+        event: trackingData.event,
+        userId: trackingData.userId,
+        metadata: trackingData.metadata,
+      });
     }
 
     // In production, you can send this to:
@@ -142,4 +148,3 @@ export async function trackTrialStarted(
     plan,
   });
 }
-

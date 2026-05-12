@@ -3,11 +3,12 @@ import { auth } from "@clerk/nextjs/server";
 import Stripe from "stripe";
 import { stripeConfig, appConfig } from "@/lib/config";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { logger } from "@/lib/logger";
 
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
 function getStripe() {
   return new Stripe(stripeConfig.secretKey, {
-    apiVersion: "2025-03-31.basil",
+    apiVersion: "2026-02-25.clover" as Stripe.LatestApiVersion,
   });
 }
 
@@ -22,7 +23,7 @@ export async function POST(_req: NextRequest) {
       ({ userId } = await auth());
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error("billing-portal: auth() failed", err);
+      logger.error("billing_portal_auth_failed", { error: err });
       return NextResponse.json(
         {
           error: "auth_failed",
@@ -67,7 +68,7 @@ export async function POST(_req: NextRequest) {
 
     return NextResponse.json({ url: session.url });
   } catch (err: unknown) {
-    console.error("billing-portal error:", err);
+    logger.error("billing_portal_failed", { error: err });
     const error = err instanceof Error ? err : new Error(String(err));
     return NextResponse.json(
       {
@@ -78,4 +79,3 @@ export async function POST(_req: NextRequest) {
     );
   }
 }
-

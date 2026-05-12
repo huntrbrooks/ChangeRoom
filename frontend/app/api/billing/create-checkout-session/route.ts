@@ -1,13 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import Stripe from "stripe";
+import { z } from "zod";
 import { stripeConfig, appConfig } from "@/lib/config";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { logger } from "@/lib/logger";
+
+const checkoutRequestSchema = z.object({
+  priceId: z.string().trim().regex(/^price_/, "Invalid price ID"),
+  mode: z.enum(["subscription", "payment"]),
+  startTrial: z.boolean().optional(),
+});
 
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
 function getStripe() {
   return new Stripe(stripeConfig.secretKey, {
-    apiVersion: "2025-03-31.basil",
+    apiVersion: "2026-02-25.clover" as Stripe.LatestApiVersion,
   });
 }
 
@@ -24,7 +32,7 @@ export async function POST(req: NextRequest) {
       ({ userId } = await auth());
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error("checkout-session: auth() failed", err);
+      logger.error("checkout_session_auth_failed", { error: err });
       return NextResponse.json(
         {
           error: "auth_failed",
@@ -39,7 +47,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { getOrCreateUserBilling, updateUserBillingPlan, isUserOnFreeTrial } = await import(
+    const { getOrCreateUserBilling, setStripeCustomerIdForUser, isUserOnFreeTrial } = await import(
       "@/lib/db-access"
     );
     const ip =
@@ -55,42 +63,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const body = await req.json();
-    const { priceId, mode, startTrial } = body as {
-      priceId: string;
-      mode: "subscription" | "payment";
-      startTrial?: boolean;
-    };
-
-    if (!priceId || !mode) {
+    const body = await req.json().catch(() => null);
+    const parsed = checkoutRequestSchema.safeParse(body);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "Missing priceId or mode" },
-        { status: 400 }
-      );
-    }
-
-    // Validate price ID is not empty and has correct format
-    if (!priceId.trim() || !priceId.startsWith("price_")) {
-      console.error("Invalid price ID:", priceId);
-      return NextResponse.json(
-        { 
-          error: "Invalid price ID. Please contact support if this issue persists.",
-          details: "Price ID is missing or incorrectly configured"
+        {
+          error: "invalid_request",
+          details: parsed.error.issues.map((issue) => ({
+            path: issue.path.join("."),
+            message: issue.message,
+          })),
         },
         { status: 400 }
       );
     }
-
-    if (mode !== "subscription" && mode !== "payment") {
-      return NextResponse.json(
-        { error: "mode must be 'subscription' or 'payment'" },
-        { status: 400 }
-      );
-    }
+    const { priceId, mode, startTrial } = parsed.data;
 
     // Validate Stripe configuration
     if (!stripeConfig.secretKey || !stripeConfig.secretKey.trim()) {
-      console.error("Stripe secret key is not configured");
+      logger.error("stripe_secret_key_missing");
       return NextResponse.json(
         { 
           error: "Payment system configuration error. Please contact support.",
@@ -102,7 +93,7 @@ export async function POST(req: NextRequest) {
 
     // Validate app URL for redirects
     if (!appConfig.appUrl || !appConfig.appUrl.startsWith("http")) {
-      console.error("Invalid app URL:", appConfig.appUrl);
+      logger.error("app_url_invalid", { appUrl: appConfig.appUrl });
       return NextResponse.json(
         { 
           error: "Configuration error. Please contact support.",
@@ -169,8 +160,8 @@ export async function POST(req: NextRequest) {
       });
       customerId = customer.id;
 
-      // Update billing record with customer ID
-      await updateUserBillingPlan(userId, billing.plan, customerId);
+      // Persist the customer ID without changing plan or credits.
+      await setStripeCustomerIdForUser(userId, customerId);
     }
 
     // Determine credit amount for one-time payments
@@ -230,10 +221,11 @@ export async function POST(req: NextRequest) {
       success_url: `${appConfig.appUrl}/?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appConfig.appUrl}/?canceled=true`,
       metadata: baseMetadata,
+      client_reference_id: userId,
     });
 
     if (!session.url) {
-      console.error("Stripe session created but no URL returned");
+      logger.error("stripe_checkout_session_missing_url", { sessionId: session.id });
       return NextResponse.json(
         {
           error: "Failed to create checkout session. Please try again.",
@@ -245,7 +237,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ url: session.url });
   } catch (err: unknown) {
-    console.error("create-checkout-session error:", err);
+    logger.error("create_checkout_session_failed", { error: err });
     const error = err instanceof Error ? err : new Error(String(err));
     
     // Provide more specific error messages for common Stripe errors
@@ -272,4 +264,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-

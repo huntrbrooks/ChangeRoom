@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
+import { logger } from '@/lib/logger';
 
 /**
  * POST /api/events/user
@@ -18,7 +19,7 @@ const N8N_WEBHOOK_URL = process.env.N8N_EVENTS_WEBHOOK_URL;
 
 async function notifyN8n(eventData: Record<string, unknown>) {
   if (!N8N_WEBHOOK_URL) {
-    console.log('[events] N8N_EVENTS_WEBHOOK_URL not configured, skipping notification');
+    logger.info('n8n_events_webhook_not_configured');
     return;
   }
 
@@ -61,8 +62,10 @@ export async function POST(request: NextRequest) {
       data: data || {},
     };
 
-    // Log locally
-    console.log('[user-event]', eventPayload);
+    logger.info('user_event_received', {
+      event,
+      userId,
+    });
 
     // Send to n8n for automation
     await notifyN8n(eventPayload);
@@ -76,4 +79,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

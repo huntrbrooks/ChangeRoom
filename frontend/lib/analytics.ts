@@ -48,10 +48,16 @@ export function captureEvent(
   posthog.capture(event, properties);
 }
 
+export function capturePageView(path: string, properties?: Record<string, unknown>): void {
+  captureEvent(ANALYTICS_EVENTS.PAGE_VIEW, {
+    path,
+    ...properties,
+  });
+}
+
 export function getDistinctId(): string | undefined {
   if (!initialized) return undefined;
   return posthog.get_distinct_id();
 }
 
 export { ANALYTICS_EVENTS };
-

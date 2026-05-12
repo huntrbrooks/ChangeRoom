@@ -1,5 +1,6 @@
 import os
 import time
+import hmac
 from typing import Any, Dict, List, Optional
 
 import logging
@@ -11,7 +12,8 @@ from jose import JWTError, jwt
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-_AUTH_MODE_VALUES = {"none", "off", "disabled", "clerk", "api_key"}
+_HYBRID_AUTH_MODES = {"clerk_or_api_key", "clerk+api_key", "hybrid"}
+_AUTH_MODE_VALUES = {"none", "off", "disabled", "clerk", "api_key", *_HYBRID_AUTH_MODES}
 
 _JWKS_CACHE: Dict[str, Any] = {"expires_at": 0.0, "keys": []}
 
@@ -29,6 +31,11 @@ def _get_bearer_token(request: Request) -> Optional[str]:
     return None
 
 
+def _is_valid_api_key(token: str) -> bool:
+    expected = (os.getenv("BACKEND_API_KEY") or "").strip()
+    return bool(expected) and hmac.compare_digest(token, expected)
+
+
 def _get_jwks_url() -> str:
     url = (os.getenv("CLERK_JWKS_URL") or "").strip()
     if url:
@@ -42,7 +49,9 @@ def _get_jwks_url() -> str:
 async def _fetch_jwks() -> List[Dict[str, Any]]:
     url = _get_jwks_url()
     if not url:
-        raise RuntimeError("CLERK_JWKS_URL or CLERK_ISSUER is required when BACKEND_AUTH_MODE=clerk")
+        raise RuntimeError(
+            "CLERK_JWKS_URL or CLERK_ISSUER is required when BACKEND_AUTH_MODE uses Clerk"
+        )
 
     cache_seconds = int(os.getenv("CLERK_JWKS_CACHE_SECONDS", "300"))
     now = time.time()
@@ -99,12 +108,17 @@ async def require_backend_auth(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     if mode == "api_key":
-        expected = (os.getenv("BACKEND_API_KEY") or "").strip()
-        if not expected or token != expected:
+        if not _is_valid_api_key(token):
             raise HTTPException(status_code=401, detail="Unauthorized")
         return
 
     if mode == "clerk":
+        await _verify_clerk_token(token)
+        return
+
+    if mode in _HYBRID_AUTH_MODES:
+        if _is_valid_api_key(token):
+            return
         await _verify_clerk_token(token)
         return
 

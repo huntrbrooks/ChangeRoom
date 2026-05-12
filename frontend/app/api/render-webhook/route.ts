@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { logger } from '@/lib/logger'
 
 const SHARED_SECRET = process.env.RENDER_WEBHOOK_SECRET
 
@@ -28,7 +29,7 @@ export async function POST(req: NextRequest) {
   const typed = body as { type?: string; event?: string; id?: string; event_id?: string }
   const eventType = typed?.type || typed?.event || 'unknown'
   const eventId = typed?.id || typed?.event_id || 'n/a'
-  console.log('Render webhook received', { eventType, eventId })
+  logger.info('render_webhook_received', { eventType, eventId })
 
   return NextResponse.json({ ok: true })
 }

@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { z } from 'zod';
+import { ANALYTICS_EVENTS, captureServerEvent } from '@/lib/server-analytics';
+import { logger } from '@/lib/logger';
+
+const selectionSchema = z.object({
+  clothingItemId: z.string().trim().min(1),
+  metadata: z.record(z.unknown()).optional(),
+});
 
 /**
- * Stub endpoint hit whenever a wardrobe item is selected in Shop & Save.
- * This allows the shopping service to react to user pick events (logging, analytics, prefetch, etc.).
+ * Endpoint hit whenever a wardrobe item is selected in Shop & Save.
+ * Records a structured feature-usage event without exposing private item data.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -23,29 +31,38 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
     }
 
-    const body = await req.json();
-    const { clothingItemId, metadata } = body ?? {};
-
-    if (!clothingItemId || typeof clothingItemId !== 'string') {
+    const body = await req.json().catch(() => null);
+    const parsed = selectionSchema.safeParse(body);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: 'clothingItemId is required' },
+        {
+          error: 'invalid_request',
+          details: parsed.error.issues.map((issue) => ({
+            path: issue.path.join('.'),
+            message: issue.message,
+          })),
+        },
         { status: 400 }
       );
     }
 
-    console.info('Shop selection registered', {
-      clothingItemId,
-      metadata,
+    await captureServerEvent(ANALYTICS_EVENTS.SHOP_SELECTION, {
+      clothing_item_id: parsed.data.clothingItemId,
+      metadata: parsed.data.metadata ?? {},
+    }, userId);
+
+    logger.info('shop_selection_registered', {
+      user_id: userId,
+      clothing_item_id: parsed.data.clothingItemId,
     });
 
     return NextResponse.json({ ok: true });
   } catch (error) {
-    console.error('Shop selection stub failed', error);
+    logger.error('shop_selection_failed', { error });
     return NextResponse.json(
       { error: 'Failed to capture selection event' },
       { status: 500 }
     );
   }
 }
-
 

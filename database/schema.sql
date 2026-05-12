@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS users_billing (
   stripe_customer_id TEXT,
   stripe_subscription_id TEXT,
   plan TEXT NOT NULL DEFAULT 'free',           -- free, standard, pro
-  credits_available INTEGER NOT NULL DEFAULT 10,
+  credits_available INTEGER NOT NULL DEFAULT 0,
   credits_refresh_at TIMESTAMPTZ,              -- When to refresh monthly credits
   trials_remaining INTEGER NOT NULL DEFAULT 2,  -- Number of free trial try-ons remaining (default 2)
   is_frozen BOOLEAN NOT NULL DEFAULT false,    -- Freeze generating when payments fail
@@ -74,6 +74,22 @@ CREATE TABLE IF NOT EXISTS users_billing (
 
 CREATE INDEX IF NOT EXISTS users_billing_stripe_customer_idx ON users_billing (stripe_customer_id);
 CREATE INDEX IF NOT EXISTS users_billing_plan_idx ON users_billing (plan);
+
+-- user_profiles: Clerk user metadata synced from verified Clerk webhooks
+CREATE TABLE IF NOT EXISTS user_profiles (
+  user_id TEXT PRIMARY KEY,                    -- Clerk userId
+  email TEXT,
+  first_name TEXT,
+  last_name TEXT,
+  image_url TEXT,
+  clerk_created_at TIMESTAMPTZ,
+  deleted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS user_profiles_email_idx ON user_profiles (email);
+CREATE INDEX IF NOT EXISTS user_profiles_deleted_at_idx ON user_profiles (deleted_at);
 
 -- credit_holds: Temporary reservations of credits tied to a requestId
 CREATE TABLE IF NOT EXISTS credit_holds (
@@ -110,4 +126,3 @@ CREATE INDEX IF NOT EXISTS credit_ledger_entries_user_created_idx
 CREATE UNIQUE INDEX IF NOT EXISTS credit_ledger_entries_request_type_unique
   ON credit_ledger_entries (request_id, entry_type)
   WHERE request_id IS NOT NULL;
-

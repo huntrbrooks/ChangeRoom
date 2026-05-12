@@ -1,181 +1,150 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { auth, clerkClient } from '@clerk/nextjs/server';
-import { sql } from '@/lib/db';
+import { NextRequest, NextResponse } from "next/server";
+import { auth, clerkClient } from "@clerk/nextjs/server";
+import { z } from "zod";
+import { grantCredits, getOrCreateUserBilling } from "@/lib/db-access";
+import { logger } from "@/lib/logger";
 
-/**
- * POST /api/admin/gift-credits
- * 
- * Admin endpoint to gift free credits to users (influencers, beta testers, etc.)
- * Requires admin user or valid admin API key.
- * 
- * Body: { email: string, credits: number, reason?: string }
- */
-
-// Admin users who can gift credits
 const ADMIN_EMAILS = [
-  'admin@igetdressed.online',
-  'gerard@igetdressed.online',
-  'gerardgrenville@gmail.com',
-  // Add more admin emails here
+  "admin@igetdressed.online",
+  "gerard@igetdressed.online",
+  "gerardgrenville@gmail.com",
 ];
+
+const giftCreditsSchema = z.object({
+  email: z.string().email(),
+  credits: z.number().int().min(1).max(1000),
+  reason: z.string().trim().max(500).optional(),
+  idempotencyKey: z.string().trim().min(8).max(200).optional(),
+});
+
+async function getAdminAuth(request: NextRequest): Promise<{
+  authorized: boolean;
+  adminEmail: string | null;
+}> {
+  const apiKey = request.headers.get("x-api-key");
+  const expectedApiKey = process.env.ADMIN_API_KEY;
+
+  if (apiKey && expectedApiKey && apiKey === expectedApiKey) {
+    return { authorized: true, adminEmail: "api-key" };
+  }
+
+  const { userId } = await auth();
+  if (!userId) {
+    return { authorized: false, adminEmail: null };
+  }
+
+  const client = await clerkClient();
+  const user = await client.users.getUser(userId);
+  const email = user.emailAddresses[0]?.emailAddress || "";
+
+  return {
+    authorized: Boolean(email && ADMIN_EMAILS.includes(email.toLowerCase())),
+    adminEmail: email || null,
+  };
+}
+
+async function findUserIdByEmail(email: string): Promise<string | null> {
+  const client = await clerkClient();
+  const users = await client.users.getUserList({
+    emailAddress: [email],
+    limit: 1,
+  });
+  return users.data[0]?.id || null;
+}
 
 export async function POST(request: NextRequest) {
   try {
-    // Check authorization - either logged in admin or API key
-    const apiKey = request.headers.get('x-api-key');
-    const expectedApiKey = process.env.ADMIN_API_KEY;
-
-    let isAuthorized = false;
-    let adminEmail = 'api-key';
-
-    if (apiKey && expectedApiKey && apiKey === expectedApiKey) {
-      isAuthorized = true;
-    } else {
-      // Check if logged in user is admin
-      const { userId } = await auth();
-      if (userId) {
-        const client = await clerkClient();
-        const user = await client.users.getUser(userId);
-        const email = user.emailAddresses[0]?.emailAddress;
-        if (email && ADMIN_EMAILS.includes(email.toLowerCase())) {
-          isAuthorized = true;
-          adminEmail = email;
-        }
-      }
+    const admin = await getAdminAuth(request);
+    if (!admin.authorized) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    if (!isAuthorized) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const body = await request.json();
-    const { email, credits, reason } = body;
-
-    if (!email || typeof email !== 'string') {
-      return NextResponse.json({ error: 'Email is required' }, { status: 400 });
-    }
-
-    if (!credits || typeof credits !== 'number' || credits < 1 || credits > 1000) {
+    const body = await request.json().catch(() => null);
+    const parsed = giftCreditsSchema.safeParse(body);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: 'Credits must be a number between 1 and 1000' },
+        {
+          error: "invalid_request",
+          details: parsed.error.issues.map((issue) => ({
+            path: issue.path.join("."),
+            message: issue.message,
+          })),
+        },
         { status: 400 }
       );
     }
 
-    // Find user in Clerk by email
-    const client = await clerkClient();
-    let targetUserId: string | null = null;
-
-    const users = await client.users.getUserList({
-      emailAddress: [email],
-      limit: 1,
-    });
-
-    if (users.data.length > 0) {
-      targetUserId = users.data[0].id;
-    }
-
+    const { email, credits, reason } = parsed.data;
+    const requestId =
+      parsed.data.idempotencyKey ||
+      request.headers.get("x-request-id") ||
+      request.headers.get("x-changeroom-request-id") ||
+      undefined;
+    const targetUserId = await findUserIdByEmail(email);
     if (!targetUserId) {
-      return NextResponse.json(
-        { error: `User not found with email: ${email}` },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "user_not_found" }, { status: 404 });
     }
 
-    // Check current credits
-    const existing = await sql`
-      SELECT credits_available FROM billing WHERE clerk_user_id = ${targetUserId}
-    `;
+    const updated = await grantCredits(
+      targetUserId,
+      credits,
+      {
+        source: "admin",
+        reason: reason || "admin_gift",
+        admin_email: admin.adminEmail,
+        recipient_email: email,
+      },
+      requestId ? `admin_gift:${requestId}` : undefined
+    );
 
-    const currentCredits = existing.rows[0]?.credits_available ?? 0;
-    const newCredits = currentCredits + credits;
-
-    // Upsert billing record
-    await sql`
-      INSERT INTO billing (clerk_user_id, credits_available, plan, trial_used, updated_at)
-      VALUES (${targetUserId}, ${newCredits}, 'gifted', true, NOW())
-      ON CONFLICT (clerk_user_id)
-      DO UPDATE SET
-        credits_available = ${newCredits},
-        updated_at = NOW()
-    `;
-
-    // Log the gift for audit trail
-    try {
-      await sql`
-        INSERT INTO credit_transactions (clerk_user_id, amount, type, description, created_at)
-        VALUES (${targetUserId}, ${credits}, 'gift', ${reason || `Gifted by ${adminEmail}`}, NOW())
-      `;
-    } catch (txnError) {
-      // Table might not exist yet - log but don't fail
-      console.warn('[gift-credits] Could not log transaction (table may not exist):', txnError);
-    }
-
-    console.log(`[gift-credits] ${adminEmail} gifted ${credits} credits to ${email}. Reason: ${reason || 'N/A'}`);
+    logger.info("admin_credits_gifted", {
+      admin_email: admin.adminEmail,
+      target_user_id: targetUserId,
+      credits,
+      reason: reason || null,
+    });
 
     return NextResponse.json({
       success: true,
       email,
       creditsGifted: credits,
-      totalCredits: newCredits,
+      totalCredits: updated.credits_available,
       reason: reason || null,
     });
   } catch (error) {
-    console.error('[gift-credits] Error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    logger.error("admin_gift_credits_failed", { error });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
-// GET endpoint to check credit balance
 export async function GET(request: NextRequest) {
   try {
-    const url = new URL(request.url);
-    const email = url.searchParams.get('email');
+    const admin = await getAdminAuth(request);
+    if (!admin.authorized) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
+    const email = request.nextUrl.searchParams.get("email")?.trim();
     if (!email) {
-      return NextResponse.json({ error: 'Email query param required' }, { status: 400 });
+      return NextResponse.json({ error: "email_required" }, { status: 400 });
     }
 
-    // Check authorization
-    const apiKey = request.headers.get('x-api-key');
-    const expectedApiKey = process.env.ADMIN_API_KEY;
-
-    if (!apiKey || apiKey !== expectedApiKey) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const targetUserId = await findUserIdByEmail(email);
+    if (!targetUserId) {
+      return NextResponse.json({ error: "user_not_found" }, { status: 404 });
     }
 
-    const client = await clerkClient();
-    const users = await client.users.getUserList({
-      emailAddress: [email],
-      limit: 1,
-    });
-
-    if (users.data.length === 0) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
-
-    const userId = users.data[0].id;
-    
-    const result = await sql`
-      SELECT credits_available, plan, trial_used FROM billing WHERE clerk_user_id = ${userId}
-    `;
-
-    const billing = result.rows[0];
+    const billing = await getOrCreateUserBilling(targetUserId);
 
     return NextResponse.json({
       email,
-      creditsAvailable: billing?.credits_available ?? 0,
-      plan: billing?.plan ?? 'free',
-      trialUsed: billing?.trial_used ?? false,
+      creditsAvailable: billing.credits_available,
+      plan: billing.plan,
+      trialsRemaining: billing.trials_remaining,
+      isFrozen: billing.is_frozen,
     });
   } catch (error) {
-    console.error('[gift-credits] GET Error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    logger.error("admin_gift_credits_lookup_failed", { error });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Download, Share2 } from 'lucide-react';
 import { TryOnProgressLoader } from './TryOnProgressLoader';
+import { logger } from '@/lib/logger';
 
 interface VirtualMirrorProps {
   imageUrl: string | null;
@@ -175,7 +176,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
               if (imageUrl) {
                 setImageReady(true);
                 onImageLoaded?.();
-                console.log('Try-on image loaded successfully');
+                logger.info('tryon_image_loaded');
               }
             }}
             onError={(e) => {
