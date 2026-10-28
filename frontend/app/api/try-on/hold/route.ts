@@ -261,6 +261,15 @@ export async function POST(req: NextRequest) {
           throw new Error(`Database error: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
         }
       }
+      if (message === "request_id_conflict" || message === "hold_not_active") {
+        // Same response for both so a caller can't probe whether a requestId belongs to someone else.
+        const res = NextResponse.json(
+          { error: "request_id_already_used", message: "Start a new try-on request." },
+          { status: 409 }
+        );
+        res.headers.set("X-ChangeRoom-Stack", "nextjs-vercel");
+        return res;
+      }
       if (message === "account_frozen") {
         const res = NextResponse.json(
           {

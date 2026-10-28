@@ -34,6 +34,44 @@ const affiliateConfig: AffiliateConfig = {
   impactId: process.env.NEXT_PUBLIC_IMPACT_ID || '',
 };
 
+// Retailers and affiliate networks /api/r may redirect to when given a raw URL. Matched on the
+// parsed hostname (exact or subdomain), never by substring, so "evil.com/?amazon.com" fails.
+const REDIRECT_ALLOWED_DOMAINS = [
+  'amazon.com',
+  'amazon.com.au',
+  'amazon.co.uk',
+  'amzn.to',
+  'asos.com',
+  'hm.com',
+  'zara.com',
+  'nordstrom.com',
+  'shopbop.com',
+  'net-a-porter.com',
+  'farfetch.com',
+  'ssense.com',
+  'shein.com',
+  'boohoo.com',
+  'prettylittlething.com',
+  'revolve.com',
+  'ebay.com',
+  'ebay.com.au',
+  'shopstyle.com',
+];
+
+export function isAllowedRedirectUrl(rawUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    return false;
+  }
+  const host = url.hostname.toLowerCase();
+  return REDIRECT_ALLOWED_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
 /**
  * Detect which affiliate program to use based on URL
  */

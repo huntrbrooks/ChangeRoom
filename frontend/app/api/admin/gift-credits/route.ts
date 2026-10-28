@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth, clerkClient } from "@clerk/nextjs/server";
+import { clerkClient } from "@clerk/nextjs/server";
+import { getAdminAuth } from "@/lib/adminAuth";
 import { z } from "zod";
 import { grantCredits, getOrCreateUserBilling } from "@/lib/db-access";
 import { logger } from "@/lib/logger";
 
-const ADMIN_EMAILS = [
-  "admin@igetdressed.online",
-  "gerard@igetdressed.online",
-  "gerardgrenville@gmail.com",
-];
 
 const giftCreditsSchema = z.object({
   email: z.string().email(),
@@ -17,31 +13,6 @@ const giftCreditsSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(200).optional(),
 });
 
-async function getAdminAuth(request: NextRequest): Promise<{
-  authorized: boolean;
-  adminEmail: string | null;
-}> {
-  const apiKey = request.headers.get("x-api-key");
-  const expectedApiKey = process.env.ADMIN_API_KEY;
-
-  if (apiKey && expectedApiKey && apiKey === expectedApiKey) {
-    return { authorized: true, adminEmail: "api-key" };
-  }
-
-  const { userId } = await auth();
-  if (!userId) {
-    return { authorized: false, adminEmail: null };
-  }
-
-  const client = await clerkClient();
-  const user = await client.users.getUser(userId);
-  const email = user.emailAddresses[0]?.emailAddress || "";
-
-  return {
-    authorized: Boolean(email && ADMIN_EMAILS.includes(email.toLowerCase())),
-    adminEmail: email || null,
-  };
-}
 
 async function findUserIdByEmail(email: string): Promise<string | null> {
   const client = await clerkClient();

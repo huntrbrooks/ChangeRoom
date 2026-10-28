@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { isAllowedRedirectUrl } from "@/lib/affiliateLinks";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * GET /api/r?url=...
- * Redirect tracking route for affiliate links
- * Logs the click and redirects to the target URL
- * 
- * This allows you to track which offers are clicked most often
+ * GET /api/r?offerId=...        (preferred) redirect to a saved offer's stored URL
+ * GET /api/r?url=...            redirect to a known retailer / affiliate network only
+ *
+ * Redirect tracking route for affiliate links: logs the click, then redirects.
+ * Arbitrary destinations are refused so this can't be used as an open redirect.
  */
 export async function GET(req: NextRequest) {
   try {
@@ -22,71 +25,47 @@ export async function GET(req: NextRequest) {
 
     const searchParams = req.nextUrl.searchParams;
     const targetUrl = searchParams.get("url");
-    const offerId = searchParams.get("offerId");
+    const offerIdParam = searchParams.get("offerId");
+    const offerId = offerIdParam && UUID_RE.test(offerIdParam) ? offerIdParam : null;
+    const db = await import("@/lib/db-access");
 
-    if (!targetUrl) {
-      return NextResponse.json(
-        { error: "Missing url parameter" },
-        { status: 400 }
-      );
+    let destination: string | null = null;
+    if (offerId) {
+      const offer = await db.getClothingItemOfferUrls(offerId);
+      const stored = offer?.affiliate_url || offer?.product_url || null;
+      if (stored && /^https?:\/\//i.test(stored)) {
+        destination = stored;
+      }
     }
 
-    // Decode the target URL
-    let decodedUrl: string;
-    try {
-      decodedUrl = decodeURIComponent(targetUrl);
-    } catch {
-      return NextResponse.json(
-        { error: "Invalid url parameter" },
-        { status: 400 }
-      );
+    if (!destination && targetUrl) {
+      // searchParams.get() already percent-decodes the value.
+      if (!isAllowedRedirectUrl(targetUrl)) {
+        return NextResponse.json({ error: "Redirect destination not allowed" }, { status: 400 });
+      }
+      destination = targetUrl;
     }
 
-    // Validate URL + restrict protocols (avoid non-http(s) open redirects)
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(decodedUrl);
-    } catch {
-      return NextResponse.json(
-        { error: "Invalid URL format" },
-        { status: 400 }
-      );
-    }
-    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-      return NextResponse.json(
-        { error: "Invalid URL protocol" },
-        { status: 400 }
-      );
+    if (!destination) {
+      return NextResponse.json({ error: "Missing or unknown offerId/url" }, { status: 400 });
     }
 
     // Get user ID if authenticated (optional)
     const { userId } = await auth();
 
     // Log the click (fire and forget - don't block redirect)
-    (await import("@/lib/db-access"))
-      .logAffiliateClick({
-        offerId: offerId || null,
-        userId: userId || null,
-        clickedUrl: decodedUrl,
-      })
-      .catch((err) => {
+    db.logAffiliateClick({
+      offerId,
+      userId: userId || null,
+      clickedUrl: destination,
+    }).catch((err) => {
       console.error("Error logging affiliate click:", err);
       // Don't fail the redirect if logging fails
     });
 
-    // Redirect to target URL
-    return NextResponse.redirect(decodedUrl, { status: 302 });
+    return NextResponse.redirect(destination, { status: 302 });
   } catch (err: unknown) {
     console.error("Redirect error:", err);
-    const error = err instanceof Error ? err : new Error(String(err));
-
-    return NextResponse.json(
-      {
-        error: "Redirect failed",
-        details: error.message,
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Redirect failed" }, { status: 500 });
   }
 }
-

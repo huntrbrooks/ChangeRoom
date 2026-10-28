@@ -73,13 +73,20 @@ export async function POST(req: NextRequest) {
       expand: ["line_items.data.price", "payment_intent"],
     });
 
-    const metadataUserId = session.metadata?.clerkUserId;
-    if (metadataUserId && metadataUserId !== userId) {
+    // Fail closed: the session must be provably this user's (our checkout sets metadata and
+    // client_reference_id; pricing-table/payment-link sessions match on the Stripe customer).
+    // Otherwise anyone holding a paid session id could claim its credits first.
+    const billingRow = await getOrCreateUserBilling(userId);
+    const sessionCustomerId =
+      typeof session.customer === "string" ? session.customer : session.customer?.id ?? null;
+    const ownsSession =
+      session.metadata?.clerkUserId === userId ||
+      session.client_reference_id === userId ||
+      Boolean(sessionCustomerId && billingRow.stripe_customer_id === sessionCustomerId);
+    if (!ownsSession) {
+      logger.warn("verify_checkout_session_owner_mismatch", { userId, sessionId: session.id });
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-
-    // Ensure billing row exists (useful for customer id tracking, etc.)
-    await getOrCreateUserBilling(userId);
 
     if (session.mode !== "payment") {
       return NextResponse.json({

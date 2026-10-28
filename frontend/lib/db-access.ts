@@ -1152,7 +1152,15 @@ export async function createCreditHold(params: {
     `;
     if (existingHold.rows.length > 0) {
       const hold = existingHold.rows[0] as CreditHold;
-      const billing = await ensureUserBillingWithLock(tx, hold.user_id);
+      // Only an idempotent retry of the caller's own, still-active hold may reuse it. Anything
+      // else would let a requestId be replayed (or borrowed) to skip paying for a new render.
+      if (hold.user_id !== userId) {
+        throw new Error("request_id_conflict");
+      }
+      if (hold.status !== "active") {
+        throw new Error("hold_not_active");
+      }
+      const billing = await ensureUserBillingWithLock(tx, userId);
       return { hold, created: false, billing };
     }
 
@@ -2905,6 +2913,20 @@ export async function getClothingItemOffers(
       return (result?.rows ?? []) as ClothingItemOffer[];
     })
   );
+}
+
+/**
+ * Look up a stored offer's outbound URLs (used by /api/r so redirects only go to saved offers).
+ */
+export async function getClothingItemOfferUrls(
+  offerId: string
+): Promise<{ affiliate_url: string; product_url: string } | null> {
+  return withClothingItemOffersTable(async () => {
+    const result = await sql`
+      SELECT affiliate_url, product_url FROM clothing_item_offers WHERE id = ${offerId} LIMIT 1
+    `;
+    return (result.rows[0] as { affiliate_url: string; product_url: string } | undefined) ?? null;
+  });
 }
 
 /**

@@ -30,3 +30,20 @@ describe('convertToAffiliateLink', () => {
     expect(url).toContain('linkCode=ogi');
   });
 });
+
+describe('isAllowedRedirectUrl', () => {
+  it('allows known retailers and their subdomains', async () => {
+    const { isAllowedRedirectUrl } = await import('@/lib/affiliateLinks');
+    expect(isAllowedRedirectUrl('https://www.asos.com/product/123')).toBe(true);
+    expect(isAllowedRedirectUrl('https://amazon.com.au/dp/B0')).toBe(true);
+  });
+
+  it('rejects lookalike, embedded and non-http destinations', async () => {
+    const { isAllowedRedirectUrl } = await import('@/lib/affiliateLinks');
+    expect(isAllowedRedirectUrl('https://evil.com/?next=amazon.com')).toBe(false);
+    expect(isAllowedRedirectUrl('https://amazon.com.evil.com/')).toBe(false);
+    expect(isAllowedRedirectUrl('https://notasos.com/')).toBe(false);
+    expect(isAllowedRedirectUrl('javascript:alert(1)')).toBe(false);
+    expect(isAllowedRedirectUrl('not a url')).toBe(false);
+  });
+});
