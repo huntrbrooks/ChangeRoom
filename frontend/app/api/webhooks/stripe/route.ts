@@ -39,12 +39,12 @@ async function planForSubscription(subscriptionId: string): Promise<Plan | null>
   return planForPriceId(subscription.items.data[0]?.price.id) || null;
 }
 
-function safeJsonParse(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
+// Logs keep enough to find the customer in Stripe, never the full address.
+function maskEmail(email: string | null | undefined): string | null {
+  const value = (email || "").trim();
+  const at = value.indexOf("@");
+  if (at < 1) return value ? "***" : null;
+  return `${value[0]}***${value.slice(at)}`;
 }
 
 async function resolveClerkUserIdByVerifiedEmail(emailRaw: string): Promise<string | null> {
@@ -107,7 +107,10 @@ async function resolveClerkUserIdByVerifiedEmail(emailRaw: string): Promise<stri
 
     return userId;
   } catch (err) {
-    logger.warn("stripe_webhook_resolve_clerk_user_by_email_failed", { email, error: err });
+    logger.warn("stripe_webhook_resolve_clerk_user_by_email_failed", {
+      email: maskEmail(email),
+      error: err,
+    });
     return null;
   }
 }
@@ -444,10 +447,9 @@ export async function POST(req: NextRequest) {
             payment_intent_id: paymentIntentId,
             event_id: event.id,
             customer_id: customerId || null,
-            receipt_email: candidateEmail || null,
+            receipt_email: maskEmail(candidateEmail),
             price_id: priceId || null,
             session_id: sessionId || null,
-            parsed_body: safeJsonParse(body),
           });
           break;
         }

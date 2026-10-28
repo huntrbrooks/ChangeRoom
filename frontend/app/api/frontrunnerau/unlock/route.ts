@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { checkRateLimit } from "@/lib/rate-limit";
+
 import {
   createFrontrunnerDemoSessionToken,
   FRONTRUNNER_DEMO_COOKIE_NAME,
@@ -21,6 +23,15 @@ function redirectToDemo(request: NextRequest, error?: string) {
 }
 
 export async function POST(request: NextRequest) {
+  const ip =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip") ||
+    "unknown";
+  // Slow down password guessing: 10 attempts per IP per 15 minutes.
+  if (!checkRateLimit(`frontrunner-unlock:ip:${ip}`, 10, 15 * 60_000).allowed) {
+    return redirectToDemo(request, "rate_limited");
+  }
+
   const formData = await request.formData();
   const parsed = passwordSchema.safeParse({
     password: formData.get("password"),
