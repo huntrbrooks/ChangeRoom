@@ -98,13 +98,13 @@ def test_http_to_postgres_reopens_offline_without_second_provider_call(pg,client
     """Run the actual async worker connection over TCP against an isolated DB."""
     import base64
     from unittest.mock import AsyncMock
-    from services import auth,vton
+    from services import auth,subscriber_image
     u,j=create(pg,credits=5,trials=1)
     monkeypatch.setenv("TRYON_DATABASE_URL",dsn)
     monkeypatch.setenv("BACKEND_AUTH_MODE","clerk")
     monkeypatch.setattr(auth,"_verify_clerk_token",AsyncMock(return_value={"sub":u}))
-    provider=AsyncMock(return_value={"image_url":"data:image/png;base64,"+base64.b64encode(sample_image_bytes).decode()})
-    monkeypatch.setattr(vton,"generate_try_on",provider)
+    provider=AsyncMock(return_value="data:image/png;base64,"+base64.b64encode(sample_image_bytes).decode())
+    monkeypatch.setattr(subscriber_image,"generate",provider)
     upload={"user_image":("person.png",sample_image_bytes,"image/png"),"clothing_image":("item.png",sample_image_bytes,"image/png")}
     opts={"files":upload,"headers":{"Authorization":"Bearer fixture","X-Request-Id":str(j)}}
     assert client.post("/api/try-on",**opts).status_code==200
@@ -141,3 +141,42 @@ def test_two_free_quotes_cannot_silently_consume_paid_pack(pg):
     assert claim(pg,j,u)=="trial"
     assert claim(pg,same_quote,u)=="trial_unavailable"
     assert pg("SELECT credits_available FROM users_billing WHERE user_id=%s",(u,))==5
+
+
+@pytest.mark.parametrize("outcome",["quota_fallback","primary_safety","ambiguous_timeout"])
+def test_two_provider_worker_settles_each_paid_job_only_once(pg,client,sample_image_bytes,monkeypatch,outcome):
+    import base64
+    from functools import partial
+    from unittest.mock import AsyncMock
+    import httpx
+    from services import auth,subscriber_image
+
+    subject,job=create(pg,credits=3,trials=0)
+    monkeypatch.setenv("TRYON_DATABASE_URL",dsn)
+    monkeypatch.setenv("BACKEND_AUTH_MODE","clerk")
+    monkeypatch.setenv("OPENAI_API_KEY","fixture-primary")
+    monkeypatch.setenv("GEMINI_API_KEY","fixture-fallback")
+    monkeypatch.setattr(auth,"_verify_clerk_token",AsyncMock(return_value={"sub":subject}))
+    calls=[]
+    def network(request):
+        calls.append(str(request.url))
+        if len(calls)==1:
+            if outcome=='ambiguous_timeout':raise httpx.ReadTimeout("ambiguous")
+            if outcome=='primary_safety':return httpx.Response(400,json={"error":{"code":"content_policy_violation"}})
+            return httpx.Response(429,json={"error":{"code":"insufficient_quota"}})
+        assert len(calls)==2 and outcome=='quota_fallback'
+        return httpx.Response(200,json={"candidates":[{"finishReason":"STOP","content":{"parts":[{
+            "inlineData":{"mimeType":"image/png","data":base64.b64encode(sample_image_bytes).decode()}}]}}]})
+    monkeypatch.setattr(subscriber_image,"generate",partial(subscriber_image.generate,transport=httpx.MockTransport(network)))
+    opts={"headers":{"Authorization":"Bearer fixture","X-Request-Id":str(job)},
+          "files":{"user_image":("person.png",sample_image_bytes,"image/png"),
+                   "clothing_image":("garment.png",sample_image_bytes,"image/png")}}
+    status={"quota_fallback":200,"primary_safety":422,"ambiguous_timeout":502}[outcome]
+    assert client.post("/api/try-on",**opts).status_code==status
+    assert client.post("/api/try-on",**opts).status_code==409
+    success=outcome=="quota_fallback"
+    assert calls==[subscriber_image.OPENAI_URL]+([subscriber_image.GOOGLE_URL] if success else [])
+    assert pg("SELECT credits_available FROM users_billing WHERE user_id=%s",(subject,))==(2 if success else 3)
+    assert pg("SELECT state FROM tryon_jobs WHERE id=%s",(job,))==("succeeded" if success else "failed")
+    assert pg("SELECT count(*) FROM credit_ledger_entries WHERE request_id=%s AND entry_type=%s",
+              (str(job),"debit" if success else "release"))==1

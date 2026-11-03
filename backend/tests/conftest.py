@@ -43,3 +43,14 @@ def uploads_dir(tmp_path):
     uploads = tmp_path / "uploads"
     uploads.mkdir()
     return uploads
+
+@pytest.fixture(autouse=True)
+def prevent_unmocked_model_calls(monkeypatch):
+    # Client injection mistakes must never send even synthetic uploads to a paid provider.
+    import httpx
+    real_send = httpx.AsyncHTTPTransport.handle_async_request
+    async def guard(self, request):
+        if request.url.host in {"api.openai.com","generativelanguage.googleapis.com","openrouter.ai","api.x.ai"}:
+            pytest.fail("Unmocked model transport; use an offline fixture")
+        return await real_send(self,request)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport,"handle_async_request",guard)

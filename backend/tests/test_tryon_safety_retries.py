@@ -158,6 +158,8 @@ async def test_vton_retries_and_returns_retry_info(monkeypatch, sample_image_byt
 async def test_vton_falls_back_to_openrouter_when_openai_credit_exhausted(monkeypatch, sample_image_bytes):
     from services import vton
 
+    monkeypatch.setenv("GEMINI_INTIMATE_DETECT_ENABLED", "0")  # Legacy fallback test never sends fixture images.
+
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
     monkeypatch.setenv("OPENROUTER_TRYON_IMAGE_MODEL", "google/gemini-3.1-flash-image-preview")
@@ -339,73 +341,20 @@ async def test_vton_can_use_openrouter_content_fallback_after_safety_rewrites(mo
     assert "general-audience" in user_message
 
 
-def test_paid_result_retries_safely_and_keeps_provider_metadata_private(client, sample_image_bytes, monkeypatch):
-    import base64
+def test_public_worker_does_not_rewrite_a_safety_rejection(client, sample_image_bytes, monkeypatch):
     import uuid
     from unittest.mock import AsyncMock
-    from services import auth, tryon_jobs
-    from services import vton
-
-    monkeypatch.setenv("BACKEND_AUTH_MODE", "clerk")
-    monkeypatch.setattr(auth, "_verify_clerk_token",AsyncMock(return_value={"sub":"user_retry"}))
-    monkeypatch.setattr(tryon_jobs,"_call",AsyncMock(side_effect=["credits",True]))
-
-    openai_calls = {"n": 0}
-
-    async def fake_openai_edit(_client, *, url, headers, data, files):
-        openai_calls["n"] += 1
-        if openai_calls["n"] <= 2:
-            return DummyResponse(
-                ok=False,
-                status_code=400,
-                text="Blocked",
-                data={
-                    "error": {"message": "Blocked"}
-                },
-            )
-        return DummyResponse(
-            ok=True,
-            data={
-                "data": [{"b64_json": base64.b64encode(sample_image_bytes).decode()}]
-            },
-        )
-
-    async def fake_gemini_post(_client, *, url, headers, payload):
-        return DummyResponse(
-            ok=True,
-            data={
-                "candidates": [
-                    {
-                        "finishReason": "STOP",
-                        "content": {
-                            "parts": [
-                                {
-                                    "text": '{"prompt_additions":"Keep framing conservative and professional.","metadata":{"framing":"three_quarter"},"changes":["more modest framing"]}'
-                                }
-                            ]
-                        },
-                    }
-                ]
-            },
-        )
-
-    monkeypatch.setattr(vton, "_openai_images_edit", fake_openai_edit)
-    monkeypatch.setattr(vton, "_gemini_post_json", fake_gemini_post)
-
-    files = {
-        "user_image": ("user.png", sample_image_bytes, "image/png"),
-        "clothing_image": ("garment.png", sample_image_bytes, "image/png"),
-    }
-    data = {
-        "category": "upper_body",
-        "garment_metadata": '{"description":"lingerie"}',
-    }
-    rid = str(uuid.uuid4())
-    resp = client.post("/api/try-on", files=files, data=data, headers={"Authorization": "Bearer fixture","X-Request-Id":rid})
-    assert resp.status_code == 200
-    payload = resp.json()
-    assert "image_url" in payload
-    assert "retry_info" not in payload
-    assert openai_calls["n"] == 3
-    assert payload["image_url"] == f"/api/try-on/jobs/{rid}/result"
-    assert payload.get("modesty_applied") is True
+    from services import auth, tryon_jobs, subscriber_image
+    monkeypatch.setenv("BACKEND_AUTH_MODE","clerk")
+    monkeypatch.setattr(auth,"_verify_clerk_token",AsyncMock(return_value={"sub":"fixture_subject"}))
+    settlement=AsyncMock(side_effect=["credits",True])
+    monkeypatch.setattr(tryon_jobs,"_call",settlement)
+    provider=AsyncMock(side_effect=subscriber_image.ImageBlocked("fixture"))
+    monkeypatch.setattr(subscriber_image,"generate",provider)
+    headers={"Authorization":"Bearer fixture","X-Request-Id":str(uuid.uuid4())}
+    files={kind:(kind+".png",sample_image_bytes,"image/png") for kind in ("user_image","clothing_image")}
+    response=client.post("/api/try-on",files=files,headers=headers)
+    assert response.status_code==422 and "safety" in response.json()["detail"]
+    assert settlement.await_args_list[-1].args[1][-1] is None
+    assert client.post("/api/clothing/adjust-description",headers=headers,json={}).status_code==410
+    provider.assert_awaited_once()

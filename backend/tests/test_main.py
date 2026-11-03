@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 from main import app
-from services import auth, tryon_jobs, vton
+from services import auth, tryon_jobs, subscriber_image
 
 
 @pytest.fixture
@@ -39,10 +39,10 @@ def test_public_disk_pipeline_retired(client,path):
 
 
 def test_direct_replay_does_not_call_provider_again(client, signed, sample_image_bytes,monkeypatch):
-    provider=AsyncMock(return_value={"image_url":"data:image/png;base64,"+base64.b64encode(sample_image_bytes).decode()})
+    provider=AsyncMock(return_value="data:image/png;base64,"+base64.b64encode(sample_image_bytes).decode())
     sql=AsyncMock(side_effect=["trial",True,"denied"])
     monkeypatch.setattr(tryon_jobs,"_call",sql)
-    monkeypatch.setattr(vton,"generate_try_on",provider)
+    monkeypatch.setattr(subscriber_image,"generate",provider)
     r=client.post("/api/try-on",files=files(sample_image_bytes),headers=signed)
     assert r.status_code==200 and r.json()["usedFreeTrial"]
     assert r.json()["image_url"]==f"/api/try-on/jobs/{signed['X-Request-Id']}/result"
@@ -54,7 +54,7 @@ def test_direct_replay_does_not_call_provider_again(client, signed, sample_image
 def test_unpaid_and_unsafe_requests_do_not_generate(client,signed,sample_image_bytes,monkeypatch):
     provider=AsyncMock()
     sql=AsyncMock(return_value="no_credits")
-    monkeypatch.setattr(vton,"generate_try_on",provider)
+    monkeypatch.setattr(subscriber_image,"generate",provider)
     monkeypatch.setattr(tryon_jobs,"_call",sql)
     for key in ("clothing_file_urls","clothing_file_url"):
         assert client.post("/api/try-on",files=files(sample_image_bytes),headers=signed,
@@ -69,7 +69,7 @@ def test_unpaid_and_unsafe_requests_do_not_generate(client,signed,sample_image_b
 def test_failed_result_releases_before_returning(client,signed,sample_image_bytes,monkeypatch,bad):
     sql=AsyncMock(side_effect=["credits",True])
     monkeypatch.setattr(tryon_jobs,"_call",sql)
-    monkeypatch.setattr(vton,"generate_try_on",AsyncMock(return_value={"image_url":bad}))
+    monkeypatch.setattr(subscriber_image,"generate",AsyncMock(return_value=bad))
     r=client.post("/api/try-on",files=files(sample_image_bytes),headers=signed)
     assert r.status_code==502 and sql.await_args_list[-1].args[1][-1] is None
 

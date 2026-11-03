@@ -8,8 +8,8 @@ import sys
 import logging
 import json
 import asyncio
-import httpx
 from pathlib import Path
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 import time
 import uuid
@@ -25,7 +25,7 @@ if sys.stderr.encoding != 'utf-8':
 # Add current directory to path to find services module
 sys.path.insert(0, str(Path(__file__).parent))
 
-from services import vton, gemini, shop
+from services import subscriber_image, gemini, shop
 from services import tryon_jobs
 from services.image_normalize import normalize_image_bytes, ensure_heif_registered
 from services.auth import require_backend_auth
@@ -43,7 +43,12 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx2").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="IGetDressed.Online API")
+@asynccontextmanager
+async def worker_lifespan(_app):
+    subscriber_image.primary_key()  # Fail startup; never silently deploy a fallback-only worker.
+    yield
+
+app = FastAPI(title="IGetDressed.Online API", lifespan=worker_lifespan)
 
 # Add a small “which stack served this response?” marker + request correlation id to all responses.
 @app.middleware("http")
@@ -257,7 +262,7 @@ async def read_and_normalize_upload(
                         "Please convert it to JPEG/PNG (recommended) and re-upload."
                     ),
                 )
-        raise HTTPException(status_code=415, detail=f"Could not decode image: {str(e)}")
+        raise HTTPException(status_code=415, detail="Could not decode image")
 
 @app.get("/")
 async def root():
@@ -337,28 +342,28 @@ async def try_on(
 
     metadata = parse_meta(garment_metadata)
     # Do not infer or store age, gender, skin tone or body measurements.
-    person_inputs, garment_inputs, quality = [], [], []
+    person_inputs, garment_inputs = [], []
+    if main_index is not None and not 0 <= main_index < len(people):
+        raise HTTPException(400, "Invalid primary person reference")
     for is_person, files in ((True, people), (False, clothes)):
         for f in files:
             valid, _ = validate_image_file(f)
             if not valid:
                 raise HTTPException(415, "Unsupported image file")
-            contents, _, w, h = await read_and_normalize_upload(f, label="Photo")
+            contents, mime, w, h = await read_and_normalize_upload(f, label="Photo")
             if is_person and min(w or 0, h or 0) < 400:
                 raise HTTPException(422, "User image resolution too low")
             if is_person:
-                person_inputs.append(io.BytesIO(contents))
-                quality.append({"low_res": min(w, h)<900, "width": w, "height": h})
+                person_inputs.append(subscriber_image.Reference(contents,mime))
             else:
-                garment_inputs.append(io.BytesIO(contents))
+                garment_inputs.append(subscriber_image.Reference(contents,mime))
 
     funding = await tryon_jobs.claim(rid, subject)
     try:
-        generated = await asyncio.wait_for(vton.generate_try_on(
-            person_inputs, garment_inputs, category or "upper_body", metadata,
-            user_attributes={}, main_index=main_index or 0, user_quality_flags=quality), timeout=480)
-        value = generated.get("image_url") if isinstance(generated, dict) else generated
-        image = await asyncio.to_thread(tryon_jobs.private_jpeg, value, funding == "trial")
+        async def generate_private_result():
+            value = await subscriber_image.generate(person_inputs,garment_inputs,metadata=metadata,main_index=main_index or 0)
+            return await asyncio.to_thread(tryon_jobs.private_jpeg, value, funding == "trial")
+        image = await asyncio.wait_for(generate_private_result(), timeout=480)
     except BaseException as exc:
         # Includes task cancellation; a crashed worker is independently reconciled by sweep.
         await asyncio.shield(tryon_jobs.settle(rid, subject, None))
@@ -366,7 +371,7 @@ async def try_on(
             raise
         if not isinstance(exc, Exception):
             raise
-        is_safety = any(key in str(exc).lower() for key in ("safety", "prohibited_content", "image_blocked"))
+        is_safety = isinstance(exc, subscriber_image.ImageBlocked)
         logger.warning("generation failed job=%s type=%s", rid, type(exc).__name__)
         raise HTTPException(422 if is_safety else 502,
             "Image blocked by safety filters; no credit was charged." if is_safety else
@@ -375,72 +380,13 @@ async def try_on(
     logger.info("generation completed job=%s", rid)
     return {"job_id": rid, "usedFreeTrial": funding == "trial",
             "image_url": f"/api/try-on/jobs/{rid}/result",
-            "modesty_applied": bool(isinstance(generated, dict) and generated.get("modesty_applied"))}
+            "modesty_applied": False}
 
 
-@app.post("/api/clothing/adjust-description", dependencies=[Depends(require_backend_auth)])
-async def adjust_description(request: Request):
-    """
-    Rewrite clothing metadata + description to a more modest, safety-compliant version.
-    This is used when try-on is blocked by safety filters and the user requests a rewrite.
-    """
-    try:
-        ip = get_client_ip(request)
-        if not check_rate_limit(f"adjust-description:{ip}", limit=30, window_seconds=60):
-            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
+@app.post("/api/clothing/adjust-description")
+async def retired_rewrite():
+    raise HTTPException(410, "Description rewriting is not available.")
 
-        payload = await request.json()
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail="Invalid payload.")
-
-        raw_meta = payload.get("metadata")
-        metadata = raw_meta if isinstance(raw_meta, dict) else {}
-        description = payload.get("description") or metadata.get("description") or ""
-        if not isinstance(description, str):
-            description = str(description)
-        description = description.strip()
-        if not description:
-            description = "clothing item"
-
-        strictness = str(payload.get("strictness") or "moderate").lower()
-        if strictness not in ("low", "moderate", "max"):
-            strictness = "moderate"
-
-        last_failure = payload.get("last_failure")
-        if not isinstance(last_failure, dict):
-            last_failure = {"reason": "user_requested_adjustment"}
-
-        # Ensure description is included in metadata for sanitization.
-        if "description" not in metadata:
-            metadata = {**metadata, "description": description}
-
-        prompt_additions = ""
-        summary = ""
-        strategy = "heuristic"
-        updated_meta: Dict[str, Any] = metadata
-
-        updated_meta, _safe_prompt, summary = vton.rewrite_for_modesty_heuristic(
-            metadata, description, strictness=strictness)
-        strategy = "heuristic"
-
-        updated_description = updated_meta.get("description") if isinstance(updated_meta, dict) else ""
-        if not isinstance(updated_description, str) or not updated_description.strip():
-            updated_description = description
-        if isinstance(updated_meta, dict):
-            updated_meta["description"] = updated_description
-
-        return {
-            "metadata": updated_meta,
-            "description": updated_description,
-            "prompt_additions": prompt_additions,
-            "strategy": strategy,
-            "summary": summary,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in adjust-description endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/identify-products", dependencies=[Depends(require_backend_auth)])
 async def identify_products(
