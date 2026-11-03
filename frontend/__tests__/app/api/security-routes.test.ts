@@ -23,6 +23,9 @@ const db = {
 };
 jest.mock("@/lib/db-access", () => db);
 
+const mockJobSql = jest.fn();
+jest.mock("@/lib/db", () => ({ sql: (...args: unknown[]) => mockJobSql(...args) }));
+
 const mockRetrieve = jest.fn();
 jest.mock("stripe", () =>
   jest.fn().mockImplementation(() => ({ checkout: { sessions: { retrieve: mockRetrieve } } }))
@@ -54,23 +57,17 @@ beforeEach(() => {
 });
 
 describe("POST /api/try-on/hold", () => {
-  it.each(["request_id_conflict", "hold_not_active"])(
-    "returns 409 when createCreditHold rejects with %s",
-    async (reason) => {
-      db.createCreditHold.mockRejectedValue(new Error(reason));
-      const { POST } = await import("@/app/api/try-on/hold/route");
-
-      const res = await POST(
-        request("https://example.com/api/try-on/hold", { method: "POST", body: { requestId: "victims-request" } })
-      );
-
-      expect(res.status).toBe(409);
-      expect(await res.json()).toEqual({
-        error: "request_id_already_used",
-        message: "Start a new try-on request.",
-      });
-    }
-  );
+  it("issues a fresh database ID only for the verified Clerk subject", async () => {
+    mockCurrentUser.mockResolvedValue({ id: "user_attacker", primaryEmailAddressId: "primary",
+      emailAddresses: [{ id: "primary", verification: { status: "verified" } }] });
+    mockJobSql.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{id:"new-server-id"}] });
+    const { POST } = await import("@/app/api/try-on/hold/route");
+    const res = await POST(request("https://example.com/api/try-on/hold", { method: "POST",
+      body: { requestId: "victims-request", userId: "victim", privileged: true } }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({requestId:"new-server-id"});
+    expect(mockJobSql.mock.calls[1].slice(1)).toEqual(["user_attacker", true, false]);
+  });
 });
 
 describe("GET /api/r", () => {
@@ -107,6 +104,7 @@ describe("GET /api/r", () => {
 });
 
 describe("POST /api/billing/verify-checkout-session", () => {
+  beforeAll(() => { process.env.STRIPE_STARTER_PRICE_ID = "price_test_starter"; });
   const paidSession = {
     id: "cs_test_123",
     mode: "payment",
@@ -115,7 +113,7 @@ describe("POST /api/billing/verify-checkout-session", () => {
     metadata: { creditAmount: "10" },
     client_reference_id: null,
     customer: "cus_victim",
-    line_items: { data: [] },
+    line_items: { data: [{price:{id:"price_test_starter"},quantity:1}], has_more:false },
   };
 
   it("refuses a paid session that can't be tied to the caller", async () => {
@@ -130,8 +128,16 @@ describe("POST /api/billing/verify-checkout-session", () => {
     expect(db.grantCredits).not.toHaveBeenCalled();
   });
 
-  it("grants credits when client_reference_id matches the caller", async () => {
+  it("rejects a client reference alone for a different customer", async () => {
     mockRetrieve.mockResolvedValue({ ...paidSession, client_reference_id: "user_attacker" });
+    const { POST } = await import("@/app/api/billing/verify-checkout-session/route");
+    const res = await POST(request("https://example.com/api/billing/verify-checkout-session", { method:"POST", body:{sessionId:"cs_test_123"} }));
+    expect(res.status).toBe(403);
+  });
+
+  it("grants the purchased SKU to its mapped customer", async () => {
+    mockRetrieve.mockResolvedValue({ ...paidSession, client_reference_id: "user_attacker" });
+    mockRetrieve.mockResolvedValue({ ...paidSession, customer: "cus_attacker", client_reference_id: "user_attacker" });
     db.grantCredits.mockResolvedValue({ credits_available: 15 });
     const { POST } = await import("@/app/api/billing/verify-checkout-session/route");
 
