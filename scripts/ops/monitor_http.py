@@ -6,14 +6,20 @@ import urllib.request
 from urllib.parse import urlsplit
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
 def probe(name, path, expected):
     base = os.environ[name].rstrip('/')
     parsed = urlsplit(base)
     if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.query or parsed.fragment or parsed.path:
         raise ValueError(f'{name} must be an HTTPS origin without credentials')
     try:
-        with urllib.request.urlopen(urllib.request.Request(base + path, headers={'User-Agent': 'ChangeRoom-Availability/1.0'}), timeout=15) as res:
-            if urlsplit(res.url).hostname != parsed.hostname:
+        opener = urllib.request.build_opener(NoRedirect)
+        with opener.open(urllib.request.Request(base + path, headers={'User-Agent': 'ChangeRoom-Availability/1.0'}), timeout=15) as res:
+            if res.status != 200 or res.url != base + path:
                 raise ValueError('unexpected redirect')
             body = res.read(256_000)
             if not expected(res, body):
@@ -24,5 +30,18 @@ def probe(name, path, expected):
     print(f'{name}: ok')
 
 
-probe('APP_ORIGIN', '/status', lambda _, b: b'Service availability' in b and b'Manage billing' in b)
-probe('API_ORIGIN', '/', lambda r, b: r.headers.get('X-ChangeRoom-Stack') == 'fastapi-render' and 'IGetDressed.Online API' in json.loads(b).get('message',''))
+def worker_liveness(response, body):
+    mime = response.headers.get('Content-Type', '').partition(';')[0].strip().lower()
+    stack = response.headers.get('X-ChangeRoom-Stack')
+    if mime != 'application/json' or stack not in {'fastapi-worker', 'fastapi-render'}:
+        return False
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeError):
+        return False
+    return isinstance(payload, dict) and payload.get('message') == 'IGetDressed.Online API is running'
+
+
+if __name__ == '__main__':
+    probe('APP_ORIGIN', '/status', lambda _, b: b'Service availability' in b and b'Manage billing' in b)
+    probe('API_ORIGIN', '/', worker_liveness)

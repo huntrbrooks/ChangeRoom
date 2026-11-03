@@ -69,7 +69,7 @@ The key linkage is:
 ## Debugging superpower: Request correlation IDs
 
 Both stacks now attach:
-- `X-ChangeRoom-Stack`: `fastapi-render` or `nextjs-vercel`
+- `X-ChangeRoom-Stack`: `fastapi-worker` (older releases: `fastapi-render`) or `nextjs-vercel`
 - `X-Request-Id`: stable per request
 
 Use these to correlate:

@@ -59,7 +59,7 @@ async def add_stack_header(request: Request, call_next):
     response = await call_next(request)
 
     # Helps debugging in browser Network tab + logs.
-    response.headers["X-ChangeRoom-Stack"] = "fastapi-render"
+    response.headers["X-ChangeRoom-Stack"] = "fastapi-worker"
     response.headers["X-Request-Id"] = rid
     response.headers["X-ChangeRoom-Request-Id"] = rid
     return response

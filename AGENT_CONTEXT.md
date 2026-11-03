@@ -31,7 +31,7 @@
 ## Debugging: identify stack + correlate logs
 
 - In browser Network tab, check response headers:
-  - `X-ChangeRoom-Stack`: `fastapi-render` or `nextjs-vercel`
+  - `X-ChangeRoom-Stack`: `fastapi-worker` (older releases: `fastapi-render`) or `nextjs-vercel`
   - `X-Request-Id`: use this to find the exact matching Render/Vercel log lines
 
 ## Quick local defaults

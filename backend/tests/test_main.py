@@ -23,6 +23,8 @@ def files(image):
 def test_health_and_cors(client):
     r=client.get("/",headers={"X-Request-Id":"trace"})
     assert r.status_code==200 and r.headers["x-request-id"]=="trace"
+    assert r.headers["x-changeroom-stack"] == "fastapi-worker"
+    assert r.json() == {"message": "IGetDressed.Online API is running"}
     r=client.options("/api/try-on",headers={"Origin":"https://igetdressed.online",
         "Access-Control-Request-Method":"POST","Access-Control-Request-Headers":"Authorization,X-Request-Id,Content-Type"})
     assert r.status_code==200 and r.headers["access-control-allow-origin"]=="https://igetdressed.online"
