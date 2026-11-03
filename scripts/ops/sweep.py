@@ -27,6 +27,12 @@ def main():
     if len(fields)!=5 or not all(f.isdecimal() for f in fields): raise SystemExit('Unexpected job-count result')
     stuck,images,history,failed,succeeded=map(int,fields)
     print(f'stale_jobs={stuck} expired_results={images} expired_history={history} recent_failed={failed} recent_succeeded={succeeded}')
+    closure_fields=query('SELECT * FROM public.closure_ops_counts()').split(' ')
+    if len(closure_fields)!=3 or not all(f.isdecimal() for f in closure_fields): raise SystemExit('Unexpected closure-count result')
+    review,pending,cleanup=map(int,closure_fields)
+    print(f'closure_billing_review={review} closure_billing_overdue={pending} closure_external_cleanup_overdue={cleanup}')
+    if review or pending or cleanup:
+        raise SystemExit('Account closure requires operator action: check the private billing and external-media queues; do not bulk-cancel or delete.')
     if stuck or images or history: raise SystemExit('Cleanup overdue; investigate throughput or locks.')
     if failed>=5 and failed>=succeeded: raise SystemExit('At least five recent failures, at least half of completed jobs.')
 

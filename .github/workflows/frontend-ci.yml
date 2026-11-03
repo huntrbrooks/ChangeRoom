@@ -11,15 +11,29 @@ on:
       - "frontend/**"
       - ".github/workflows/frontend-ci.yml"
 
+permissions:
+  contents: read
+
 jobs:
   lint-test-build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: crtest
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: billing_test
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 10
     defaults:
       run:
         working-directory: frontend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -34,8 +48,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Test
+      - name: Test (including subscription ledger replay on disposable Postgres)
         env:
+          BILLING_TEST_DATABASE_URL: postgresql://crtest:ci-only@127.0.0.1:5432/billing_test
           CI: true
         run: npm test
 
