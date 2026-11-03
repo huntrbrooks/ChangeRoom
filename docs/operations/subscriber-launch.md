@@ -4,7 +4,7 @@ Proposed initial owner: Gerard Grenville (confirm coverage and a substitute befo
 
 ## Which application is being released?
 
-The subscriber candidate adds authenticated Next.js `/api/try-on/jobs` and `/api/try-on/recent` routes, Postgres job functions and the separately deployed Render FastAPI worker. See [subscriber job funding, role grants and expiry](../../database/TRYON_JOBS.md). Check the release manifest before a rollout. The documented legacy Next `/api/try-on` and `/api/upload-urls` do not exist in the November baseline. Older builds used browser-managed credit holds and browser-driven finalization. Do not unblock purchases on those builds. Keep customer billing management and verified webhooks available during an incident.
+The subscriber candidate issues an owner-bound job via Next.js `POST /api/try-on/hold`. The browser sends the job and photos to the separate Render FastAPI worker; after settlement, the signed-in customer can retrieve `GET /api/try-on/jobs/[id]/result` or list unexpired looks at `GET /api/try-on/recent`. PostgreSQL records funding, status and the private result. See [subscriber job funding, role grants and expiry](../../database/TRYON_JOBS.md). Check the release manifest before a rollout. The documented legacy Next `/api/try-on` and `/api/upload-urls` do not exist in the November baseline. Older builds used browser-managed credit holds and browser-driven finalization. Do not unblock purchases on those builds. Keep customer billing management and verified webhooks available during an incident.
 
 ## Before the first paid account
 
