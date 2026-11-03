@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import { ArrowLeft } from 'lucide-react';
 import { PricingTable } from '../components/PricingTable';
+import { SupportEmail } from '../components/HelpPage';
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
@@ -64,14 +65,20 @@ function PricingPageContent() {
               Manage billing or cancel a subscription
             </Link>
           </div>
-          <div><a className="underline text-sm" href="https://billing.stripe.com/p/login/6oU14n1e8drn28E9D9bMQ00" rel="noreferrer">Access the Stripe portal by email</a>
-          </div>
+          {/* Only production may send a customer to the live Stripe email portal. */}
+          {process.env.VERCEL_ENV === 'production' && (
+            <div>
+              <a className="underline text-sm" href="https://billing.stripe.com/p/login/6oU14n1e8drn28E9D9bMQ00" rel="noreferrer">
+                Access the Stripe portal by email
+              </a>
+            </div>
+          )}
         </div>
 
         <div className="bg-white border border-[#8B5CF6]/30 rounded-2xl p-4 md:p-6 shadow-sm">
            {canCreateCheckout() ? <PricingTable showCreditPacks /> : (
             <p className="text-center text-sm text-slate-700">
-              Existing customers can still access invoices, update payment details, and manage their subscription through the billing portal.
+              Existing customers can still access invoices, update payment details, and manage their subscription through the billing portal. For help with a charge, missing credits or cancellation, contact <SupportEmail />.
             </p>
           )}
         </div>
