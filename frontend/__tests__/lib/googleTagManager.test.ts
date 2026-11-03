@@ -16,3 +16,15 @@ describe("googleTagManager", () => {
     expect(getGoogleTagManagerId()).toBe("GTM-TEST123");
   });
 });
+
+it("never loads the marketing container on a staging preview", async () => {
+  const original = process.env.VERCEL_ENV;
+  try {
+    process.env.VERCEL_ENV = "preview";
+    const { getGoogleTagManagerId } = await import("@/lib/googleTagManager");
+    expect(getGoogleTagManagerId()).toBeNull();
+  } finally {
+    if (original === undefined) delete process.env.VERCEL_ENV;
+    else process.env.VERCEL_ENV = original;
+  }
+});

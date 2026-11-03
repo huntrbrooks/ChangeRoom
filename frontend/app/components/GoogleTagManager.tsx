@@ -3,6 +3,7 @@ import { getGoogleTagManagerId } from "@/lib/googleTagManager";
 
 export function GoogleTagManagerHead() {
   const gtmId = getGoogleTagManagerId();
+  if (!gtmId) return null;
 
   return (
     <Script id="google-tag-manager" strategy="beforeInteractive">
@@ -19,6 +20,7 @@ export function GoogleTagManagerHead() {
 
 export function GoogleTagManagerBody() {
   const gtmId = getGoogleTagManagerId();
+  if (!gtmId) return null;
 
   return (
     <noscript>
