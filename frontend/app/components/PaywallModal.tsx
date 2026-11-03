@@ -1,5 +1,6 @@
 'use client';
 
+import { NEW_PURCHASES_ENABLED, PURCHASE_PAUSE_NOTICE } from '@/lib/purchase-availability';
 import React from 'react';
 import Link from 'next/link';
 import { X, Sparkles, Zap, Crown, CreditCard, Check } from 'lucide-react';
@@ -29,6 +30,17 @@ export function PaywallModal({
   plan,
   onTrial,
 }: PaywallModalProps) {
+  if (!NEW_PURCHASES_ENABLED) {
+    if (!isOpen) return null;
+    return <div role="dialog" aria-modal="true" aria-label="Purchases paused" className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
+      <div className="max-w-md rounded-xl bg-white p-6 text-black">
+        <h2 className="text-xl font-semibold">Purchases paused</h2>
+        <p className="my-4">{PURCHASE_PAUSE_NOTICE}</p>
+        <Link href="/pricing" className="underline">Manage existing billing</Link>
+        <button type="button" onClick={onClose} className="ml-5 underline">Close</button>
+      </div>
+    </div>;
+  }
   return hasUsableClerkKey() ? (
     <PaywallModalWithClerk
       isOpen={isOpen}
