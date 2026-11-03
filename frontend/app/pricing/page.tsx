@@ -58,13 +58,13 @@ function PricingPageContent() {
           </p>
           <div className="pt-2 flex justify-center">
             <Link
-              href="https://billing.stripe.com/p/login/6oU14n1e8drn28E9D9bMQ00"
-              target="_blank"
-              rel="noopener noreferrer"
+              href="/billing"
               className="inline-flex items-center justify-center rounded-full bg-[#8B5CF6] px-5 py-2.5 text-white font-semibold hover:bg-[#7a4ee2] transition-colors"
             >
               Manage billing or cancel a subscription
             </Link>
+          </div>
+          <div><a className="underline text-sm" href="https://billing.stripe.com/p/login/6oU14n1e8drn28E9D9bMQ00" rel="noreferrer">Access the Stripe portal by email</a>
           </div>
         </div>
 

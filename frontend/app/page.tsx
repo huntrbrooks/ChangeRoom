@@ -6,7 +6,6 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useUser, useAuth } from '@clerk/nextjs';
 import { httpClient } from '@/lib/httpClient';
-import { fetchWithRequestId } from '@/lib/fetchWithRequestId';
 import { UploadZone } from './components/UploadZone';
 import { BulkUploadZone } from './components/BulkUploadZone';
 import { TryOnFromUrl } from './components/TryOnFromUrl';
@@ -47,7 +46,7 @@ import { hasUsableClerkPublishableKey } from '@/lib/clerk-public-config';
 import { ensureAbsoluteUrl } from '@/lib/url';
 import { resolveBackendApiUrl } from '@/lib/backend-url';
 import { probeBackendHealth } from '@/lib/backendHealth';
-import { isMyOutfitsEnabled, isTryOnFromUrlEnabled } from '@/lib/featureFlags';
+import { isTryOnFromUrlEnabled } from '@/lib/featureFlags';
 import { ANALYTICS_EVENTS, captureEvent } from '@/lib/analytics';
 import { trackTrialConsumed, trackOutfitGenerated } from '@/lib/userEvents';
 import { getBillingBannerState } from '@/lib/billingBanner';
@@ -87,6 +86,7 @@ interface ProcessedModelPhoto {
 }
 
 interface BillingInfo {
+  isFrozen?: boolean;
   plan: 'free' | 'standard' | 'pro';
   creditsAvailable: number;
   creditsRefreshAt: Date | null;
@@ -126,48 +126,7 @@ const formatCurrency = (value?: number | null, currency?: string | null) => {
 };
 
 const DATA_IMAGE_URL_PATTERN = /^data:image\/[a-zA-Z0-9.+-]+;base64,/i;
-const HTTP_IMAGE_URL_PATTERN = /^https?:\/\//i;
 const BLOB_URL_PATTERN = /^blob:/i;
-const BASE64_IMAGE_PATTERN = /^[A-Za-z0-9+/=\s]+$/;
-const IMAGE_PATH_PATTERN = /(?:^|\/)(?:uploads|images|generated|results|static|tmp)\//i;
-const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|webp|gif|avif)(?:[?#].*)?$/i;
-
-const normalizeTryOnResultImageUrl = (
-  rawUrl: unknown,
-  backendBaseUrl: string
-): string | null => {
-  if (typeof rawUrl !== 'string') {
-    return null;
-  }
-
-  const trimmed = rawUrl.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  if (
-    DATA_IMAGE_URL_PATTERN.test(trimmed) ||
-    HTTP_IMAGE_URL_PATTERN.test(trimmed) ||
-    BLOB_URL_PATTERN.test(trimmed)
-  ) {
-    return trimmed;
-  }
-
-  const compact = trimmed.replace(/\s+/g, '');
-  if (compact.length > 1000 && BASE64_IMAGE_PATTERN.test(compact)) {
-    return `data:image/png;base64,${compact}`;
-  }
-
-  if (
-    trimmed.startsWith('/') ||
-    IMAGE_PATH_PATTERN.test(trimmed) ||
-    IMAGE_EXTENSION_PATTERN.test(trimmed)
-  ) {
-    return ensureAbsoluteUrl(trimmed, backendBaseUrl) || null;
-  }
-
-  return null;
-};
 
 const addImageCacheBust = (url: string): string =>
   DATA_IMAGE_URL_PATTERN.test(url) || BLOB_URL_PATTERN.test(url)
@@ -322,7 +281,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const { user, isLoaded, getToken, isSignedIn, isAuthLoaded } = auth;
   const router = useRouter();
   const backendApi = useMemo(() => resolveBackendApiUrl(), []);
-  const myOutfitsEnabled = useMemo(() => isMyOutfitsEnabled(), []);
   const pitchDemoEnabled = false;
   const tryOnFromUrlEnabled = useMemo(() => isTryOnFromUrlEnabled(), []);
   const [userImages, setUserImages] = useState<File[]>([]);
@@ -355,6 +313,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [billingStatus, setBillingStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [billingError, setBillingError] = useState<string | null>(null);
+  const [healthAttempt, setHealthAttempt] = useState(0);
   const [backendAvailability, setBackendAvailability] = useState<BackendAvailability>(
     backendApi.apiUrl ? 'checking' : 'unavailable'
   );
@@ -390,14 +349,12 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const creditLoggedRef = useRef(false);
   const trialConsumedRef = useRef(false);
   const contentBlockWarnedRef = useRef(false);
-  const creditHoldAppliedRef = useRef(false);
   const virtualMirrorSectionRef = useRef<HTMLElement | null>(null);
   const stickyHeaderRef = useRef<HTMLElement | null>(null);
   const mobileActionBarRef = useRef<HTMLDivElement | null>(null);
   const selfUploadInputRef = useRef<HTMLInputElement | null>(null);
   const wardrobeUploadInputRef = useRef<HTMLInputElement | null>(null);
   const actionFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const modelPhotoProcessingRunRef = useRef(0);
   const modelPhotoAutoRunKeyRef = useRef<string | null>(null);
 
   const withRetry = useCallback(
@@ -495,95 +452,12 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     [backendApi.apiUrl, backendApi.reason, backendAvailability, backendAvailabilityMessage, setError]
   );
 
-  const preprocessModelPhotos = useCallback(
-    async (files: File[]) => {
-      const runId = modelPhotoProcessingRunRef.current + 1;
-      modelPhotoProcessingRunRef.current = runId;
-
-      if (files.length === 0) {
-        setProcessedModelPhoto(null);
-        setModelPhotoStatus('idle');
-        setModelPhotoMessage(null);
-        return;
-      }
-
-      if (pitchDemoEnabled || backendAvailability !== 'healthy') {
-        setProcessedModelPhoto(null);
-        setModelPhotoStatus('idle');
-        setModelPhotoMessage(null);
-        return;
-      }
-
-      const API_URL = getBackendApiUrl('Model photo preprocessing');
-      if (!API_URL) {
-        setProcessedModelPhoto(null);
-        setModelPhotoStatus('error');
-        setModelPhotoMessage('Model photo analysis is unavailable.');
-        return;
-      }
-
-      try {
-        setModelPhotoStatus('processing');
-        setModelPhotoMessage(
-          files.length > 1
-            ? 'Analysing model photos and creating a try-on reference...'
-            : 'Analysing model photo...'
-        );
-
-        const formData = new FormData();
-        files.slice(0, 5).forEach((file) => {
-          formData.append('model_images', file);
-        });
-        const headers = await getBackendAuthHeaders();
-        const response = await fetchWithRequestId(`${API_URL}/api/preprocess-model-photos`, {
-          method: 'POST',
-          body: formData,
-          headers,
-        }, { prefix: 'model-preprocess', force: true });
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ detail: response.statusText }));
-          throw new Error(errorData.detail || errorData.error || `Model analysis failed: ${response.statusText}`);
-        }
-
-        const result = await response.json();
-        if (modelPhotoProcessingRunRef.current !== runId) {
-          return;
-        }
-
-        const primary = result?.primary || {};
-        const rawUrl = primary.image_url || primary.file_url;
-        const imageUrl = ensureAbsoluteUrl(rawUrl) || rawUrl;
-        if (!imageUrl) {
-          throw new Error('Model preprocessing returned no image URL.');
-        }
-
-        setProcessedModelPhoto({
-          imageUrl,
-          metadata: primary.metadata || result.metadata || {},
-          source: primary.source || (files.length > 1 ? 'composite' : 'single'),
-          storagePath: primary.storage_path,
-          mimeType: primary.mime_type,
-        });
-        setModelPhotoStatus('ready');
-        setModelPhotoMessage(
-          files.length > 1
-            ? 'Composite model reference ready for try-on.'
-            : 'Model reference ready for try-on.'
-        );
-      } catch (error) {
-        if (modelPhotoProcessingRunRef.current !== runId) {
-          return;
-        }
-        const message = error instanceof Error ? error.message : 'Model photo analysis failed.';
-        console.error('Model photo preprocessing failed', error);
-        setProcessedModelPhoto(null);
-        setModelPhotoStatus('error');
-        setModelPhotoMessage(message);
-      }
-    },
-    [backendAvailability, getBackendApiUrl, getBackendAuthHeaders, pitchDemoEnabled]
-  );
+  const preprocessModelPhotos = useCallback((files: File[]) => {
+    // Person images stay on-device until the customer requests a generation.
+    setProcessedModelPhoto(null);
+    setModelPhotoStatus(files.length ? 'ready' : 'idle');
+    setModelPhotoMessage(files.length ? 'Ready to generate. Your photos have not been uploaded.' : null);
+  }, []);
 
   const updateUserImagesAndPreprocess = useCallback(
     (files: File[]) => {
@@ -694,9 +568,21 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [backendApi.apiUrl, backendApi.reason]);
+  }, [backendApi.apiUrl, backendApi.reason, healthAttempt]);
 
   const isSignedInReady = isAuthLoaded && isSignedIn;
+
+  const [recentLooks, setRecentLooks] = useState<{id: string; updated_at: string}[]>([]);
+  const [historyError, setHistoryError] = useState(false);
+  const loadRecentLooks = useCallback(async () => {
+    if (!isSignedInReady) return;
+    try {
+      const { data } = await httpClient.get('/api/try-on/recent');
+      setRecentLooks(data.looks || []);
+      setHistoryError(false);
+    } catch { setHistoryError(true); }
+  }, [isSignedInReady]);
+  useEffect(() => { setRecentLooks([]); void loadRecentLooks(); }, [user?.id, loadRecentLooks]);
 
   const fetchBilling = useCallback(async () => {
     try {
@@ -816,7 +702,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const userEmail = getUserPrimaryEmail(user);
   const isBypass = isBypassUser(userEmail) || Boolean(billing?.unlimitedCredits);
   const redirectToPricing = useCallback(() => {
-    router.push('/pricing?promo=xmas');
+    router.push('/pricing');
   }, [router]);
 
   const isOnTrial = billing && (billing.trialsRemaining ?? 0) > 0 && !isBypass;
@@ -2020,47 +1906,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     setShowWardrobeLimitModal(false);
   }, []);
 
-  // Save outfit to My Outfits (persistent storage via API)
-  const saveOutfitToMyOutfits = async (imageUrl: string, clothingFiles: File[], wardrobeItemsData: typeof wardrobeItems) => {
-    try {
-      const clothingItems = wardrobeItemsData.map((item, _idx) => ({
-        filename: item.file.name,
-        category: item.analysis?.analysis?.category || item.analysis?.analysis?.body_region || 'unknown',
-        itemType: item.analysis?.analysis?.item_type || '',
-        color: item.analysis?.analysis?.color || '',
-        style: item.analysis?.analysis?.style || '',
-        description: item.analysis?.analysis?.description || item.analysis?.analysis?.short_description || '',
-        tags: item.analysis?.analysis?.tags || [],
-        fileUrl: (item.file as FileWithMetadata)?.file_url || null,
-      }));
-
-      // Save to database via API
-      const response = await httpClient.post('/api/my/outfits', {
-        imageUrl,
-        clothingItems,
-      });
-
-      // Dispatch custom event to notify MyOutfits component to refresh
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('outfitSaved'));
-      }
-      
-      logger.info('outfit_saved', {
-        outfitId: response.data?.id,
-      });
-    } catch (error: unknown) {
-      const err =
-        typeof error === 'object' && error !== null
-          ? (error as { response?: { status?: number }; message?: string })
-          : { message: String(error) };
-      console.error('Error saving outfit to My Outfits:', err.message || err);
-      // Don't throw - this is non-critical, but log for debugging
-      if (err.response?.status === 401) {
-        console.warn('User not authenticated, outfit not saved');
-      }
-    }
-  };
-
   const applyPitchDemoResult = useCallback(
     async (requestId: string | null) => {
       await new Promise((resolve) => setTimeout(resolve, 900));
@@ -2128,6 +1973,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       return;
     }
 
+    if (billing?.isFrozen) { router.push('/billing'); return; }
     if (lacksCredits) {
       redirectToPricing();
       return;
@@ -2181,7 +2027,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     // Reset state for new generation
     creditLoggedRef.current = false;
     trialConsumedRef.current = false;
-    creditHoldAppliedRef.current = false;
     if (resultImageLoadTimerRef.current) {
       clearTimeout(resultImageLoadTimerRef.current);
       resultImageLoadTimerRef.current = null;
@@ -2220,7 +2065,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     let preparedTryOnFiles: File[] = [];
 
     let requestId: string | null = null;
-    let usedFreeTrialForRequest = false;
 
     try {
       const ingestUrl = process.env.NEXT_PUBLIC_INGEST_URL;
@@ -2266,17 +2110,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       }
       logger.info("tryon_backend_selected", { apiUrl: API_URL });
       
-      // Wake up Render service first (health check)
-      logger.info("tryon_backend_wakeup_started");
-      try {
-        const healthCheck = await httpClient.get(`${API_URL}/`, { timeout: 180000 }); // 3 minutes
-        logger.info("tryon_backend_wakeup_succeeded", { status: healthCheck.status });
-      } catch (wakeError: unknown) {
-        const error = wakeError instanceof Error ? wakeError : new Error(String(wakeError));
-        console.warn("Health check failed (service may be waking up):", error.message);
-        // Continue anyway - service might still be waking up
-      }
-
       // Step 1: Call Try-On API (sequential execution - must succeed before product search)
       let tryOnRes;
       try {
@@ -2310,14 +2143,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           tryOnFormData.append('user_images', img);
         });
         
-        // Also append the first one as 'user_image' for backward compatibility
-        if (modelImagesForRequest.length > 0) {
-           tryOnFormData.append('user_image', modelImagesForRequest[0]);
-        }
-
-      // Send main reference index (current first image after any reordering)
-      tryOnFormData.append('main_index', '0');
-
         preparedTryOnFiles = activeWardrobeItems.map(item => item.file);
 
         setLastRequestId(requestId);
@@ -2341,45 +2166,20 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         
         logger.info("tryon_uploads_prepared", { itemCount: preparedTryOnFiles.length });
 
-        tryOnFormData.append('requestId', requestId);
-        tryOnFormData.append('quality', 'standard');
-
-        // Step 1a: Place a credit hold (Next.js API) before the long-running Render request.
-        // This ensures credits decrement immediately and are recorded server-side.
+        // The web service issues a short-lived opaque intent. Render consumes it once
+        // using the authenticated subject and settles after a usable result is persisted.
         try {
-          const holdRes = await httpClient.post(
-            '/api/try-on/hold',
-            { requestId, quality: 'standard' },
-            { headers: { ...(requestId ? { 'X-Request-Id': requestId } : {}) } }
-          );
-          creditHoldAppliedRef.current = Boolean(holdRes?.data?.creditHoldApplied);
-          const creditsAvailable = holdRes?.data?.creditsAvailable;
-          const usedFreeTrial = Boolean(holdRes?.data?.usedFreeTrial);
-          const unlimitedCredits = Boolean(holdRes?.data?.unlimitedCredits);
-          usedFreeTrialForRequest = usedFreeTrial;
-          setIsPreviewResult(usedFreeTrial);
-          if (typeof creditsAvailable === 'number') {
-            setBilling((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    creditsAvailable,
-                    unlimitedCredits: prev.unlimitedCredits || unlimitedCredits,
-                    isPrivileged: prev.isPrivileged || unlimitedCredits,
-                  }
-                : prev
-            );
-          }
-          if (usedFreeTrial && billing && !isBypass) {
-            setBilling((prev) => (prev ? { ...prev, trialsRemaining: Math.max(0, prev.trialsRemaining - 1) } : prev));
-          }
+          const issued = await httpClient.post('/api/try-on/hold', {});
+          requestId = issued.data?.requestId;
+          if (typeof requestId !== 'string') throw new Error('Could not authorize generation.');
+          setLastRequestId(requestId);
         } catch (holdErr: unknown) {
           // If user has no credits, this endpoint returns 402 + { error: 'no_credits' }
           const h = holdErr as {
             response?: { status?: number; data?: { error?: string; creditsAvailable?: number } };
           };
           if (h.response?.status === 402 || h.response?.data?.error === 'no_credits') {
-            redirectToPricing();
+            if (h.response?.data?.error === 'account_frozen') router.push('/billing'); else redirectToPricing();
             setIsTryOnLoading(false);
             setIsGenerating(false);
             console.error = originalError;
@@ -2549,20 +2349,15 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           timestamp: Date.now(),
         });
         const backendAuthHeaders = await getBackendAuthHeaders();
-        tryOnRes = await withRetry(
-          () =>
-            httpClient.post(`${API_URL}/api/try-on`, tryOnFormData, {
-              headers: {
-                'Content-Type': 'multipart/form-data',
-                ...(requestId ? { 'X-Request-Id': requestId } : {}),
-                ...backendAuthHeaders,
-              },
-              timeout: 600000, // 10 minutes for Render wake-up + VTON generation
-              signal: controller.signal,
-            }),
-          1,
-          2000
-        );
+        tryOnRes = await httpClient.post(`${API_URL}/api/try-on`, tryOnFormData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+            'X-Request-Id': requestId,
+            ...backendAuthHeaders,
+          },
+          timeout: 550000,
+          signal: controller.signal,
+        });
         logIngest({
           event: 'try_on_request_succeeded',
           data: {
@@ -2572,9 +2367,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           timestamp: Date.now(),
         });
 
-        // Render stack does not manage billing; keep preview state from the hold call above.
-        // (If Render happens to return usedFreeTrial, we still respect it.)
-        setIsPreviewResult(Boolean(tryOnRes?.data?.usedFreeTrial) || isPreviewResult);
+        setIsPreviewResult(Boolean(tryOnRes.data.usedFreeTrial));
         setModestyApplied(Boolean(tryOnRes?.data?.modesty_applied));
         setBlockedWardrobeIndices(new Set());
         setLastSafetyBlockDetail(null);
@@ -2582,17 +2375,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         if (tryOnRes.data.image_url) {
           // Reset content-block warning state after a successful generation
           contentBlockWarnedRef.current = false;
-          const imageUrl = normalizeTryOnResultImageUrl(tryOnRes.data.image_url, API_URL);
-          if (!imageUrl) {
-            logger.error("tryon_invalid_image_url", {
-              requestId,
-              rawImageUrl: tryOnRes.data.image_url,
-            });
-            throw new Error(
-              "The try-on service returned an invalid image URL. Please try again."
-            );
-          }
-          
+          if (tryOnRes.data.job_id !== requestId) throw new Error('Unexpected generation result.');
+          const imageUrl = new URL(`/api/try-on/jobs/${requestId}/result`, window.location.origin).href;
           captureEvent(ANALYTICS_EVENTS.TRY_ON_SUCCESS, {
             request_id: requestId,
             used_free_trial: Boolean(tryOnRes?.data?.usedFreeTrial),
@@ -2612,12 +2396,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           const finalImageUrl = addImageCacheBust(imageUrl);
           
           // Force state update by setting to null first, then to new URL
-          // Finalize the hold for audit purposes (idempotent; does not change visible balance).
-          if (creditHoldAppliedRef.current && requestId) {
-            httpClient
-              .post('/api/try-on/finalize', { requestId })
-              .catch((e) => console.warn('Failed to finalize credit hold', e));
-          }
           if (resultImageLoadTimerRef.current) {
             clearTimeout(resultImageLoadTimerRef.current);
             resultImageLoadTimerRef.current = null;
@@ -2632,23 +2410,11 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             logger.info("tryon_completed", { requestId });
           });
           
-          if (myOutfitsEnabled) {
-            saveOutfitToMyOutfits(imageUrl, preparedTryOnFiles, wardrobeItems);
+          if (tryOnRes.data.usedFreeTrial) {
+            trialConsumedRef.current = true;
+            trackTrialConsumed(requestId || undefined);
           }
-          
-          // Mark trial as used if backend reported free trial consumption (idempotent)
-          if (!isBypass && (usedFreeTrialForRequest || Boolean(tryOnRes?.data?.usedFreeTrial))) {
-            try {
-              await httpClient.post('/api/my/trial/consume');
-          trialConsumedRef.current = true;
-          setBilling((prev) => (prev ? { ...prev, trialsRemaining: Math.max(0, prev.trialsRemaining - 1) } : prev));
-          // Track trial consumption for n8n automation
-          trackTrialConsumed(requestId || undefined);
-            } catch (consumeErr) {
-              console.warn('Failed to mark trial consumed client-side', consumeErr);
-            }
-          }
-
+          void loadRecentLooks();
           // Track outfit generation for n8n automation
           trackOutfitGenerated(requestId || '', preparedTryOnFiles.length);
 
@@ -2673,14 +2439,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           timestamp: Date.now(),
         });
         if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
-          try {
-            if (requestId) {
-              await httpClient.post('/api/try-on/cancel', { requestId });
-            }
-          } catch {
-            // ignore
-          }
-          setError('Operation cancelled');
+          setError('You stopped waiting. A completed look can be reopened below for 24 hours. Failed generations are refunded.');
           setIsTryOnLoading(false);
           setIsGenerating(false);
           console.error = originalError;
@@ -2689,22 +2448,14 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         
         // Handle no credits error
         if (error.response?.status === 402 || error.response?.data?.error === 'no_credits') {
-          redirectToPricing();
+          if ([error.response?.data?.detail, error.response?.data?.error].includes('account_frozen')) router.push('/billing'); else redirectToPricing();
           setIsTryOnLoading(false);
           setIsGenerating(false);
           console.error = originalError;
           return;
         }
 
-        // On non-cancel failure, release the hold so the user gets credits back.
-        if (creditHoldAppliedRef.current && requestId) {
-          try {
-            await httpClient.post('/api/try-on/cancel', { requestId });
-          } catch (releaseErr) {
-            console.warn('Failed to release credit hold after try-on failure', releaseErr);
-          }
-        }
-
+        void fetchBilling();
         const detail = error.response?.data?.detail || error.response?.data?.error || '';
         const detailText = typeof detail === 'string' ? detail : '';
         const status = error.response?.status;
@@ -2728,61 +2479,14 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           } else if (typeof error?.message === 'string') {
             setLastSafetyBlockDetail(error.message);
           }
-          // First content-block after backend automatic retries: warn user.
-          if (!contentBlockWarnedRef.current) {
-            contentBlockWarnedRef.current = true;
-            setError(
-              "Your try-on was blocked by content safety filters (after automatic retries). " +
-                "Please choose a more modest item or adjust the clothing description. " +
-                (isBypass
-                  ? "Your account will not be charged credits for retrying."
-                  : "Warning: if your next attempt is blocked again for the same reason, 1 credit will be deducted.")
-            );
-            setIsTryOnLoading(false);
-            setIsGenerating(false);
-            console.error = originalError;
-            return;
-          }
-
-          // Second (or later) blocked attempt after warning: apply 1-credit penalty (idempotent by requestId).
-          try {
-            let charged = false;
-            if (!isBypass && requestId) {
-              const penaltyRes = await httpClient.post('/api/my/credits/content-block-penalty', { requestId });
-              charged = Boolean(penaltyRes?.data?.charged);
-              const creditsAvailable = penaltyRes?.data?.creditsAvailable;
-              if (typeof creditsAvailable === 'number') {
-                setBilling((prev) => (prev ? { ...prev, creditsAvailable } : prev));
-              } else {
-                // Fallback to a refresh
-                if (isSignedInReady) fetchBilling();
-              }
-            }
-            setError(
-              "Your try-on was blocked again by content safety filters. " +
-                (charged
-                  ? "1 credit has been deducted. "
-                  : "No credits were deducted. ") +
-                "Please choose a different (more modest) item or adjust the description and try again."
-            );
-          } catch (penaltyErr: unknown) {
-            const pErr = penaltyErr as { response?: { status?: number; data?: { error?: string } } };
-            if (pErr.response?.status === 402 || pErr.response?.data?.error === 'no_credits') {
-              redirectToPricing();
-            } else {
-              setError(
-                "Your try-on was blocked again by content safety filters. " +
-                  "We could not apply the credit deduction automatically—please refresh and try again."
-              );
-            }
-          } finally {
-            setIsTryOnLoading(false);
-            setIsGenerating(false);
-            console.error = originalError;
-          }
+          contentBlockWarnedRef.current = true;
+          setError('This image was blocked by safety filters. Your credit or free trial is restored. Choose another photo or garment.');
+          setIsTryOnLoading(false);
+          setIsGenerating(false);
+          console.error = originalError;
           return;
         }
-        
+
         console.error("Error in try-on:", tryOnError);
         // Log full error response for debugging
         if (error.response?.data) {
@@ -2917,7 +2621,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     } catch (err: unknown) {
       const error = err as { name?: string; code?: string; response?: { status?: number; data?: { detail?: string } }; message?: string };
       if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
-        setError('Operation cancelled');
+        setError('Stopped waiting. Check your recent looks before trying again.');
         setIsTryOnLoading(false);
         setIsGenerating(false);
         console.error = originalError;
@@ -2981,7 +2685,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
               className="hidden items-center gap-2 text-sm font-semibold text-[#008b8b] sm:flex"
             >
               <Sparkles size={19} fill="#008b8b" strokeWidth={1.6} />
-              {isBypass ? 'Unlimited' : `${billing?.creditsAvailable ?? 120} Credits`}
+              {isBypass ? 'Unlimited' : billing ? `${billing.creditsAvailable} Credits` : (isAuthenticated ? 'Loading balance…' : 'Pricing')}
             </Link>
             <div className="hidden h-8 w-px bg-slate-200 sm:block" />
             {isAuthenticated ? (
@@ -3047,6 +2751,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
               See it on you. Shop with confidence.
             </p>
 
+            {backendAvailability === 'unavailable' && (
+              <p className="mt-3 text-sm text-amber-800" role="status">The try-on service is warming up or offline. <button type="button" className="underline" onClick={() => setHealthAttempt(n => n + 1)}>Retry connection</button></p>
+            )}
             {actionFeedback && (
               <div
                 role="status"
@@ -3296,6 +3003,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 type="button"
                 onClick={() => {
                   if (isGenerating) return;
+                  if (billing?.isFrozen) { router.push('/billing'); return; }
                   if (lacksCredits) {
                     redirectToPricing();
                     return;
@@ -3317,7 +3025,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 <span>{isGenerating ? 'Generating your look...' : isGuestPitchDemo ? 'Launch demo preview' : 'Try it on'}</span>
                 {!isGenerating && (
                   <span className="ml-auto rounded-full bg-[#5528c8] px-4 py-1.5 text-sm font-semibold text-white/90">
-                    {isOnTrial ? 'Free' : '2 Credits'}
+                    {isBypass ? 'Included' : isOnTrial ? 'Free' : '1 credit'}
                   </span>
                 )}
               </button>
@@ -3327,7 +3035,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   onClick={() => abortController?.abort()}
                   className="w-full text-center text-sm font-medium text-slate-500 underline hover:text-[#6b35f4]"
                 >
-                  Cancel
+                  Stop waiting
                 </button>
               )}
             </div>
@@ -3497,6 +3205,16 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             </div>
           </section>
         </div>
+
+        {isSignedInReady && (
+          <section aria-label="Recent private looks" className="mt-5 rounded-lg border border-slate-200 p-4">
+            <h2 className="font-semibold">Your recent looks</h2>
+            <p className="text-sm text-slate-600">Looks are private and available here for 24 hours. Download a copy to keep it.</p>
+            <button type="button" className="text-sm font-medium underline" onClick={() => void loadRecentLooks()}>Refresh recent looks</button>
+            {historyError && <p role="status">Could not load recent looks. Please refresh this list before generating again.</p>}
+            <ul>{recentLooks.map(look => <li key={look.id}><a className="text-sm underline" href={`/api/try-on/jobs/${look.id}/result`} target="_blank" rel="noreferrer">Open look from {new Date(look.updated_at).toLocaleString()}</a></li>)}</ul>
+          </section>
+        )}
 
         <section id="shop-the-look" className="mt-5 scroll-mt-28 border-t border-slate-200 pt-4">
           <div className="mb-4 flex items-center justify-between gap-4">
@@ -3671,7 +3389,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
               <div className="min-w-0">
                 <p className="font-semibold text-black text-sm sm:text-base">Free Try-Ons Available!</p>
                 <p className="text-xs sm:text-sm text-slate-600 mt-0.5">
-                  You have {billing.trialsRemaining} free try-on{billing.trialsRemaining !== 1 ? 's' : ''}. Upgrade to get unlimited try-ons with a subscription.
+                  You have {billing.trialsRemaining} free try-on{billing.trialsRemaining !== 1 ? 's' : ''}. View pricing for monthly credit allowances.
                 </p>
               </div>
             </div>
@@ -3934,7 +3652,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                       logger.info("tryon_button_duplicate_ignored");
                       return;
                     }
-                    if (lacksCredits) {
+                    if (billing?.isFrozen) { router.push('/billing'); return; }
+                  if (lacksCredits) {
                       redirectToPricing();
                       return;
                     }
@@ -4021,9 +3740,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 <button
                   onClick={() => abortController?.abort()}
                   className="w-full text-center text-sm text-slate-600 underline hover:text-[#5b46f4]"
-                  aria-label="Cancel operation"
+                  aria-label="Stop waiting for the result"
                 >
-                  Cancel
+                  Stop waiting
                 </button>
               )}
             </div>
@@ -4305,6 +4024,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   return;
                 }
                 if (isGenerating) return;
+                if (billing?.isFrozen) { router.push('/billing'); return; }
                 if (lacksCredits) {
                   redirectToPricing();
                   return;
