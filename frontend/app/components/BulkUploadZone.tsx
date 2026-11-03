@@ -3,7 +3,6 @@ import React, { useCallback, useState, useEffect } from 'react';
 import { Upload, Loader2, X, RefreshCw } from 'lucide-react';
 import {
   getWearingStyleOptions,
-  hasWearingStyleOptions,
 } from '@/lib/wearingStyles';
 import {
   convertToOptimalImageFile,
