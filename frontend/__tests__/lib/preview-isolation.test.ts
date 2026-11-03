@@ -9,3 +9,11 @@ test('only explicitly isolated previews pass; production is unaffected', () => {
   expect(unsafePreview({ ...staging, NEXT_PUBLIC_API_URL: 'https://changeroom.onrender.com' })).toBe(true);
   expect(unsafePreview({ VERCEL_ENV: 'production' })).toBe(false);
 });
+
+import { canCreateCheckout } from '@/lib/purchase-availability';
+test('test checkout is opt-in and cannot open production or live Stripe', () => {
+  expect(canCreateCheckout(staging)).toBe(false);
+  expect(canCreateCheckout({...staging, CHANGEROOM_TEST_CHECKOUT:'true'})).toBe(true);
+  expect(canCreateCheckout({...staging, VERCEL_ENV:'production', CHANGEROOM_TEST_CHECKOUT:'true'})).toBe(false);
+  expect(canCreateCheckout({...staging, STRIPE_SECRET_KEY:'sk_live_fixture', CHANGEROOM_TEST_CHECKOUT:'true'})).toBe(false);
+});

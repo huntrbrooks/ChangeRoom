@@ -1,4 +1,4 @@
-import { NEW_PURCHASES_ENABLED, PURCHASE_PAUSE_NOTICE } from '@/lib/purchase-availability';
+import { canCreateCheckout, PURCHASE_PAUSE_NOTICE } from '@/lib/purchase-availability';
 import Image from 'next/image';
 import Link from 'next/link';
 import type { Metadata } from 'next';
@@ -54,7 +54,7 @@ function PricingPageContent() {
             Pricing &amp; Plans
           </h1>
           <p className="text-base md:text-lg text-black/70">
-            {NEW_PURCHASES_ENABLED ? 'Pick a subscription or credit pack and checkout securely via Stripe.' : PURCHASE_PAUSE_NOTICE}
+            {canCreateCheckout() ? 'Pick a subscription or credit pack and checkout securely via Stripe.' : PURCHASE_PAUSE_NOTICE}
           </p>
           <div className="pt-2 flex justify-center">
             <Link
@@ -69,7 +69,7 @@ function PricingPageContent() {
         </div>
 
         <div className="bg-white border border-[#8B5CF6]/30 rounded-2xl p-4 md:p-6 shadow-sm">
-           {NEW_PURCHASES_ENABLED ? <PricingTable showCreditPacks /> : (
+           {canCreateCheckout() ? <PricingTable showCreditPacks /> : (
             <p className="text-center text-sm text-slate-700">
               Existing customers can still access invoices, update payment details, and manage their subscription through the billing portal.
             </p>
