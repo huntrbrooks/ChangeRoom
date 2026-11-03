@@ -18,7 +18,7 @@ if [[ "$status" != 1 ]]; then
   echo "Expected an immediate configuration error without a Clerk issuer; got $status" >&2
   exit 1
 fi
-docker logs "$name" 2>&1 | grep -Fq "Invalid worker settings"
+docker logs "$name" 2>&1 | grep -F "Invalid worker settings" >/dev/null
 cleanup
 
 # Uvicorn must fail its FastAPI lifespan even when only a fallback is configured.
@@ -31,7 +31,7 @@ if [[ "$status" != 3 ]]; then
   echo "Expected Uvicorn startup to reject a fallback-only worker; got $status" >&2
   exit 1
 fi
-docker logs "$name" 2>&1 | grep -Fq "Primary image provider is not configured"
+docker logs "$name" 2>&1 | grep -F "Primary image provider is not configured" >/dev/null
 cleanup
 docker run --name "$name" --detach "${restrictions[@]}" "${settings[@]}" \
   --env CLERK_ISSUER=https://identity.example.invalid \
