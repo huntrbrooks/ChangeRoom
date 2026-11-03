@@ -20,7 +20,10 @@ _JWKS_CACHE: Dict[str, Any] = {"expires_at": 0.0, "keys": []}
 
 def _get_auth_mode() -> str:
     mode = (os.getenv("BACKEND_AUTH_MODE") or "clerk").strip().lower()
-    production = bool(os.getenv("RENDER")) or os.getenv("ENVIRONMENT", "").lower() == "production"
+    portable = bool(os.getenv("K_SERVICE") or os.getenv("CHANGEROOM_CONTAINER"))
+    production = portable or bool(os.getenv("RENDER")) or os.getenv("ENVIRONMENT", "").lower() == "production"
+    if portable and (mode != "clerk" or not (_get_clerk_issuer() or "").startswith("https://")):
+        raise HTTPException(status_code=503, detail="Backend authentication is not configured")
     if mode not in _AUTH_MODE_VALUES or (production and mode in {"none", "off", "disabled"}):
         raise HTTPException(status_code=503, detail="Backend authentication is not configured")
     return mode

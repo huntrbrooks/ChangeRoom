@@ -1,0 +1,14 @@
+# Run the subscriber worker on a new container host
+
+This image runs only the ChangeRoom FastAPI worker. Next.js, Clerk, Postgres, Stripe, the cleanup schedule and the model provider remain separate. Use a new, isolated staging environment before changing the frontend or any production DNS. This does not deploy the separate YOLO service.
+
+From the repository root, build for the Linux architecture your host supports, for example `docker build --platform=linux/amd64 -t changeroom-worker:rehearsal backend`. Build with the **backend** context: only the selected Python modules and dependency manifest enter the build. Record the resulting image digest and use that immutable image for rehearsal and promotion. Release-gate an image rebuild: the Python base tag and existing application requirements can resolve newer packages.
+
+Set configuration and secrets **at runtime** through the host or a private local env file outside the repo:
+
+- `BACKEND_AUTH_MODE=clerk`, `CLERK_ISSUER`: exact HTTPS issuer origin for the isolated frontend's Clerk instance; if set, `CLERK_JWKS_URL` must be that issuer's `/.well-known/jwks.json`. Configure `CLERK_AUDIENCE` if that instance issues audience-bound session tokens.
+- `ALLOWED_ORIGINS`: comma-separated exact HTTPS origins of the staging frontend. The container rejects wildcards or regexes and omits production and localhost defaults.
+- `TRYON_DATABASE_URL`: staging worker DB role with TLS and the grants in [job setup](../database/TRYON_JOBS.md). Do not supply the schema owner or Stripe secrets. Configure the selected generation provider with a separate sandbox key or capped test budget; liveness does not verify paid model access.
+- `PORT` defaults to 8080; a platform-supplied port overrides it. Use one worker process, writable temporary storage, and initially one simultaneous generation per instance. Set the upstream request timeout to cover the application's 480-second generation deadline plus upload and settlement; confirm body size, memory, upload and timeout limits on the actual host.
+
+A local run is `docker run --rm --read-only --tmpfs /tmp --env-file /absolute/path/to/private-staging.env -p 127.0.0.1:8080:8080 changeroom-worker:rehearsal` (with PORT=8080). The process runs as UID 10001. No disk volume carries customer results. With the required settings missing, it exits before opening a port. GET `/` is liveness only. Verify anonymous POST `/api/try-on` is denied, CORS admits only the staging frontend, a real synthetic HEIF upload produces a usable image, and a signed-in staged user can claim, recover, and refund jobs against the matched DB. Finally point the staging frontend's `NEXT_PUBLIC_API_URL` and `CHANGEROOM_STAGING_API_HOST` at this host and rebuild the frontend. See [release gates](../docs/operations/subscriber-launch.md) before any production traffic.

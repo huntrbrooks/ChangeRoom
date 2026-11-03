@@ -97,7 +97,8 @@ env_allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",
 
 # If ALLOWED_ORIGINS is set but accidentally empty/invalid, fall back to defaults.
 # Otherwise, merge env + defaults to avoid foot-guns that break production.
-allowed_origins = sorted(set(default_allowed_origins + env_allowed_origins))
+allowed_origins = (env_allowed_origins if os.getenv("CHANGEROOM_CONTAINER") == "1"
+                   else sorted(set(default_allowed_origins + env_allowed_origins)))
 
 allowed_origin_regex = os.getenv("ALLOWED_ORIGIN_REGEX", "").strip() or None
 
