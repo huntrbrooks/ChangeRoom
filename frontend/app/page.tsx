@@ -3214,7 +3214,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 onItemRemove={handleItemRemove}
                 onItemReplace={handleItemReplace}
                 blockedItemIndices={blockedWardrobeIndices}
-                getBackendAuthHeaders={getBackendAuthHeaders}
                 isAuthenticated={isAuthenticated || pitchDemoEnabled}
                 enableGuestDemo={pitchDemoEnabled}
                 onAuthRequired={requireAuth}
