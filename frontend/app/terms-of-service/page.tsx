@@ -1,4 +1,5 @@
 import React from 'react';
+import { SupportEmail } from '../components/HelpPage';
 import Link from 'next/link';
 import { ArrowLeft, FileText } from 'lucide-react';
 
@@ -20,7 +21,7 @@ export default function TermsOfService() {
         </div>
 
         <p className="text-gray-600 mb-8 text-sm">
-          Last updated: {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+          Last updated: 4 November 2026
         </p>
 
         <div className="prose prose-invert max-w-none space-y-8 text-gray-700">
@@ -93,10 +94,10 @@ export default function TermsOfService() {
               <li>Pay all charges associated with your account</li>
               <li>Provide accurate billing information</li>
               <li>Authorize us to charge your payment method</li>
-              <li>Understand that all sales are final unless otherwise stated</li>
+              <li>Use the amount, currency, billing interval and credit allowance shown before payment to decide whether to purchase</li>
             </ul>
             <p className="leading-relaxed mt-4">
-              We reserve the right to change our pricing at any time. Changes will not affect purchases already made.
+              One-time credit packs do not renew. Monthly subscriptions renew automatically until cancelled. Credits are added after successful payment. If a renewal fails, paid generation may pause while you update your payment method. Unused purchased credits carry over after cancellation. Cancel in <Link href="/billing" className="underline">Manage billing</Link>; the Stripe portal displays the effective date. Contact <SupportEmail /> if a charge is wrong, the service fails, or you need help cancelling or requesting a refund. Include a receipt reference, never card details.
             </p>
           </section>
 
@@ -113,8 +114,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">8. Disclaimers and Limitations of Liability</h2>
             <p className="leading-relaxed mb-4">
-              THE SERVICE IS PROVIDED &quot;AS IS&quot; AND &quot;AS AVAILABLE&quot; WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, 
-              INCLUDING BUT NOT LIMITED TO IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT.
+              Generated images are illustrative and do not guarantee fit, colour or sizing. Nothing in these terms excludes consumer rights or remedies that cannot be excluded by law, including applicable Australian Consumer Law guarantees.
             </p>
             <p className="leading-relaxed mb-4">
               We do not guarantee that:
@@ -125,8 +125,7 @@ export default function TermsOfService() {
               <li>Defects will be corrected</li>
             </ul>
             <p className="leading-relaxed mt-4">
-              IN NO EVENT SHALL IGETDRESSED.ONLINE BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, 
-              INCLUDING LOSS OF PROFITS, DATA, OR USE, ARISING OUT OF OR IN CONNECTION WITH YOUR USE OF THE SERVICE.
+              If the service is not provided as described, contact us so we can investigate and discuss the appropriate remedy.
             </p>
           </section>
 
@@ -167,7 +166,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">13. Contact Information</h2>
             <p className="leading-relaxed">
-              If you have any questions about these Terms of Service, please contact us through the contact information provided on our website.
+              If you have questions about these terms, email <SupportEmail /> or visit <Link href="/support" className="underline">Customer support</Link>.
             </p>
           </section>
         </div>

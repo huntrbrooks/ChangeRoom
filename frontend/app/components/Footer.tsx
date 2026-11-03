@@ -9,7 +9,9 @@ export function Footer() {
           <div className="text-sm">
             <p>&copy; {new Date().getFullYear()} IGetDressed.Online. All rights reserved.</p>
           </div>
-          <nav className="flex flex-wrap justify-center gap-6 text-sm">
+          <nav aria-label="Footer" className="flex flex-wrap justify-center gap-6 text-sm">
+            <Link href="/support" className="hover:text-black">Customer support</Link>
+            <Link href="/status" className="hover:text-black">Service availability</Link>
             <Link 
               href="/terms-of-service" 
               className="hover:text-black transition-colors"
