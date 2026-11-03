@@ -44,3 +44,15 @@ jobs:
         run: |
           createdb recovery_test
           python scripts/ops/recovery_drill.py --port 5432
+  container:
+    name: Linux subscriber worker container
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build only the subscriber FastAPI worker
+        run: docker build --platform linux/amd64 --tag changeroom-worker:ci backend
+      - name: Smoke-test the image without network or provider secrets
+        run: bash scripts/ops/container_smoke.sh changeroom-worker:ci
