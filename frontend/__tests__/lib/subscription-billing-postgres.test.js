@@ -67,6 +67,16 @@ jest.mock('@/lib/db',()=>({
     expect(new Set(results.map(a=>a.attempt_id)).size).toBe(1);
     expect(new Set(results.map(a=>a.price_id)).size).toBe(1);
   });
+  it('preserves a historical unitemized balance through cancellation, reads, later purchases and spend',async()=>{
+    await mockPool.query('TRUNCATE credit_ledger_entries');
+    await mockPool.query("UPDATE users_billing SET plan='standard',trials_remaining=0 WHERE user_id=$1",[user]);
+    await sync(null,{plan:'free',id:null,frozen:false,endsAt:null});
+    expect((await db.getOrCreateUserBilling(user)).credits_available).toBe(100);
+    await db.grantCredits(user,10,{source:'stripe'},'pi_new');
+    await db.createCreditHold({userId:user,requestId:'subsequent-job',amount:1});
+    await db.finalizeDebitFromHold('subsequent-job');
+    expect((await db.getOrCreateUserBilling(user)).credits_available).toBe(109);
+  });
   it('retains a separately paid pack when a legacy free trial is consumed',async()=>{
     await db.markFreeTrialUsed(user);expect((await balance()).credits_available).toBe(100);
   });

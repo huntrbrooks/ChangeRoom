@@ -2,7 +2,7 @@
 import type Stripe from 'stripe';
 import {invoiceSubscription, paidAllowance, liveSnapshot, priceMatchesOffer} from '@/lib/subscription-lifecycle';
 import {subscriptionCheckout} from '@/lib/subscription-checkout';
-import {offers, packCredits} from '@/lib/billing-catalog';
+import {offers, packCredits, resolveCheckout} from '@/lib/billing-catalog';
 
 const prices={creatorPriceId:'price_create',powerPriceId:'price_power',starterXmasPriceId:'price_retired'};
 const line={period:{start:100,end:200},quantity:1,pricing:{price_details:{price:'price_create'}}};
@@ -45,4 +45,11 @@ it('reopens the existing subscription checkout and refuses new checkout after co
   list.mockReturnValue([{status:'past_due'}]);
   await expect(subscriptionCheckout(stripe,repo,'user','cus','price_create','https://fixture.test')).rejects.toThrow('already associated');
   expect(sessions.create).not.toHaveBeenCalled();
+});
+
+it('resolves Pro pack from the server SKU even when the browser environment names an unrelated recurring price',()=>{
+  const config={proPriceId:'price_pack_server',powerPriceId:'price_monthly'};
+  expect(resolveCheckout(config,{sku:'pro-pack'})).toMatchObject({priceId:'price_pack_server',mode:'payment'});
+  expect(resolveCheckout(config,{priceId:'price_monthly',mode:'payment'})).toBeNull();
+  expect(resolveCheckout(config,{sku:'retired-promo'})).toBeNull();
 });
