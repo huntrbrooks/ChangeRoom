@@ -1789,6 +1789,13 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         });
         
         preparedTryOnFiles = activeWardrobeItems.map(item => item.file);
+        // Reject oversized photo sets before issuing a job or sending private images.
+        const setting = Number(process.env.NEXT_PUBLIC_TRYON_MAX_UPLOAD_MIB || 30);
+        const maxMiB = Number.isInteger(setting) && setting > 0 && setting <= 50 ? setting : 30;
+        const uploadBytes = [...modelImagesForRequest, ...preparedTryOnFiles].reduce((sum, photo) => sum + photo.size, 0);
+        if (uploadBytes > maxMiB * 1024 * 1024) {
+          throw new Error(`These photos exceed the ${maxMiB} MiB combined upload limit. Choose fewer or smaller photos. No credit was used.`);
+        }
 
         setLastRequestId(requestId);
         captureEvent(ANALYTICS_EVENTS.TRY_ON_ATTEMPT, {
