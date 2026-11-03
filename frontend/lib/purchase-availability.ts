@@ -6,8 +6,10 @@ export const PURCHASE_PAUSE_NOTICE =
 
 // Explicitly isolated test deployments can exercise Checkout without enabling live sales.
 export function canCreateCheckout(env: Record<string,string | undefined> = process.env) {
-  if (NEW_PURCHASES_ENABLED) return true;
-  return env.VERCEL_ENV === 'preview' && env.CHANGEROOM_TEST_CHECKOUT === 'true' && !unsafePreview(env);
+  if (env.VERCEL_ENV === 'preview') {
+    return env.CHANGEROOM_TEST_CHECKOUT === 'true' && !unsafePreview(env);
+  }
+  return NEW_PURCHASES_ENABLED && env.VERCEL_ENV === 'production';
 }
 
 export function pausedCheckoutResponse(): Response {
