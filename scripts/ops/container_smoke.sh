@@ -20,8 +20,22 @@ if [[ "$status" != 1 ]]; then
 fi
 docker logs "$name" 2>&1 | grep -Fq "Invalid worker settings"
 cleanup
+
+# Uvicorn must fail its FastAPI lifespan even when only a fallback is configured.
+# The fake keys are literal fixtures; --network=none is still in force.
+status=0
+timeout 15s docker run --name "$name" "${restrictions[@]}" "${settings[@]}" \
+  --env CLERK_ISSUER=https://identity.example.invalid \
+  --env GEMINI_API_KEY=ci-fake-fallback-not-a-provider-key "$image" || status=$?
+if [[ "$status" != 3 ]]; then
+  echo "Expected Uvicorn startup to reject a fallback-only worker; got $status" >&2
+  exit 1
+fi
+docker logs "$name" 2>&1 | grep -Fq "Primary image provider is not configured"
+cleanup
 docker run --name "$name" --detach "${restrictions[@]}" "${settings[@]}" \
-  --env CLERK_ISSUER=https://identity.example.invalid "$image" >/dev/null
+  --env CLERK_ISSUER=https://identity.example.invalid \
+  --env OPENAI_API_KEY=ci-fake-primary-not-a-provider-key "$image" >/dev/null
 
 # Only the container's loopback interface exists; the test cannot reach an AI
 # model, Clerk, Postgres, Stripe, or any other remote provider.
