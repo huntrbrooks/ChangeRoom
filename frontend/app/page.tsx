@@ -300,6 +300,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const [modestyApplied, setModestyApplied] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [isProductSearchLoading, setIsProductSearchLoading] = useState(false);
+  const [findShoppingMatches, setFindShoppingMatches] = useState(false);
   const [productSearchAttempted, setProductSearchAttempted] = useState(false);
   const [productSearchError, setProductSearchError] = useState<string | null>(
     null
@@ -329,8 +330,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const [showWardrobeLimitModal, setShowWardrobeLimitModal] = useState(false);
   const [isAddingSavedItem, setIsAddingSavedItem] = useState(false);
   const [blockedWardrobeIndices, setBlockedWardrobeIndices] = useState<Set<number>>(new Set());
-  const [adjustingDescriptionIndices, setAdjustingDescriptionIndices] = useState<Set<number>>(new Set());
-  const [lastSafetyBlockDetail, setLastSafetyBlockDetail] = useState<string | null>(null);
   const [activeWardrobeAudience, setActiveWardrobeAudience] = useState<WardrobeAudience>('Women');
   const [showWardrobeFilters, setShowWardrobeFilters] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
@@ -339,16 +338,12 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const [activeMirrorThumb, setActiveMirrorThumb] = useState(0);
   const [isMirrorExpanded, setIsMirrorExpanded] = useState(false);
   const [shopProductOffset, setShopProductOffset] = useState(0);
-  const [adjustDescriptionFeedback, setAdjustDescriptionFeedback] = useState<
-    Map<number, { tone: 'success' | 'warning' | 'error'; message: string }>
-  >(new Map());
   const cardClass =
     "rounded-lg border border-slate-200/80 bg-white/95 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-sm";
   const cardPadding = "p-4 sm:p-5 md:p-6";
   const resultImageLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const creditLoggedRef = useRef(false);
   const trialConsumedRef = useRef(false);
-  const contentBlockWarnedRef = useRef(false);
   const virtualMirrorSectionRef = useRef<HTMLElement | null>(null);
   const stickyHeaderRef = useRef<HTMLElement | null>(null);
   const mobileActionBarRef = useRef<HTMLDivElement | null>(null);
@@ -1156,9 +1151,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       // Replace all existing items with new batch
       setWardrobeItems(newItems);
       setBlockedWardrobeIndices(new Set());
-      setAdjustingDescriptionIndices(new Set());
-      setLastSafetyBlockDetail(null);
-      setAdjustDescriptionFeedback(new Map());
     } else {
       // Append new items to existing ones
       setWardrobeItems((prev) => [...prev, ...newItems]);
@@ -1179,24 +1171,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       });
       return next;
     });
-    setAdjustingDescriptionIndices(prev => {
-      if (prev.size === 0) return prev;
-      const next = new Set<number>();
-      prev.forEach((value) => {
-        if (value === index) return;
-        next.add(value > index ? value - 1 : value);
-      });
-      return next;
-    });
-    setAdjustDescriptionFeedback(prev => {
-      if (prev.size === 0) return prev;
-      const next = new Map<number, { tone: 'success' | 'warning' | 'error'; message: string }>();
-      prev.forEach((value, key) => {
-        if (key === index) return;
-        next.set(key > index ? key - 1 : key, value);
-      });
-      return next;
-    });
   };
 
   const handleItemReplace = (index: number, file: File, analysis: AnalyzedItem) => {
@@ -1211,299 +1185,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       next.delete(index);
       return next;
     });
-    setAdjustingDescriptionIndices(prev => {
-      if (prev.size === 0) return prev;
-      const next = new Set(prev);
-      next.delete(index);
-      return next;
-    });
-    setAdjustDescriptionFeedback(prev => {
-      if (prev.size === 0) return prev;
-      const next = new Map(prev);
-      next.delete(index);
-      return next;
-    });
   };
 
-  const handleAdjustDescription = useCallback(async (index: number) => {
-    if (!isAuthenticated) {
-      setError('Description adjustments are available after sign-in.');
-      return;
-    }
-
-    if (!requireAuth()) {
-      return;
-    }
-    const entry = wardrobeItems[index];
-    if (!entry) {
-      return;
-    }
-
-    const fileMeta = entry.file as FileWithMetadata;
-    const analysisMeta = entry.analysis?.analysis;
-    const baseDescription =
-      (
-        analysisMeta?.description ||
-        analysisMeta?.short_description ||
-        fileMeta.detailed_description ||
-        (typeof fileMeta.metadata?.description === 'string'
-          ? fileMeta.metadata.description
-          : '') ||
-        ''
-      )
-        .toString()
-        .trim();
-
-    const metadata: Record<string, unknown> = {
-      ...(fileMeta.metadata && typeof fileMeta.metadata === 'object' ? fileMeta.metadata : {}),
-    };
-
-    if (analysisMeta?.category) metadata.category = analysisMeta.category;
-    if (analysisMeta?.item_type) metadata.item_type = analysisMeta.item_type;
-    if (analysisMeta?.color) metadata.color = analysisMeta.color;
-    if (analysisMeta?.style) metadata.style = analysisMeta.style;
-    if (analysisMeta?.brand) metadata.brand = analysisMeta.brand;
-    if (analysisMeta?.tags) metadata.tags = analysisMeta.tags;
-    if (baseDescription) metadata.description = baseDescription;
-
-    setAdjustingDescriptionIndices(prev => {
-      const next = new Set(prev);
-      next.add(index);
-      return next;
-    });
-    setAdjustDescriptionFeedback(prev => {
-      if (prev.size === 0) return prev;
-      const next = new Map(prev);
-      next.delete(index);
-      return next;
-    });
-
-    try {
-      const backendAuthHeaders = await getBackendAuthHeaders();
-      const API_URL = getBackendApiUrl('Description adjustments');
-      if (!API_URL) {
-        return;
-      }
-      const response = await httpClient.post(
-        `${API_URL}/api/clothing/adjust-description`,
-        {
-          description: baseDescription,
-          metadata,
-          strictness: contentBlockWarnedRef.current ? 'max' : 'moderate',
-          last_failure: {
-            reason: 'content_safety_block',
-            detail: lastSafetyBlockDetail || undefined,
-          },
-        },
-        {
-          headers: {
-            ...backendAuthHeaders,
-          },
-        }
-      );
-
-      const updatedMetadata =
-        response?.data?.metadata && typeof response.data.metadata === 'object'
-          ? (response.data.metadata as Record<string, unknown>)
-          : metadata;
-      const updatedDescription =
-        typeof response?.data?.description === 'string'
-          ? response.data.description
-          : typeof updatedMetadata.description === 'string'
-          ? (updatedMetadata.description as string)
-          : baseDescription;
-
-      setWardrobeItems(prev => {
-        if (!prev[index]) return prev;
-        const next = [...prev];
-        const prevEntry = prev[index];
-        const prevFile = prevEntry.file as FileWithMetadata;
-        
-        // Create a new file object with updated metadata (File objects can't be cloned, so we mutate the existing one)
-        // but create a new entry object to ensure React detects the change
-        const nextFile = prevFile;
-        nextFile.metadata = { ...updatedMetadata };
-        if (updatedDescription) {
-          nextFile.detailed_description = updatedDescription;
-        }
-        if (typeof updatedMetadata.category === 'string') {
-          nextFile.category = updatedMetadata.category;
-        }
-        if (typeof updatedMetadata.item_type === 'string') {
-          nextFile.item_type = updatedMetadata.item_type;
-        }
-        if (typeof updatedMetadata.brand === 'string') {
-          nextFile.brand = updatedMetadata.brand;
-        }
-
-        const fallbackItemType =
-          typeof updatedMetadata.item_type === 'string'
-            ? updatedMetadata.item_type
-            : analysisMeta?.item_type ||
-              (updatedDescription
-                ? updatedDescription.split(/\s+/).slice(0, 4).join(' ')
-                : '');
-        const normalizedTags = Array.isArray(updatedMetadata.tags)
-          ? updatedMetadata.tags.filter((tag): tag is string => typeof tag === 'string')
-          : analysisMeta?.tags || [];
-        const nextCategory =
-          typeof updatedMetadata.category === 'string'
-            ? updatedMetadata.category
-            : analysisMeta?.category || analysisMeta?.body_region || 'unknown';
-
-        let updatedAnalysis: AnalyzedItem;
-        if (prevEntry.analysis?.analysis) {
-          // Create a new analysis object with updated fields
-          const newAnalysis = { 
-            ...prevEntry.analysis.analysis,
-          };
-          // Always update description fields when updatedDescription is provided
-          if (updatedDescription) {
-            newAnalysis.description = updatedDescription;
-            newAnalysis.short_description = updatedDescription;
-            newAnalysis.detailed_description = updatedDescription;
-          }
-          if (fallbackItemType) newAnalysis.item_type = fallbackItemType;
-          newAnalysis.category = nextCategory;
-          newAnalysis.body_region = newAnalysis.body_region || nextCategory;
-          newAnalysis.tags = normalizedTags;
-          newAnalysis.metadata = { ...(newAnalysis.metadata || {}), ...updatedMetadata };
-          if (typeof updatedMetadata.color === 'string') newAnalysis.color = updatedMetadata.color;
-          if (typeof updatedMetadata.style === 'string') newAnalysis.style = updatedMetadata.style;
-          if (typeof updatedMetadata.brand === 'string') newAnalysis.brand = updatedMetadata.brand;
-          
-          updatedAnalysis = { 
-            ...prevEntry.analysis, 
-            analysis: newAnalysis, 
-            status: 'success' as const 
-          };
-        } else {
-          updatedAnalysis = {
-            index,
-            original_filename:
-              prevEntry.analysis?.original_filename || prevEntry.file.name,
-            analysis: {
-              body_region: nextCategory,
-              category: nextCategory,
-              item_type: fallbackItemType || undefined,
-              brand:
-                typeof updatedMetadata.brand === 'string'
-                  ? updatedMetadata.brand
-                  : analysisMeta?.brand || undefined,
-              short_description: updatedDescription || undefined,
-              description: updatedDescription || undefined,
-              detailed_description: updatedDescription || undefined,
-              suggested_filename:
-                prevEntry.analysis?.analysis?.suggested_filename ||
-                prevEntry.analysis?.saved_filename ||
-                prevEntry.file.name,
-              color:
-                typeof updatedMetadata.color === 'string'
-                  ? updatedMetadata.color
-                  : analysisMeta?.color || undefined,
-              style:
-                typeof updatedMetadata.style === 'string'
-                  ? updatedMetadata.style
-                  : analysisMeta?.style || undefined,
-              tags: normalizedTags,
-              metadata: { ...updatedMetadata },
-            },
-            file_url: prevEntry.analysis?.file_url,
-            saved_filename: prevEntry.analysis?.saved_filename,
-            storage_path: prevEntry.analysis?.storage_path,
-            status: 'success' as const,
-          };
-        }
-
-        // Create a completely new entry object to ensure React detects the change
-        next[index] = { 
-          file: nextFile, 
-          analysis: updatedAnalysis,
-          clothingItemId: prevEntry.clothingItemId
-        };
-        return next;
-      });
-
-      const clothingItemId = entry.clothingItemId || fileMeta.clothing_item_id;
-      let persistFailure: unknown = null;
-      if (clothingItemId) {
-        const resolvedTags = Array.isArray(updatedMetadata.tags)
-          ? updatedMetadata.tags.filter((tag): tag is string => typeof tag === 'string')
-          : analysisMeta?.tags || [];
-        const resolvedCategory =
-          typeof updatedMetadata.category === 'string'
-            ? updatedMetadata.category
-            : analysisMeta?.category || analysisMeta?.body_region || null;
-        const resolvedSubcategory =
-          typeof updatedMetadata.subcategory === 'string'
-            ? updatedMetadata.subcategory
-            : typeof updatedMetadata.item_type === 'string'
-            ? updatedMetadata.item_type
-            : analysisMeta?.item_type || null;
-        const resolvedColor =
-          typeof updatedMetadata.color === 'string' ? updatedMetadata.color : analysisMeta?.color || null;
-        const resolvedStyle =
-          typeof updatedMetadata.style === 'string' ? updatedMetadata.style : analysisMeta?.style || null;
-        const resolvedBrand =
-          typeof updatedMetadata.brand === 'string' ? updatedMetadata.brand : analysisMeta?.brand || null;
-
-        try {
-          await httpClient.patch(`/api/my/clothing-items/${clothingItemId}`, {
-            description: updatedDescription || baseDescription,
-            category: resolvedCategory,
-            subcategory: resolvedSubcategory,
-            color: resolvedColor,
-            style: resolvedStyle,
-            brand: resolvedBrand,
-            tags: resolvedTags,
-          });
-        } catch (persistError) {
-          console.warn("Failed to persist adjusted description", persistError);
-          persistFailure = persistError;
-        }
-      }
-
-      setBlockedWardrobeIndices(prev => {
-        if (prev.size === 0) return prev;
-        const next = new Set(prev);
-        next.delete(index);
-        return next;
-      });
-      setAdjustDescriptionFeedback(prev => {
-        const next = new Map(prev);
-        if (persistFailure) {
-          next.set(index, {
-            tone: 'warning',
-            message: 'Updated locally, but failed to save. Try again.',
-          });
-        } else {
-          next.set(index, {
-            tone: 'success',
-            message: 'Description updated.',
-          });
-        }
-        return next;
-      });
-    } catch (error) {
-      console.error("Failed to adjust description", error);
-      setError("Could not adjust the description. Please try again.");
-      setAdjustDescriptionFeedback(prev => {
-        const next = new Map(prev);
-        next.set(index, {
-          tone: 'error',
-          message: 'Adjustment failed. Please try again.',
-        });
-        return next;
-      });
-    } finally {
-      setAdjustingDescriptionIndices(prev => {
-        if (prev.size === 0) return prev;
-        const next = new Set(prev);
-        next.delete(index);
-        return next;
-      });
-    }
-  }, [getBackendApiUrl, getBackendAuthHeaders, isAuthenticated, lastSafetyBlockDetail, requireAuth, wardrobeItems]);
 
   // Handler for "Try On Any URL" feature - when a product is scraped from a URL
   const handleProductScraped = useCallback(async (
@@ -1521,9 +1204,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       // Clear existing items to make room
       setWardrobeItems([]);
       setBlockedWardrobeIndices(new Set());
-      setAdjustingDescriptionIndices(new Set());
-      setLastSafetyBlockDetail(null);
-      setAdjustDescriptionFeedback(new Map());
     }
 
     // Create analysis object from scraped product data
@@ -1698,8 +1378,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         setError(null);
         setWardrobeItems([{ file, analysis }]);
         setBlockedWardrobeIndices(new Set());
-        setAdjustingDescriptionIndices(new Set());
-        setAdjustDescriptionFeedback(new Map());
       } catch (selectError) {
         console.error('Failed to select wardrobe preview item', selectError);
         setError('Could not load that wardrobe item. Please upload one instead.');
@@ -1819,9 +1497,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       const entry = await createWardrobeEntryFromSavedItem(item);
       if (replaceAll) {
         setBlockedWardrobeIndices(new Set());
-        setAdjustingDescriptionIndices(new Set());
-        setLastSafetyBlockDetail(null);
-        setAdjustDescriptionFeedback(new Map());
       }
       setWardrobeItems((prev) => (replaceAll ? [entry] : [...prev, entry]));
     },
@@ -1888,8 +1563,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
       setModestyApplied(false);
       setBlockedWardrobeIndices(new Set());
-      setLastSafetyBlockDetail(null);
-      setAdjustDescriptionFeedback(new Map());
       setGeneratedImage(null);
       setProducts(getDemoTryOnProducts());
       setProductSearchAttempted(true);
@@ -2346,11 +2019,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         setIsPreviewResult(Boolean(tryOnRes.data.usedFreeTrial));
         setModestyApplied(Boolean(tryOnRes?.data?.modesty_applied));
         setBlockedWardrobeIndices(new Set());
-        setLastSafetyBlockDetail(null);
 
         if (tryOnRes.data.image_url) {
-          // Reset content-block warning state after a successful generation
-          contentBlockWarnedRef.current = false;
           if (tryOnRes.data.job_id !== requestId) throw new Error('Unexpected generation result.');
           const imageUrl = new URL(`/api/try-on/jobs/${requestId}/result`, window.location.origin).href;
           captureEvent(ANALYTICS_EVENTS.TRY_ON_SUCCESS, {
@@ -2437,25 +2107,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         const status = error.response?.status;
         const looksLikeBlockedByPolicy =
           /blocked|safety filter|image_safety|content/i.test(detailText.toLowerCase());
-        const looksLikeNoImageAfterRetries =
-          /no image generated after\s*\d+\s*attempts/i.test(detailText) ||
-          /finish reason:\s*image_/i.test(detailText);
-
-        // Some backend failures currently surface as 500 with the "No image generated after 4 attempts..."
-        // string. Treat those as content blocks for the warning/penalty flow as well.
-        const isContentBlocked =
-          (status === 422 || status === 500) &&
-          (looksLikeBlockedByPolicy || looksLikeNoImageAfterRetries);
-
-        if (isContentBlocked) {
+        if (status === 422 && looksLikeBlockedByPolicy) {
           setBlockedWardrobeIndices(new Set(activeWardrobeItems.map((_, idx) => idx)));
-          setAdjustDescriptionFeedback(new Map());
-          if (detailText) {
-            setLastSafetyBlockDetail(detailText);
-          } else if (typeof error?.message === 'string') {
-            setLastSafetyBlockDetail(error.message);
-          }
-          contentBlockWarnedRef.current = true;
           setError('This image was blocked by safety filters. Your credit or free trial is restored. Choose another photo or garment.');
           setIsTryOnLoading(false);
           setIsGenerating(false);
@@ -2474,6 +2127,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         return; // Stop execution if try-on fails
       }
 
+      // Identifying a garment shares its photo separately from the try-on.
+      if (!findShoppingMatches) return;
       // Step 2: Call Identify & Shop API (only if try-on succeeded)
       try {
         setIsProductSearchLoading(true);
@@ -2600,7 +2255,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       console.error("Unexpected error:", err);
       
       if (error.response?.status === 429) {
-        setError("Wow, we're experiencing high demand right now! You've been placed in a brief queue. Please try again in a moment.");
+        setError("The fitting room is busy. Please try again in a moment.");
       } else if (error.response?.status === 500 || error.response?.status === 503 || error.response?.status === 502) {
         setError("Our AI servers are currently processing a high volume of requests. Please wait a few moments and try again.");
       } else if (error.response?.status === 0 || error.message?.includes('Network Error') || error.code === 'ERR_NETWORK') {
@@ -2966,6 +2621,13 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 </div>
               </section>
 
+              {!isGuestPitchDemo && <div className="space-y-2 text-sm text-slate-700">
+                <p>OpenAI edits your photos for the try-on. If its service is unavailable, Google’s Nano Banana may process them instead. <Link href="/privacy-policy" className="underline">How we use photos</Link></p>
+                <label className="flex items-start gap-2">
+                  <input type="checkbox" checked={findShoppingMatches} disabled={isGenerating} onChange={e => setFindShoppingMatches(e.target.checked)} className="mt-1" />
+                  Find similar items after my try-on by sending the garment photo to Google.
+                </label>
+              </div>}
               <button
                 type="button"
                 onClick={() => {
@@ -3552,9 +3214,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 onItemRemove={handleItemRemove}
                 onItemReplace={handleItemReplace}
                 blockedItemIndices={blockedWardrobeIndices}
-                adjustingItemIndices={adjustingDescriptionIndices}
-                adjustDescriptionFeedback={adjustDescriptionFeedback}
-                onAdjustDescription={handleAdjustDescription}
                 getBackendAuthHeaders={getBackendAuthHeaders}
                 isAuthenticated={isAuthenticated || pitchDemoEnabled}
                 enableGuestDemo={pitchDemoEnabled}
