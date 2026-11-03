@@ -32,12 +32,6 @@ function BillingPageContent() {
   const [portalLoading, setPortalLoading] = useState(false);
   const [showPaywall, setShowPaywall] = useState(false);
 
-  useEffect(() => {
-    if (isLoaded && user) {
-      fetchBilling();
-    }
-  }, [isLoaded, user]);
-
   const fetchBilling = async () => {
     try {
       setBillingError(null);
@@ -50,6 +44,12 @@ function BillingPageContent() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (isLoaded && user) {
+      fetchBilling();
+    }
+  }, [isLoaded, user]);
 
   const handleManageSubscription = async () => {
     setPortalLoading(true);

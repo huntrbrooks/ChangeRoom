@@ -65,7 +65,7 @@ function PricingTableContent({
   const redirectToSignIn = () => {
     if (typeof window === 'undefined') return;
     const returnTo = `${window.location.pathname}${window.location.search}`;
-    window.location.href = `/sign-in?redirect_url=${encodeURIComponent(returnTo)}`;
+    window.location.assign(`/sign-in?redirect_url=${encodeURIComponent(returnTo)}`);
   };
 
   const startCheckout = async (params: {
@@ -107,7 +107,7 @@ function PricingTableContent({
       const message = data?.error || data?.details || 'Failed to start checkout';
       throw new Error(message);
     }
-    window.location.href = data.url;
+    window.location.assign(data.url);
   };
 
   React.useEffect(() => {
