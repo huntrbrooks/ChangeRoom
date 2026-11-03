@@ -1,3 +1,4 @@
+import { unsafePreview } from "@/lib/preview-isolation";
 import { NEW_PURCHASES_ENABLED, pausedCheckoutResponse } from "@/lib/purchase-availability";
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse, type NextRequest, type NextMiddleware, type NextFetchEvent } from 'next/server';
@@ -80,6 +81,9 @@ try {
 
 // Export proxy handler
 export default function proxy(req: NextRequest, event?: NextFetchEvent) {
+  if (unsafePreview(process.env)) {
+    return NextResponse.json({ error: 'isolated_preview_not_configured' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+  }
   if (!NEW_PURCHASES_ENABLED && req.method === 'POST' &&
       req.nextUrl.pathname.replace(/\/+$/, '') === '/api/billing/create-checkout-session') {
     return pausedCheckoutResponse();
