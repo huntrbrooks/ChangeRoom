@@ -6,8 +6,7 @@ import { z } from "zod";
 import { stripeConfig, appConfig } from "@/lib/config";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { resolveCheckout } from "@/lib/billing-catalog";
-import { priceMatchesOffer } from "@/lib/subscription-lifecycle";
-import { subscriptionCheckout, CheckoutConflict } from "@/lib/subscription-checkout";
+import { validPackPrice } from "@/lib/subscription-lifecycle";
 import { logger } from "@/lib/logger";
 
 const checkoutRequestSchema = z.union([z.object({sku:z.string().min(1).max(40)}).strict(), z.object({
@@ -24,9 +23,9 @@ function getStripe() {
 
 /**
  * POST /api/billing/create-checkout-session
- * Creates a Stripe Checkout Session for subscription or one-time payment
+ * Creates only one-time pack Checkout Sessions. Existing subscriptions are managed separately.
  * 
- * Body: { priceId: string, mode: "subscription" | "payment" }
+ * Body: {sku: string} or a legacy allowlisted {priceId, mode: "payment"}.
  */
 export async function POST(req: NextRequest) {
   if (!canCreateCheckout()) return pausedCheckoutResponse();
@@ -110,9 +109,10 @@ export async function POST(req: NextRequest) {
     if (!selection) {
       return NextResponse.json({ error: 'This price is not available.' }, { status: 400 });
     }
-    const {offer,priceId,mode} = selection;
+    const {offer,priceId} = selection;
+    const mode = "payment" as const;
     const stripe = getStripe();
-    if (!priceMatchesOffer(await stripe.prices.retrieve(priceId), offer))
+    if (!validPackPrice(await stripe.prices.retrieve(priceId, {expand:["product"]}), offer))
       throw new Error('Stripe price disagrees with the published offer');
     const billing = await db.getOrCreateUserBilling(userId);
     let customerId = billing.stripe_customer_id;
@@ -123,9 +123,8 @@ export async function POST(req: NextRequest) {
       await db.setStripeCustomerIdForUser(userId,customerId);
     }
     const metadata = {clerkUserId:userId,priceId,mode,creditAmount:String(offer.credits)};
-    const session = mode === 'subscription'
-      ? await subscriptionCheckout(stripe, db, userId, customerId, priceId, appConfig.appUrl)
-      : await stripe.checkout.sessions.create({
+    // Never resume a stored subscription attempt or pass a caller-selected mode to Stripe.
+    const session = await stripe.checkout.sessions.create({
         customer:customerId,mode,line_items:[{price:priceId,quantity:1}],metadata,
         payment_intent_data:{metadata},client_reference_id:userId,
         success_url:appConfig.appUrl+'/billing?session_id={CHECKOUT_SESSION_ID}',cancel_url:appConfig.appUrl+'/pricing',
@@ -143,7 +142,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ url: session.url });
   } catch (err: unknown) {
-    if (err instanceof CheckoutConflict) return NextResponse.json({error: err.message, manageBilling: err.manageBilling}, {status: 409});
     logger.error("create_checkout_session_failed", { error: err });
     return NextResponse.json(
       {error: "Unable to start checkout right now. Please retry or contact support."},

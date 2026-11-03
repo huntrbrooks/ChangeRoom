@@ -1,7 +1,6 @@
 /** @jest-environment node */
 import type Stripe from 'stripe';
 import {invoiceSubscription, paidAllowance, liveSnapshot, priceMatchesOffer} from '@/lib/subscription-lifecycle';
-import {subscriptionCheckout} from '@/lib/subscription-checkout';
 import {offers, packCredits, resolveCheckout} from '@/lib/billing-catalog';
 
 const prices={creatorPriceId:'price_create',powerPriceId:'price_power',starterXmasPriceId:'price_retired'};
@@ -33,20 +32,6 @@ it('derives access from Stripe current state, ignoring old cancelled subscriptio
   data.push(data[1]);
   await expect(liveSnapshot(stripe,'cus',prices)).rejects.toThrow('ambiguous');
 });
-it('reopens the existing subscription checkout and refuses new checkout after completion or decline',async()=>{
-  const reserveCheckout=jest.fn().mockResolvedValue({attempt_id:'once',price_id:'price_create',session_id:'cs_1',created_at:new Date()});
-  const repo={reserveCheckout,recordCheckout:jest.fn(),retireCheckout:jest.fn()};
-  const sessions={create:jest.fn(),retrieve:jest.fn().mockResolvedValue({status:'open',url:'https://checkout.stripe.test/fixture'})};
-  const list=jest.fn().mockReturnValue([]);
-  const stripe={checkout:{sessions},subscriptions:{list,retrieve:jest.fn().mockResolvedValue({status:'active'})}} as unknown as Stripe;
-  expect((await subscriptionCheckout(stripe,repo,'user','cus','price_create','https://fixture.test')).status).toBe('open');
-  sessions.retrieve.mockResolvedValue({status:'complete',subscription:'sub_1'});
-  await expect(subscriptionCheckout(stripe,repo,'user','cus','price_create','https://fixture.test')).rejects.toThrow('completed');
-  list.mockReturnValue([{status:'past_due'}]);
-  await expect(subscriptionCheckout(stripe,repo,'user','cus','price_create','https://fixture.test')).rejects.toThrow('already associated');
-  expect(sessions.create).not.toHaveBeenCalled();
-});
-
 it('resolves Pro pack from the server SKU even when the browser environment names an unrelated recurring price',()=>{
   const config={proPriceId:'price_pack_server',powerPriceId:'price_monthly'};
   expect(resolveCheckout(config,{sku:'pro-pack'})).toMatchObject({priceId:'price_pack_server',mode:'payment'});

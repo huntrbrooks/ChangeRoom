@@ -7,6 +7,10 @@ export const offers = [
   { sku: "pro-pack", key: "proPriceId", name: "Pro pack", plan: "free", cents: 8999, credits: 100, mode: "payment" },
 ] as const;
 export type Offer = (typeof offers)[number];
+export type Pack = Extract<Offer, {mode:"payment"}>;
+// Recurring entries above are for historical invoices and account management only.
+// New acquisition is deliberately limited to these three audited one-time SKUs.
+export const purchasablePacks = offers.filter((o):o is Pack => o.mode === "payment");
 type Prices = Partial<Record<Offer["key"] | "starterXmasPriceId", string>>;
 export function offerForPrice(prices: Prices, id: string | null | undefined) {
   return id ? offers.find(offer => prices[offer.key] === id) : undefined;
@@ -23,7 +27,7 @@ export type CheckoutSelection = {sku:string} | {priceId:string; mode:'payment'|'
 export function resolveCheckout(prices:Prices, selection:CheckoutSelection) {
   const offer = 'sku' in selection ? offers.find(o=>o.sku===selection.sku)
     : offerForPrice(prices,selection.priceId);
-  if (!offer || ('mode' in selection && selection.mode!==offer.mode)) return null;
+  if (!offer || offer.mode !== 'payment' || ('mode' in selection && selection.mode!==offer.mode)) return null;
   const priceId=prices[offer.key];
   return priceId && priceId.startsWith('price_') ? {offer,priceId,mode:offer.mode} : null;
 }

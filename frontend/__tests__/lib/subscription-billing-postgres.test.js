@@ -14,6 +14,17 @@ jest.mock('@/lib/db',()=>({
     connect:async()=>{const c=await mockPool.connect();return {query:c.query.bind(c),sql:mockTag(c),release:()=>c.release()};}
   })
 }));
+// Real HMAC verification and live SQL transactions; replace only Stripe's network I/O.
+let mockStripeSession;
+jest.mock('stripe',()=>{
+  const stripe=jest.requireActual('stripe');
+  return jest.fn().mockImplementation(()=>({
+    webhooks:stripe.webhooks, checkout:{sessions:{
+      retrieve:async()=>mockStripeSession, list:async()=>({data:[{id:mockStripeSession.id}]})
+    }}
+  }));
+});
+jest.mock('@clerk/nextjs/server',()=>({auth:async()=>({userId:'buyer'})}));
 (url ? describe : describe.skip)('subscription money movement against PostgreSQL',()=>{
   let db,admin;
   const user='buyer',customer='cus_fixture';
@@ -22,6 +33,7 @@ jest.mock('@/lib/db',()=>({
   const sync=(a,s=active)=>db.syncSubscriptionBilling(customer,async()=>s,a);
   const balance=async()=>(await mockPool.query('SELECT credits_available,plan,is_frozen FROM users_billing WHERE user_id=$1',[user])).rows[0];
   beforeAll(async()=>{
+    for(const k of ['STARTER','VALUE','PRO']) process.env['STRIPE_'+k+'_PRICE_ID']='price_fixture_'+k;
     const parsed=new URL(url);
     if (!['127.0.0.1','localhost','[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test')) throw new Error('Use only a local *_test database');
     admin=new Pool({connectionString:url});await admin.query('CREATE SCHEMA '+schema);
@@ -42,6 +54,37 @@ jest.mock('@/lib/db',()=>({
     await mockPool.query("INSERT INTO credit_ledger_entries(id,user_id,request_id,entry_type,credits_change,metadata) VALUES(gen_random_uuid(),$1,'pi_pack','grant',100,'{\"source\":\"stripe\",\"reason\":\"credit_pack_purchase\"}')",[user]);
   });
   afterAll(async()=>{if(mockPool) await mockPool.end(); if(admin){await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();}});
+  it.each([['STARTER',10],['VALUE',30],['PRO',100]])('settles a signed %s pack once across webhook retries and browser verification',async(sku,credits)=>{
+    const {NextRequest}=require('next/server');
+    const webhook=require('@/app/api/webhooks/stripe/route').POST;
+    const verify=require('@/app/api/billing/verify-checkout-session/route').POST;
+    const price='price_fixture_'+sku;
+    mockStripeSession={id:'cs_test_fixture_'+sku,mode:'payment',customer,payment_status:'paid',metadata:{clerkUserId:user},
+      client_reference_id:user,payment_intent:'pi_fixture_'+sku,line_items:{has_more:false,data:[{price:{id:price},quantity:1}]}};
+    const postEvent=async(type,object,invalid=false)=>{
+      const payload=JSON.stringify({id:'evt_fixture',type,data:{object},object:'event'});
+      const sig=jest.requireActual('stripe').webhooks.generateTestHeaderString({payload,secret:invalid?'wrong-fixture-key':process.env.STRIPE_WEBHOOK_SECRET});
+      return webhook(new NextRequest('https://fixture.test/api/webhooks/stripe',{method:'POST',headers:{'stripe-signature':sig},body:payload}));
+    };
+    expect((await postEvent('checkout.session.completed',mockStripeSession,true)).status).toBe(400);
+    mockStripeSession.payment_status='unpaid';
+    expect((await postEvent('checkout.session.completed',mockStripeSession)).status).toBe(200);
+    expect((await balance()).credits_available).toBe(100);
+    mockStripeSession.payment_status='paid';
+    expect((await postEvent('checkout.session.async_payment_succeeded',mockStripeSession)).status).toBe(200);
+    expect((await balance()).credits_available).toBe(100+credits);
+    await db.createCreditHold({userId:user,requestId:'one-look',amount:1});await db.finalizeDebitFromHold('one-look');
+    const replay=await Promise.all([
+      postEvent('checkout.session.completed',mockStripeSession),
+      postEvent('payment_intent.succeeded',{id:mockStripeSession.payment_intent,metadata:{priceId:price}}),
+      verify(new NextRequest('https://fixture.test/api/billing/verify-checkout-session',{method:'POST',
+        body:JSON.stringify({sessionId:mockStripeSession.id}),headers:{'Content-Type':'application/json'}}))
+    ]);
+    expect(replay.map(r=>r.status)).toEqual([200,200,200]);
+    expect((await replay[2].json()).settled).toBe(true);
+    expect((await balance()).credits_available).toBe(99+credits);
+    expect((await mockPool.query("SELECT count(*)::int AS count FROM credit_ledger_entries WHERE request_id=$1 AND entry_type='grant'",[mockStripeSession.payment_intent])).rows[0].count).toBe(1);
+  });
   it('retains a pack, awards only once for concurrent duplicate invoices and replays after spending',async()=>{
     await Promise.all([sync(award),sync(award),sync({...award,invoiceId:'in_duplicate_period'})]);
     expect((await balance()).credits_available).toBe(125);

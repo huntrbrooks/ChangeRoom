@@ -1,5 +1,5 @@
 import type Stripe from 'stripe';
-import { offerForPrice, type Offer } from './billing-catalog';
+import { offerForPrice, type Offer, type Pack } from './billing-catalog';
 type Prices = Parameters<typeof offerForPrice>[0];
 type Row = Record<string, unknown>;
 const row = (v: unknown): Row => v && typeof v === 'object' ? v as Row : {};
@@ -55,4 +55,12 @@ export function priceMatchesOffer(p: Stripe.Price, offer: Offer): boolean {
     (offer.mode === 'payment' ? p.type === 'one_time' : p.type === 'recurring' &&
       p.recurring?.interval === 'month' && p.recurring.interval_count === 1 &&
       p.recurring.usage_type === 'licensed');
+}
+
+// Callers must expand product when looking up a public pack. The amount, currency,
+// cadence, credit count and product must still match the approved offer at checkout time.
+export function validPackPrice(price: Stripe.Price, pack: Pack): boolean {
+  const product = price.product;
+  return priceMatchesOffer(price, pack) && price.metadata?.credits === String(pack.credits) &&
+    Boolean(product && typeof product === 'object' && 'active' in product && product.active);
 }
