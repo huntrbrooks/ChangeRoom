@@ -33,22 +33,6 @@ export const MyOutfits: React.FC<MyOutfitsProps> = ({ onSelectOutfit }) => {
   const [error, setError] = useState<string | null>(null);
   const [upgradeRequired, setUpgradeRequired] = useState(false);
 
-  // Load outfits from API on mount and when component is visible
-  useEffect(() => {
-    loadOutfits();
-    
-    // Listen for custom event for same-tab updates
-    const handleOutfitSaved = () => {
-      loadOutfits();
-    };
-    
-    window.addEventListener('outfitSaved', handleOutfitSaved);
-    
-    return () => {
-      window.removeEventListener('outfitSaved', handleOutfitSaved);
-    };
-  }, []);
-
   const loadOutfits = async () => {
     setIsLoading(true);
     setError(null);
@@ -84,6 +68,22 @@ export const MyOutfits: React.FC<MyOutfitsProps> = ({ onSelectOutfit }) => {
     }
   };
 
+  // Load outfits from API on mount and when component is visible
+  useEffect(() => {
+    loadOutfits();
+    
+    // Listen for custom event for same-tab updates
+    const handleOutfitSaved = () => {
+      loadOutfits();
+    };
+    
+    window.addEventListener('outfitSaved', handleOutfitSaved);
+    
+    return () => {
+      window.removeEventListener('outfitSaved', handleOutfitSaved);
+    };
+  }, []);
+
   const handleDelete = async (outfitId: string) => {
     if (window.confirm('Are you sure you want to delete this outfit?')) {
       try {
@@ -108,7 +108,7 @@ export const MyOutfits: React.FC<MyOutfitsProps> = ({ onSelectOutfit }) => {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `outfit-${Date.now()}.jpg`;
+      link.download = 'saved-outfit.jpg';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
