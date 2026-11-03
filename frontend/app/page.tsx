@@ -26,7 +26,6 @@ import {
   Heart,
   LayoutGrid,
   Loader2,
-  Plus,
   RefreshCw,
   Search,
   Shirt,
@@ -41,7 +40,7 @@ import {
   ZoomIn,
 } from 'lucide-react';
 import { getWearingStylePromptText } from '@/lib/wearingStyles';
-import { getUserPrimaryEmail, isBypassUser } from '@/lib/bypass-config';
+import { getUserPrimaryEmail } from '@/lib/bypass-config';
 import { hasUsableClerkPublishableKey } from '@/lib/clerk-public-config';
 import { ensureAbsoluteUrl } from '@/lib/url';
 import { resolveBackendApiUrl } from '@/lib/backend-url';
@@ -250,6 +249,7 @@ function HomeContentWithClerk() {
 
   return (
     <HomeContent
+      key={user?.id || "signed-out"}
       auth={{
         user,
         isLoaded,
@@ -700,12 +700,12 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
   // Check if user email is in bypass list
   const userEmail = getUserPrimaryEmail(user);
-  const isBypass = isBypassUser(userEmail) || Boolean(billing?.unlimitedCredits);
+  const isBypass = Boolean(billing?.unlimitedCredits);
   const redirectToPricing = useCallback(() => {
     router.push('/pricing');
   }, [router]);
 
-  const isOnTrial = billing && (billing.trialsRemaining ?? 0) > 0 && !isBypass;
+  const isOnTrial = billing && (billing.trialsRemaining ?? 0) > 0 && !isBypass && user?.primaryEmailAddress?.verification?.status === 'verified';
   const isAuthenticated = isAuthLoaded ? Boolean(isSignedIn) : isLoaded && !!user;
   const isGuestPitchDemo = pitchDemoEnabled && !isAuthenticated;
   const hasCreditsAvailable = billing ? billing.unlimitedCredits || billing.creditsAvailable > 0 : false;
@@ -830,25 +830,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     [showActionFeedback]
   );
 
-  const handleViewAllProducts = useCallback(() => {
-    if (generatedImage && user) {
-      setIsShopSaveOpen(true);
-      reportUiAction('shop_view_all', 'completed', { mode: 'shop_save_modal' });
-      return;
-    }
-
-    const el = document.getElementById('shop-the-look');
-    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    showActionFeedback(
-      products.length > 0
-        ? 'All current matches are visible below.'
-        : 'These are preview shopping links. Generate a look to unlock live product matches.',
-      products.length > 0 ? 'success' : 'info',
-      'shop_view_all',
-      { hasGeneratedImage: Boolean(generatedImage), productCount: products.length }
-    );
-  }, [generatedImage, products.length, reportUiAction, showActionFeedback, user]);
-
   const handleProductStep = useCallback(
     (direction: 1 | -1) => {
       if (shopProductsForDisplay.length <= 1) {
@@ -890,7 +871,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       setLookFeedback(nextFeedback);
       showActionFeedback(
         nextFeedback === 'liked'
-          ? 'Saved that you liked this look.'
+          ? 'You liked this look.'
           : 'Thanks. Try another wardrobe item or generate a new look.',
         nextFeedback === 'liked' ? 'success' : 'info',
         'look_feedback',
@@ -909,7 +890,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `igetdressed-look-${Date.now()}.png`;
+    link.download = `igetdressed-look-${Date.now()}.jpg`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -923,16 +904,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         'info',
         'download_look_without_result'
       );
-      return;
-    }
-
-    if (isPreviewResult && !isBypass) {
-      showActionFeedback(
-        'Upgrade to download the clean, watermark-free result.',
-        'warning',
-        'download_preview_requires_upgrade'
-      );
-      redirectToPricing();
       return;
     }
 
@@ -952,9 +923,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   }, [
     downloadImage,
     generatedImage,
-    isBypass,
-    isPreviewResult,
-    redirectToPricing,
     reportUiAction,
     showActionFeedback,
   ]);
@@ -965,11 +933,12 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     }
 
     if (!isAuthLoaded || !isSignedIn) {
-      setError('Please sign in to upload images.');
+      setError('Sign in to choose photos or generate a look.');
+      if (isAuthLoaded) router.push('/sign-in');
       return false;
     }
     return true;
-  }, [isAuthLoaded, isSignedIn, pitchDemoEnabled, setError]);
+  }, [isAuthLoaded, isSignedIn, pitchDemoEnabled, setError, router]);
 
   const markGuestPreviewConsumed = useCallback(() => {
     if (typeof window !== 'undefined') {
@@ -1670,9 +1639,10 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const handleSelfFilesSelected = useCallback(
     (fileList: FileList | null) => {
       const files = Array.from(fileList || [])
-        .filter((file) => file.type.startsWith('image/'))
+        .filter((file) => file.type.startsWith('image/') || /\.(heic|heif)$/i.test(file.name))
         .slice(0, 5);
-      if (files.length === 0) return;
+      if (files.length === 0) { if (fileList?.length) setError('Choose a JPG, PNG, WebP or HEIC photo.'); return; }
+      if (files.some(f => f.size > 10 * 1024 * 1024)) { setError('Each photo must be 10 MB or smaller.'); return; }
       if (!requireAuth()) return;
       updateUserImagesAndPreprocess(files);
     },
@@ -1682,12 +1652,14 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const handleWardrobeFilesSelected = useCallback(
     (fileList: FileList | null) => {
       const remainingSlots = Math.max(0, 5 - wardrobeItems.length);
-      const shouldReplace = remainingSlots === 0;
-      const limit = shouldReplace ? 5 : remainingSlots;
+      const shouldReplace = false;
+      if (remainingSlots === 0) { setError('Remove an item before adding another. A look can contain up to five garments.'); return; }
+      const limit = remainingSlots;
       const files = Array.from(fileList || [])
-        .filter((file) => file.type.startsWith('image/'))
+        .filter((file) => file.type.startsWith('image/') || /\.(heic|heif)$/i.test(file.name))
         .slice(0, limit);
-      if (files.length === 0) return;
+      if (files.length === 0) { if (fileList?.length) setError('Choose a JPG, PNG, WebP or HEIC photo.'); return; }
+      if (files.some(f => f.size > 10 * 1024 * 1024)) { setError('Each photo must be 10 MB or smaller.'); return; }
       if (!requireAuth()) return;
       const analyses = files.map((file, index) =>
         createPreviewAnalysis(
@@ -2169,7 +2141,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         // The web service issues a short-lived opaque intent. Render consumes it once
         // using the authenticated subject and settles after a usable result is persisted.
         try {
-          const issued = await httpClient.post('/api/try-on/hold', {});
+          const issued = await httpClient.post('/api/try-on/hold', { expectedFunding: isBypass ? 'included' : isOnTrial ? 'trial' : 'credits' });
           requestId = issued.data?.requestId;
           if (typeof requestId !== 'string') throw new Error('Could not authorize generation.');
           setLastRequestId(requestId);
@@ -2184,6 +2156,10 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             setIsGenerating(false);
             console.error = originalError;
             return;
+          }
+          if (h.response?.data?.error === "quote_changed") {
+            void fetchBilling();
+            throw new Error("Your available trial or credits changed. Review your refreshed balance before trying again.");
           }
           throw holdErr;
         }
@@ -2487,11 +2463,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           return;
         }
 
-        console.error("Error in try-on:", tryOnError);
-        // Log full error response for debugging
-        if (error.response?.data) {
-          console.error("Full error response:", JSON.stringify(error.response.data, null, 2));
-        }
+        logger.warn("tryon_failed", { requestId, status: error.response?.status });
         const errorMessage = error.code === 'ECONNABORTED' || error.message?.includes('timeout')
           ? `The try-on is taking longer than expected. This usually means our servers are busy. Please try again in a few moments.`
           : error.response?.data?.detail || error.response?.data?.error || error.message || "We couldn't generate your try-on. Please check your photos and try again.";
@@ -2519,12 +2491,11 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         const analysisRes = await withRetry(
           () =>
             httpClient.post(`${API_URL}/api/identify-products`, identifyFormData, {
-              headers: { 'Content-Type': 'multipart/form-data', ...identifyAuthHeaders },
+              headers: { 'Content-Type': 'multipart/form-data', ...identifyAuthHeaders, 'X-Request-Id': requestId },
               timeout: 600000, // 10 minutes for Render wake-up + Gemini processing
               signal: controller.signal,
             }),
-          1,
-          2000
+          0
         );
         
         const searchQueryRaw =
@@ -2569,12 +2540,11 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           const shopRes = await withRetry(
             () =>
               httpClient.post(`${API_URL}/api/shop`, shopFormData, {
-                headers: { 'Content-Type': 'multipart/form-data', ...shopAuthHeaders },
+                headers: { 'Content-Type': 'multipart/form-data', ...shopAuthHeaders, 'X-Request-Id': requestId },
                 timeout: 60000, // 1 minute for product search
                 signal: controller.signal,
               }),
-            1,
-            1500
+            0
           );
           
           const results = Array.isArray(shopRes.data?.results)
@@ -2748,12 +2718,13 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
               Virtual Try-On Studio
             </h1>
             <p className="mt-4 text-lg leading-7 text-slate-600">
-              See it on you. Shop with confidence.
+              Try up to five garments on your photo. This is a visual preview, not a size or fit measurement.
             </p>
 
             {backendAvailability === 'unavailable' && (
               <p className="mt-3 text-sm text-amber-800" role="status">The try-on service is warming up or offline. <button type="button" className="underline" onClick={() => setHealthAttempt(n => n + 1)}>Retry connection</button></p>
             )}
+            {error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>}
             {actionFeedback && (
               <div
                 role="status"
@@ -2778,7 +2749,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#101720] text-sm font-bold text-white shadow-[0_10px_20px_rgba(15,23,42,0.18)]">
                       1
                     </span>
-                    Upload Yourself
+                    Choose your photo
                   </h2>
                 </div>
 
@@ -2786,7 +2757,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   ref={selfUploadInputRef}
                   className="sr-only"
                   type="file"
-                  accept="image/*"
+                  accept="image/*,.heic,.heif"
                   multiple
                   onChange={(event) => {
                     handleSelfFilesSelected(event.currentTarget.files);
@@ -2856,7 +2827,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 <div className="mt-4 flex items-center justify-between gap-4 text-sm">
                   <span className="flex items-center gap-2 text-slate-500">
                     <CheckCircle2 size={17} className="text-[#12a7a2]" />
-                    <span>Photo looks good</span>
+                    <span>{userImages.length ? `${userImages.length} photo(s) selected` : 'Choose a photo to start'}</span>
                   </span>
                   <button
                     type="button"
@@ -2873,7 +2844,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   ref={wardrobeUploadInputRef}
                   className="sr-only"
                   type="file"
-                  accept="image/*"
+                  accept="image/*,.heic,.heif"
                   multiple
                   onChange={(event) => {
                     handleWardrobeFilesSelected(event.currentTarget.files);
@@ -2886,13 +2857,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#101720] text-sm font-bold text-white shadow-[0_10px_20px_rgba(15,23,42,0.18)]">
                       2
                     </span>
-                    Choose Wardrobe
+                    Choose garments for this session
                   </h2>
                   <div className="flex items-center gap-3">
-                    <div className="hidden h-9 w-48 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-400 sm:flex">
-                      <Search size={16} />
-                      <span>Search clothing</span>
-                    </div>
                     <button
                       type="button"
                       onClick={() => {
@@ -3053,7 +3020,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             <div className="flex min-h-[66px] items-center justify-between gap-3 border-b border-white/10 px-5">
               <h2 className="flex items-center gap-2 text-base font-semibold text-white">
                 <Sparkles size={20} className="text-white" fill="white" strokeWidth={1.4} />
-                Virtual Mirror
+                {generatedImage ? 'Your generated look' : 'Sample look'}
               </h2>
               <div className="flex items-center gap-2 text-sm">
                 <button
@@ -3141,28 +3108,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                       <Image src={thumb.src} alt={thumb.alt} fill sizes="84px" className="object-cover" />
                     </button>
                   ))}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (generatedImage && user) {
-                        setIsShopSaveOpen(true);
-                        reportUiAction('mirror_add_look', 'completed', { mode: 'shop_save_modal' });
-                        return;
-                      }
-                      showActionFeedback(
-                        isAuthenticated
-                          ? 'Generate a look first, then you can save it.'
-                          : 'Sign in and generate a look before saving.',
-                        'info',
-                        'mirror_add_look_blocked',
-                        { hasGeneratedImage: Boolean(generatedImage) }
-                      );
-                    }}
-                    className="flex aspect-[0.72] w-full flex-col items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
-                  >
-                    <Plus size={22} />
-                    <span className="text-sm">Add look</span>
-                  </button>
+                  <a href="#recent-looks" className="text-center text-xs font-semibold text-[#6b35f4] underline">Recent looks</a>
                 </div>
               </div>
             </div>
@@ -3170,8 +3116,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             <div className="flex min-h-[72px] items-center justify-between gap-4 px-6">
               <p className="flex items-center gap-2 text-[11px] font-semibold leading-tight text-[#2dd4cf] sm:gap-3 sm:text-base">
                 <Sparkles size={22} fill="#2dd4cf" strokeWidth={1.5} />
-                <span className="hidden sm:inline">Looks great! Ready to shop.</span>
-                <span className="sm:hidden">Ready to shop.</span>
+                <span>{generatedImage ? (isPreviewResult ? 'Watermarked trial preview' : 'Your private result') : 'Example only — generate to see your own look.'}</span>
               </p>
               <div className="flex items-center gap-5 text-white/80">
                 <button
@@ -3207,7 +3152,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         </div>
 
         {isSignedInReady && (
-          <section aria-label="Recent private looks" className="mt-5 rounded-lg border border-slate-200 p-4">
+          <section id="recent-looks" aria-label="Recent private looks" className="mt-5 rounded-lg border border-slate-200 p-4">
             <h2 className="font-semibold">Your recent looks</h2>
             <p className="text-sm text-slate-600">Looks are private and available here for 24 hours. Download a copy to keep it.</p>
             <button type="button" className="text-sm font-medium underline" onClick={() => void loadRecentLooks()}>Refresh recent looks</button>
@@ -3219,14 +3164,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         <section id="shop-the-look" className="mt-5 scroll-mt-28 border-t border-slate-200 pt-4">
           <div className="mb-4 flex items-center justify-between gap-4">
             <div className="flex items-baseline gap-4">
-              <h2 className="text-xl font-bold tracking-[-0.02em] text-black">Shop the Look</h2>
-              <button
-                type="button"
-                onClick={handleViewAllProducts}
-                className="text-sm font-semibold text-[#6b35f4] hover:text-[#4c24c8]"
-              >
-                View all
-              </button>
+              <h2 className="text-xl font-bold tracking-[-0.02em] text-black">{products.length ? 'Shop the Look' : 'Example shopping ideas'}</h2>
+
             </div>
             <div className="flex items-center gap-3">
               <button
@@ -3274,7 +3213,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   <h3 className="text-sm font-medium leading-5 text-black">{product.title}</h3>
                     <Heart size={18} className="flex-none text-slate-500" />
                   </div>
-                  <p className="text-sm font-semibold text-black">{product.price}</p>
+                  <p className="text-sm font-semibold text-black">{product.source === 'Preview' ? 'Shopping search idea' : product.price}</p>
                   <a
                     href={product.link}
                     onClick={() => handleProductClick(product)}
@@ -3282,7 +3221,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                     rel="noopener noreferrer"
                     className="mt-4 inline-flex h-9 items-center justify-center whitespace-nowrap rounded-md border border-slate-200 px-3 text-sm font-medium text-slate-600 transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
                   >
-                    View product
+                    {product.source === 'Preview' ? 'Search retailers' : 'View product'}
                   </a>
                 </div>
               </article>
@@ -3785,9 +3724,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 <div className="mt-4 rounded-lg border border-white/15 bg-white/10 p-4">
                   <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
                     Share Your Look
-                    <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-medium text-slate-200">
-                      Get 2 free credits
-                    </span>
+
                   </h3>
                   <SocialShareButtons
                     imageUrl={generatedImage}

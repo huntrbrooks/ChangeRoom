@@ -60,14 +60,26 @@ describe("POST /api/try-on/hold", () => {
   it("issues a fresh database ID only for the verified Clerk subject", async () => {
     mockCurrentUser.mockResolvedValue({ id: "user_attacker", primaryEmailAddressId: "primary",
       emailAddresses: [{ id: "primary", verification: { status: "verified" } }] });
+    db.getOrCreateUserBilling.mockResolvedValueOnce({credits_available:5,trials_remaining:1,is_frozen:false});
     mockJobSql.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{id:"new-server-id"}] });
     const { POST } = await import("@/app/api/try-on/hold/route");
     const res = await POST(request("https://example.com/api/try-on/hold", { method: "POST",
-      body: { requestId: "victims-request", userId: "victim", privileged: true } }));
+      body: { requestId: "victims-request", userId: "victim", privileged: true, expectedFunding: "trial" } }));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({requestId:"new-server-id"});
     expect(mockJobSql.mock.calls[1].slice(1)).toEqual(["user_attacker", true, false]);
   });
+});
+
+it("cannot switch an included or free quote to a paid job", async () => {
+  mockCurrentUser.mockResolvedValue({id:"user_attacker", primaryEmailAddressId:"p",
+    emailAddresses:[{id:"p",verification:{status:"verified"}}]});
+  const { POST } = await import("@/app/api/try-on/hold/route");
+  for (const expectedFunding of ["trial","included"]) {
+    const res = await POST(request("https://example.com/api/try-on/hold",{method:"POST",body:{expectedFunding}}));
+    expect(res.status).toBe(409);
+  }
+  expect(mockJobSql.mock.calls.every(c => c[0].join("").includes("tryon_sweep"))).toBe(true);
 });
 
 describe("GET /api/r", () => {

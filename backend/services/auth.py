@@ -19,8 +19,11 @@ _JWKS_CACHE: Dict[str, Any] = {"expires_at": 0.0, "keys": []}
 
 
 def _get_auth_mode() -> str:
-    mode = (os.getenv("BACKEND_AUTH_MODE", "none") or "none").strip().lower()
-    return mode if mode in _AUTH_MODE_VALUES else "none"
+    mode = (os.getenv("BACKEND_AUTH_MODE") or "clerk").strip().lower()
+    production = bool(os.getenv("RENDER")) or os.getenv("ENVIRONMENT", "").lower() == "production"
+    if mode not in _AUTH_MODE_VALUES or (production and mode in {"none", "off", "disabled"}):
+        raise HTTPException(status_code=503, detail="Backend authentication is not configured")
+    return mode
 
 
 def _get_bearer_token(request: Request) -> Optional[str]:
@@ -137,13 +140,21 @@ async def require_backend_auth(request: Request) -> None:
         return
 
     if mode == "clerk":
-        await _verify_clerk_token(token)
+        claims = await _verify_clerk_token(token)
+        subject = claims.get("sub")
+        if not isinstance(subject, str) or not subject:
+            raise HTTPException(status_code=401, detail="Invalid subject")
+        request.state.user_id = subject
         return
 
     if mode in _HYBRID_AUTH_MODES:
         if _is_valid_api_key(token):
             return
-        await _verify_clerk_token(token)
+        claims = await _verify_clerk_token(token)
+        subject = claims.get("sub")
+        if not isinstance(subject, str) or not subject:
+            raise HTTPException(status_code=401, detail="Invalid subject")
+        request.state.user_id = subject
         return
 
     raise HTTPException(status_code=500, detail="Invalid auth configuration")

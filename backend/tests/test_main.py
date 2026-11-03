@@ -1,216 +1,93 @@
-"""
-Tests for main FastAPI application endpoints
-"""
+"""Public HTTP contract, with no calls to paid providers."""
+import base64
+import uuid
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi.testclient import TestClient
-from pathlib import Path
-import os
+from main import app
+from services import auth, tryon_jobs, vton
 
 
-def test_root_endpoint(client: TestClient):
-    """Test the root endpoint returns a valid response"""
-    response = client.get("/")
-    assert response.status_code == 200
-    data = response.json()
-    assert "message" in data
-    assert "IGetDressed.Online API" in data["message"]
-    assert response.headers.get("X-ChangeRoom-Stack") == "fastapi-render"
-    assert response.headers.get("X-Request-Id")
+@pytest.fixture
+def signed(monkeypatch):
+    monkeypatch.setenv("BACKEND_AUTH_MODE","clerk")
+    monkeypatch.setattr(auth,"_verify_clerk_token",AsyncMock(return_value={"sub":"user_test"}))
+    return {"Authorization":"Bearer fixture", "X-Request-Id": str(uuid.uuid4())}
 
 
-def test_try_on_missing_user_image(client: TestClient):
-    """Test try-on endpoint with missing user image"""
-    response = client.post("/api/try-on")
-    # Endpoint enforces at least one user image and returns a 400 HTTPException
-    assert response.status_code == 400
-    assert response.headers.get("X-Request-Id")
+def files(image):
+    return {"user_image": ("user.heic",image,"image/heic"), "clothing_image":("garment.jpg",image,"image/jpeg")}
 
 
-def test_try_on_missing_clothing(client: TestClient, sample_image_bytes):
-    """Test try-on endpoint with missing clothing images"""
-    files = {"user_image": ("user.jpg", sample_image_bytes, "image/jpeg")}
-    response = client.post("/api/try-on", files=files)
-    assert response.status_code == 422
-    assert "clothing" in response.json()["detail"].lower()
+def test_health_and_cors(client):
+    r=client.get("/",headers={"X-Request-Id":"trace"})
+    assert r.status_code==200 and r.headers["x-request-id"]=="trace"
+    r=client.options("/api/try-on",headers={"Origin":"https://igetdressed.online",
+        "Access-Control-Request-Method":"POST","Access-Control-Request-Headers":"Authorization,X-Request-Id,Content-Type"})
+    assert r.status_code==200 and r.headers["access-control-allow-origin"]=="https://igetdressed.online"
 
 
-def test_try_on_accepts_heic_inputs_via_normalization(client: TestClient, sample_image_bytes, monkeypatch):
-    """
-    iPhone photos are often HEIC/HEIF. Even if the bytes are not actually HEIC in this test fixture,
-    the endpoint should accept the declared mime/extension and normalize before calling the model.
-    """
-    from services import vton
-    from services import analyze_user
-
-    async def fake_user_attrs(_files):
-        return {}
-
-    async def fake_generate_try_on(*_args, **_kwargs):
-        return {"image_url": "data:image/png;base64,AAAA", "retry_info": []}
-
-    monkeypatch.setattr(analyze_user, "analyze_user_attributes", fake_user_attrs)
-    monkeypatch.setattr(vton, "generate_try_on", fake_generate_try_on)
-
-    files = {
-        "user_image": ("user.heic", sample_image_bytes, "image/heic"),
-        "clothing_image": ("garment.heic", sample_image_bytes, "image/heic"),
-    }
-    data = {"category": "upper_body"}
-    resp = client.post("/api/try-on", files=files, data=data)
-    assert resp.status_code == 200
-    payload = resp.json()
-    assert payload.get("image_url", "").startswith("data:image/")
-    assert resp.headers.get("X-Request-Id")
+@pytest.mark.parametrize("path",["/api/analyze-and-save-clothing","/api/analyze-clothing",
+    "/api/preprocess-model-photos","/api/preprocess-clothing"])
+def test_public_disk_pipeline_retired(client,path):
+    assert client.post(path,data={"output_dir":"/tmp/invalid"}).status_code==410
+    assert client.get("/uploads/known.jpg").status_code==404
+    assert client.get("/api/read-image-metadata",params={"image_path":"known.jpg"}).status_code==410
 
 
-def test_request_id_is_echoed_when_provided(client: TestClient):
-    rid = "test-request-id-123"
-    resp = client.get("/", headers={"X-Request-Id": rid})
-    assert resp.status_code == 200
-    assert resp.headers.get("X-Request-Id") == rid
+def test_direct_replay_does_not_call_provider_again(client, signed, sample_image_bytes,monkeypatch):
+    provider=AsyncMock(return_value={"image_url":"data:image/png;base64,"+base64.b64encode(sample_image_bytes).decode()})
+    sql=AsyncMock(side_effect=["trial",True,"denied"])
+    monkeypatch.setattr(tryon_jobs,"_call",sql)
+    monkeypatch.setattr(vton,"generate_try_on",provider)
+    r=client.post("/api/try-on",files=files(sample_image_bytes),headers=signed)
+    assert r.status_code==200 and r.json()["usedFreeTrial"]
+    assert r.json()["image_url"]==f"/api/try-on/jobs/{signed['X-Request-Id']}/result"
+    assert len(sql.await_args_list[1].args[1][2]) > 0
+    assert client.post("/api/try-on",files=files(sample_image_bytes),headers=signed).status_code==409
+    assert provider.await_count==1
 
 
-def test_identify_products_missing_image(client: TestClient):
-    """Test identify-products endpoint with missing image"""
-    response = client.post("/api/identify-products")
-    assert response.status_code == 422
+def test_unpaid_and_unsafe_requests_do_not_generate(client,signed,sample_image_bytes,monkeypatch):
+    provider=AsyncMock()
+    sql=AsyncMock(return_value="no_credits")
+    monkeypatch.setattr(vton,"generate_try_on",provider)
+    monkeypatch.setattr(tryon_jobs,"_call",sql)
+    for key in ("clothing_file_urls","clothing_file_url"):
+        assert client.post("/api/try-on",files=files(sample_image_bytes),headers=signed,
+            data={key:"/uploads/../sentinel"}).status_code==400
+    assert client.post("/api/try-on",files=files(sample_image_bytes)).status_code==401
+    assert client.post("/api/try-on",files=files(sample_image_bytes),headers=signed).status_code==402
+    provider.assert_not_awaited()
+    assert sql.await_count==1
 
 
-def test_identify_products_valid(client: TestClient, sample_image_bytes):
-    """Test identify-products endpoint with valid image"""
-    files = {"clothing_image": ("clothing.jpg", sample_image_bytes, "image/jpeg")}
-    # Note: This will fail without actual API key, but tests the endpoint structure
-    response = client.post("/api/identify-products", files=files)
-    # Should either succeed (200) or fail with API error (500), not validation error
-    assert response.status_code in [200, 500]
-    if response.status_code == 500:
-        # Check it's an API error, not a validation error
-        assert "GEMINI_API_KEY" in response.json()["detail"] or "api" in response.json()["detail"].lower()
+@pytest.mark.parametrize("bad",["https://example.invalid/unsafe","data:image/png;base64,bm90YW5pbWFnZQ=="])
+def test_failed_result_releases_before_returning(client,signed,sample_image_bytes,monkeypatch,bad):
+    sql=AsyncMock(side_effect=["credits",True])
+    monkeypatch.setattr(tryon_jobs,"_call",sql)
+    monkeypatch.setattr(vton,"generate_try_on",AsyncMock(return_value={"image_url":bad}))
+    r=client.post("/api/try-on",files=files(sample_image_bytes),headers=signed)
+    assert r.status_code==502 and sql.await_args_list[-1].args[1][-1] is None
 
 
-def test_analyze_clothing_empty(client: TestClient):
-    """Test analyze-clothing endpoint with no files"""
-    response = client.post("/api/analyze-clothing", files={})
-    assert response.status_code == 422
+def test_oversized_body_and_bounded_file_count(client,signed,sample_image_bytes):
+    assert client.post("/api/try-on",headers={**signed,"Content-Length":str(100*1024*1024)}).status_code==413
+    uploads=[("clothing_images",("x.jpg",sample_image_bytes,"image/jpeg"))]*6
+    uploads.append(("user_image",("subject.png",sample_image_bytes,"image/png")))
+    assert client.post("/api/try-on",files=uploads,headers=signed).status_code==400
 
 
-def test_analyze_clothing_too_many_files(client: TestClient, sample_image_bytes):
-    """Test analyze-clothing endpoint with more than 5 files"""
-    files = [
-        ("clothing_images", (f"item_{i}.jpg", sample_image_bytes, "image/jpeg"))
-        for i in range(6)
-    ]
-    response = client.post("/api/analyze-clothing", files=files)
-    assert response.status_code == 400
-    assert "5" in response.json()["detail"]
+@pytest.mark.parametrize("mode",["", "typo", "none"])
+def test_production_auth_fails_closed(client,sample_image_bytes,monkeypatch,mode):
+    monkeypatch.setenv("BACKEND_AUTH_MODE",mode)
+    monkeypatch.setenv("RENDER","true")
+    assert client.post("/api/try-on",files=files(sample_image_bytes)).status_code in (401,503)
 
 
-def test_preprocess_clothing_empty(client: TestClient):
-    """Test preprocess-clothing endpoint with no files"""
-    response = client.post("/api/preprocess-clothing", files={})
-    assert response.status_code == 422
-
-
-def test_preprocess_clothing_too_many_files(client: TestClient, sample_image_bytes):
-    """Test preprocess-clothing endpoint with more than 5 files"""
-    files = [
-        ("clothing_images", (f"item_{i}.jpg", sample_image_bytes, "image/jpeg"))
-        for i in range(6)
-    ]
-    response = client.post("/api/preprocess-clothing", files=files)
-    assert response.status_code == 400
-    assert "5" in response.json()["detail"]
-
-
-def test_preprocess_model_photos_endpoint_returns_processed_reference(client: TestClient, sample_image_bytes, monkeypatch):
-    """Model-photo upload should call the processor and return the enriched reference image."""
-    from services import model_photo_processor
-
-    async def fake_process_model_photos(image_files, original_filenames, *, output_dir="uploads"):
-        assert len(image_files) == 2
-        assert original_filenames == ["front.png", "side.png"]
-        return {
-            "status": "success",
-            "primary": {
-                "image_url": "/uploads/model/test-reference.jpg",
-                "file_url": "/uploads/model/test-reference.jpg",
-                "metadata": {
-                    "model:bodyPose": "front and side standing",
-                    "model:analysisVersion": "model-photo-v1",
-                },
-                "source": "composite",
-                "mime_type": "image/jpeg",
-            },
-        }
-
-    monkeypatch.setattr(model_photo_processor, "process_model_photos", fake_process_model_photos)
-
-    files = [
-        ("model_images", ("front.png", sample_image_bytes, "image/png")),
-        ("model_images", ("side.png", sample_image_bytes, "image/png")),
-    ]
-    response = client.post("/api/preprocess-model-photos", files=files)
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["primary"]["image_url"] == "/uploads/model/test-reference.jpg"
-    assert payload["primary"]["metadata"]["model:analysisVersion"] == "model-photo-v1"
-
-
-def test_cors_preflight_preprocess_clothing_allows_request_id_headers(client: TestClient):
-    """
-    The frontend may include X-Request-Id / X-ChangeRoom-Request-Id headers (for correlation),
-    which triggers an OPTIONS preflight. That preflight must succeed (2xx) with appropriate CORS headers.
-    """
-    origin = "https://igetdressed.online"
-    resp = client.options(
-        "/api/preprocess-clothing",
-        headers={
-            "Origin": origin,
-            "Access-Control-Request-Method": "POST",
-            "Access-Control-Request-Headers": "X-Request-Id,X-ChangeRoom-Request-Id,Content-Type",
-        },
-    )
-    assert resp.status_code in (200, 204)
-    assert resp.headers.get("access-control-allow-origin") == origin
-    assert resp.headers.get("access-control-allow-credentials") == "true"
-    allow_headers = (resp.headers.get("access-control-allow-headers") or "").lower()
-    assert ("*" in allow_headers) or ("x-request-id" in allow_headers)
-
-
-def test_shop_endpoint_missing_query(client: TestClient):
-    """Test shop endpoint with missing query"""
-    response = client.post("/api/shop")
-    assert response.status_code == 422
-
-
-def test_shop_endpoint_valid(client: TestClient):
-    """Test shop endpoint with valid query"""
-    data = {"query": "blue jeans"}
-    response = client.post("/api/shop", data=data)
-    # Should return 200 with results or handle gracefully
-    assert response.status_code in [200, 500]
-
-
-def test_read_metadata_missing_path(client: TestClient):
-    """Test read-image-metadata endpoint with missing path"""
-    response = client.get("/api/read-image-metadata")
-    assert response.status_code == 422
-
-
-def test_read_metadata_nonexistent_file(client: TestClient):
-    """Test read-image-metadata endpoint with nonexistent file"""
-    response = client.get("/api/read-image-metadata?image_path=nonexistent.jpg")
-    assert response.status_code == 404
-
-
-def test_read_metadata_rejects_absolute_path(client: TestClient):
-    """Should reject absolute paths to prevent arbitrary file reads."""
-    response = client.get("/api/read-image-metadata?image_path=/etc/passwd")
-    assert response.status_code == 400
-
-
-def test_read_metadata_rejects_path_traversal(client: TestClient):
-    """Should reject path traversal attempts."""
-    response = client.get("/api/read-image-metadata?image_path=../secrets.txt")
-    assert response.status_code == 400
+def test_auxiliary_calls_require_completed_job(client,signed,sample_image_bytes,monkeypatch):
+    sql=AsyncMock(return_value=False)
+    monkeypatch.setattr(tryon_jobs,"_call",sql)
+    assert client.post("/api/shop",data={"query":"garment"},headers=signed).status_code==403
+    assert client.post("/api/identify-products",files={"clothing_image":("item.jpg",sample_image_bytes,"image/jpeg")},headers=signed).status_code==403
