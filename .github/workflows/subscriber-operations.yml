@@ -1,0 +1,40 @@
+name: Subscriber availability and cleanup
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        type: choice
+        options: [staging, production]
+        required: true
+        description: Environment to exercise
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+permissions:
+  contents: read
+jobs:
+  availability:
+    if: github.event_name == 'workflow_dispatch' || vars.SUBSCRIBER_OPS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target || 'production' }}
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check public status and API without creating a user or generation
+        env:
+          APP_ORIGIN: ${{ vars.CHANGEROOM_APP_ORIGIN }}
+          API_ORIGIN: ${{ vars.CHANGEROOM_API_ORIGIN }}
+        run: python3 scripts/ops/monitor_http.py
+  sweep:
+    if: github.event_name == 'workflow_dispatch' || vars.SUBSCRIBER_OPS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target || 'production' }}
+    concurrency:
+      group: subscriber-sweep-${{ inputs.target || 'production' }}
+      cancel-in-progress: false
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release interrupted jobs, expire old images and check aggregate failures
+        env:
+          CHANGEROOM_SWEEP_DSN: ${{ secrets.CHANGEROOM_SWEEP_DSN }}
+        run: python3 scripts/ops/sweep.py
