@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -14,8 +15,6 @@ import {
   Upload,
 } from "lucide-react";
 
-import { UploadZone } from "@/app/components/UploadZone";
-import { VirtualMirror } from "@/app/components/VirtualMirror";
 import type {
   FitRecommendation,
   MeasurementProfile,
@@ -53,7 +52,6 @@ type CatalogResponse = {
 type Tab = "merchant" | "shopper";
 
 const INITIAL_PROFILE = {
-  shopperName: "",
   height: "170",
   weight: "65",
   chestBust: "88",
@@ -112,13 +110,10 @@ export function BrandPitchPrototype() {
   const [dashboard, setDashboard] = useState<PitchDashboard | null>(null);
   const [selectedProductId, setSelectedProductId] = useState<string>("");
   const [profileForm, setProfileForm] = useState(INITIAL_PROFILE);
-  const [userImages, setUserImages] = useState<File[]>([]);
   const [recommendation, setRecommendation] = useState<FitRecommendation | null>(null);
   const [isLoadingCatalog, setIsLoadingCatalog] = useState(true);
   const [isImporting, setIsImporting] = useState(false);
   const [isRecommending, setIsRecommending] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -167,7 +162,6 @@ export function BrandPitchPrototype() {
     if (catalog && selectedProductId && !catalog.products.some((product) => product.id === selectedProductId)) {
       setSelectedProductId(catalog.products[0]?.id || "");
       setRecommendation(null);
-      setGeneratedImageUrl(null);
     }
   }, [catalog, selectedProductId]);
 
@@ -253,7 +247,6 @@ export function BrandPitchPrototype() {
     setIsRecommending(true);
     setErrorMessage(null);
     setSuccessMessage(null);
-    setGeneratedImageUrl(null);
 
     try {
       const profile = buildProfilePayload();
@@ -289,58 +282,7 @@ export function BrandPitchPrototype() {
     }
   }
 
-  async function handleTryOn() {
-    if (!catalog || !selectedProduct || !recommendation) {
-      setErrorMessage("Generate a fit recommendation before running the virtual try-on.");
-      return;
-    }
-
-    if (userImages.length === 0) {
-      setErrorMessage("Upload at least one body photo to run the try-on.");
-      return;
-    }
-
-    setIsGenerating(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-
-    try {
-      const formData = new FormData();
-      formData.append("brandSlug", catalog.brandSlug);
-      formData.append("productId", selectedProduct.id);
-      formData.append("shopperName", profileForm.shopperName);
-      formData.append("profile", JSON.stringify(buildProfilePayload()));
-      formData.append("recommendation", JSON.stringify(recommendation));
-      for (const file of userImages) {
-        formData.append("userImages", file);
-      }
-
-      const res = await fetch("/api/pitch/try-on", {
-        method: "POST",
-        body: formData,
-      });
-      const payload = (await res.json()) as {
-        imageUrl?: string | null;
-        message?: string;
-      };
-
-      if (!res.ok || !payload.imageUrl) {
-        throw new Error(payload.message || "The virtual try-on did not return an image.");
-      }
-
-      setGeneratedImageUrl(payload.imageUrl);
-      setSuccessMessage("Virtual try-on generated and saved to the merchant dashboard story.");
-      if (catalog.brandSlug) {
-        void loadCatalog(catalog.brandSlug);
-      }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "The virtual try-on failed.");
-    } finally {
-      setIsGenerating(false);
-    }
-  }
-
-  const isBusy = isImporting || isRecommending || isGenerating;
+  const isBusy = isImporting || isRecommending;
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.9),_rgba(244,232,220,0.95)_42%,_rgba(231,221,212,1)_100%)] text-black">
@@ -353,12 +295,11 @@ export function BrandPitchPrototype() {
             </span>
             <div className="space-y-3">
               <h1 className="max-w-3xl font-serif text-4xl leading-tight sm:text-5xl">
-                Show Front Runner a retailer-ready story for fit guidance and virtual try-on.
+                Explore the Front Runner catalogue and find a size.
               </h1>
               <p className="max-w-3xl text-sm leading-6 text-black/70 sm:text-base">
-                Built from a live Shopify snapshot of frontrunnerau.com, this demo shows how
-                ChangeRoom can normalize Front Runner sizing, recommend the right fit, and turn
-                that into a shopper-facing try-on plus a merchant-facing value summary.
+                Choose a garment from the Front Runner catalogue snapshot, enter sample
+                measurements, and see which sizes match and why.
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
@@ -522,7 +463,7 @@ export function BrandPitchPrototype() {
                       {
                         label: "Variants normalized",
                         value: dashboard.variantsImported,
-                        hint: `${dashboard.sizeCoveragePercent}% size coverage`,
+                        hint: "catalogue variants",
                       },
                       {
                         label: "Fit-ready products",
@@ -530,9 +471,9 @@ export function BrandPitchPrototype() {
                         hint: "dimension-backed",
                       },
                       {
-                        label: "Try-on completion",
-                        value: `${dashboard.tryOnCompletionRate}%`,
-                        hint: "recent sessions",
+                        label: "Size coverage",
+                        value: `${dashboard.sizeCoveragePercent}%`,
+                        hint: "of variants with a size system",
                       },
                     ].map((card) => (
                       <div
@@ -581,9 +522,9 @@ export function BrandPitchPrototype() {
                     </div>
 
                     <div className="rounded-2xl border border-black/10 p-4">
-                      <p className="text-sm font-semibold">Recent demo sessions</p>
+                      <p className="text-sm font-semibold">Historical demo sessions</p>
                       <p className="mt-1 text-xs text-black/50">
-                        Each successful try-on updates the merchant value story.
+                        These are past demo sessions. Personal studio try-ons are separate.
                       </p>
                       <div className="mt-4 space-y-3">
                         {dashboard.recentSessions.length > 0 ? (
@@ -609,8 +550,7 @@ export function BrandPitchPrototype() {
                           ))
                         ) : (
                           <div className="rounded-xl bg-[#f7f3ef] px-3 py-3 text-sm text-black/60">
-                            Run one shopper flow and the merchant dashboard will capture the
-                            recommendation and try-on outcome here.
+                            No historical sessions to display.
                           </div>
                         )}
                       </div>
@@ -630,7 +570,7 @@ export function BrandPitchPrototype() {
                     Shopper demo
                   </p>
                   <h2 className="mt-1 text-2xl font-semibold">
-                    Capture measurements, recommend a size, then generate the try-on
+                    Get a size recommendation from sample measurements
                   </h2>
                 </div>
               </div>
@@ -639,7 +579,6 @@ export function BrandPitchPrototype() {
                 <div className="space-y-4">
                   <div className="grid gap-3 sm:grid-cols-2">
                     {[
-                      { key: "shopperName", label: "Shopper name", type: "text" },
                       { key: "usualTopSize", label: "Usual top size", type: "text" },
                       { key: "height", label: "Height (cm)", type: "number" },
                       { key: "weight", label: "Weight (kg)", type: "number" },
@@ -683,26 +622,6 @@ export function BrandPitchPrototype() {
                     </select>
                   </label>
 
-                  <div className="rounded-2xl border border-black/10 bg-[#f7f3ef] p-4">
-                    <p className="text-sm font-semibold">Upload 1-3 body photos</p>
-                    <p className="mt-1 text-xs leading-5 text-black/55">
-                      Front-facing, full-length images give the strongest try-on story. Photos stay
-                      in the demo workflow and are not shown in the merchant dashboard.
-                    </p>
-                    <div className="mt-4">
-                      <UploadZone
-                        multiple
-                        maxFiles={3}
-                        label="Body photos"
-                        selectedFiles={userImages}
-                        onFilesSelect={setUserImages}
-                        showGuidance
-                        highlightMainReference
-                        showInlineTip
-                      />
-                    </div>
-                  </div>
-
                   <div className="flex flex-wrap gap-3">
                     <button
                       type="button"
@@ -716,19 +635,6 @@ export function BrandPitchPrototype() {
                         <ShieldCheck className="h-4 w-4" />
                       )}
                       Get fit recommendation
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleTryOn}
-                      disabled={isBusy || !recommendation}
-                      className="inline-flex items-center gap-2 rounded-full border border-black/15 bg-white px-5 py-3 text-sm font-semibold text-black transition hover:bg-black hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {isGenerating ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Sparkles className="h-4 w-4" />
-                      )}
-                      Generate try-on
                     </button>
                   </div>
                 </div>
@@ -756,7 +662,6 @@ export function BrandPitchPrototype() {
                           onClick={() => {
                             setSelectedProductId(product.id);
                             setRecommendation(null);
-                            setGeneratedImageUrl(null);
                           }}
                           className={`grid grid-cols-[88px_1fr] gap-3 rounded-2xl border p-3 text-left transition ${
                             product.id === selectedProductId
@@ -838,19 +743,15 @@ export function BrandPitchPrototype() {
                     </div>
 
                     <div className="rounded-2xl border border-black/10 p-4">
-                      <p className="text-sm font-semibold">Virtual try-on result</p>
-                      <p className="mt-1 text-xs text-black/50">
-                        Powered by the existing try-on backend, wrapped in a pitch-safe demo flow.
+                      <p className="text-sm font-semibold">Try on with your own photo</p>
+                      <p className="mt-1 text-sm text-black/65">
+                        This fit demo does not accept photos. For a personal try-on, open
+                        the ChangeRoom studio and sign in. Your catalogue selections and
+                        measurements are not transferred.
                       </p>
-                      <div className="mt-4">
-                        <VirtualMirror
-                          imageUrl={generatedImageUrl}
-                          isLoading={isGenerating}
-                          errorMessage={errorMessage}
-                          onDownloadClean={() => undefined}
-                          onTryAnother={() => setGeneratedImageUrl(null)}
-                        />
-                      </div>
+                      <Link href="/" className="mt-4 inline-block font-semibold underline">
+                        Open the ChangeRoom studio
+                      </Link>
                     </div>
                   </div>
                 </div>
@@ -877,7 +778,7 @@ export function BrandPitchPrototype() {
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                   <p className="font-semibold text-white">Retailer seriousness</p>
                   <p className="mt-1">
-                    The merchant dashboard quantifies coverage gaps and recent try-on outcomes.
+                    The merchant dashboard shows catalogue coverage and missing size data.
                   </p>
                 </div>
               </div>
