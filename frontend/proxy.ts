@@ -13,6 +13,8 @@ const isPublicRoute = createRouteMatcher([
   '/api/webhooks/clerk(.*)',
   '/how-it-works',
   '/about',
+  '/support',
+  '/status',
   '/pricing',
   // MCP OAuth metadata endpoints must be publicly accessible
   '/.well-known/oauth-authorization-server(.*)',
