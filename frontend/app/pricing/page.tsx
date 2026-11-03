@@ -1,3 +1,4 @@
+import { NEW_PURCHASES_ENABLED, PURCHASE_PAUSE_NOTICE } from '@/lib/purchase-availability';
 import Image from 'next/image';
 import Link from 'next/link';
 import type { Metadata } from 'next';
@@ -53,7 +54,7 @@ function PricingPageContent() {
             Pricing &amp; Plans
           </h1>
           <p className="text-base md:text-lg text-black/70">
-            Pick a subscription or credit pack and checkout securely via Stripe.
+            {NEW_PURCHASES_ENABLED ? 'Pick a subscription or credit pack and checkout securely via Stripe.' : PURCHASE_PAUSE_NOTICE}
           </p>
           <div className="pt-2 flex justify-center">
             <Link
@@ -62,13 +63,17 @@ function PricingPageContent() {
               rel="noopener noreferrer"
               className="inline-flex items-center justify-center rounded-full bg-[#8B5CF6] px-5 py-2.5 text-white font-semibold hover:bg-[#7a4ee2] transition-colors"
             >
-              Manage billing / login
+              Manage billing or cancel a subscription
             </Link>
           </div>
         </div>
 
         <div className="bg-white border border-[#8B5CF6]/30 rounded-2xl p-4 md:p-6 shadow-sm">
-          <PricingTable showCreditPacks />
+           {NEW_PURCHASES_ENABLED ? <PricingTable showCreditPacks /> : (
+            <p className="text-center text-sm text-slate-700">
+              Existing customers can still access invoices, update payment details, and manage their subscription through the billing portal.
+            </p>
+          )}
         </div>
       </div>
     </div>
