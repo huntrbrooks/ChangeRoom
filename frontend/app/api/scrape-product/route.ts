@@ -14,6 +14,9 @@ import { auth } from '@clerk/nextjs/server';
  */
 export async function POST(request: NextRequest) {
   try {
+    if (process.env.NEXT_PUBLIC_ENABLE_TRYON_FROM_URL !== 'true') {
+      return NextResponse.json({ error: 'unavailable' }, { status: 404 });
+    }
     // Check authentication
     const { userId } = await auth();
     if (!userId) {
