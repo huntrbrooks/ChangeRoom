@@ -164,7 +164,7 @@ export const VirtualMirror: React.FC<VirtualMirrorProps> = ({
   };
 
   const goToPricing = () => {
-    window.location.href = '/pricing?promo=xmas';
+    window.location.href = '/pricing';
   };
 
   const handleDownloadClean = onDownloadClean || goToPricing;

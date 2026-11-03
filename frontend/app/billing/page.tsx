@@ -3,12 +3,11 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
-import { CreditCard, Zap, Crown, Sparkles, Settings, ArrowLeft, Check } from 'lucide-react';
+import { Settings, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { httpClient } from '@/lib/httpClient';
-import { appConfig } from '@/lib/config';
-import { getProductFeatures } from '@/lib/products';
-import { PaywallModal } from '../components/PaywallModal';
+import { offers } from '@/lib/billing-catalog';
+import { CheckoutStatus } from '../components/CheckoutStatus';
 
 // Force dynamic rendering to prevent static generation issues with Clerk
 export const dynamic = 'force-dynamic';
@@ -20,6 +19,8 @@ interface BillingInfo {
   trialsRemaining: number;
   unlimitedCredits?: boolean;
   isPrivileged?: boolean;
+  isFrozen?: boolean;
+  canManageBilling?: boolean;
 }
 
 function BillingPageContent() {
@@ -29,13 +30,11 @@ function BillingPageContent() {
   const [loading, setLoading] = useState(true);
   const [billingError, setBillingError] = useState<string | null>(null);
   const [portalLoading, setPortalLoading] = useState(false);
-  const [showPaywall, setShowPaywall] = useState(false);
 
   useEffect(() => {
-    if (isLoaded && user) {
-      fetchBilling();
-    }
-  }, [isLoaded, user]);
+    if (isLoaded && !user) { router.replace('/sign-in?redirect_url=%2Fbilling'); return; }
+    if (isLoaded && user) void fetchBilling();
+  }, [isLoaded, user, router]);
 
   const fetchBilling = async () => {
     try {
@@ -89,7 +88,6 @@ function BillingPageContent() {
   }
 
   if (!user) {
-    router.push('/sign-in');
     return null;
   }
 
@@ -125,6 +123,7 @@ function BillingPageContent() {
       </header>
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
+        <CheckoutStatus onSettled={fetchBilling} />
         {billingError && (
           <div className="mb-6 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
             {billingError}
@@ -137,7 +136,7 @@ function BillingPageContent() {
               <h2 className="text-2xl font-bold mb-2">Current Plan</h2>
               <div className="flex items-center gap-3">
                 <span className="text-4xl font-bold capitalize">
-                  {isUnlimited ? 'Unlimited' : billing?.plan || 'Free'}
+                  {isUnlimited ? 'Unlimited' : offers.find(o => o.mode === 'subscription' && o.plan === billing?.plan)?.name || 'Free'}
                 </span>
                 {isUnlimited && (
                   <span className="bg-emerald-100 text-emerald-700 text-sm font-semibold px-3 py-1 rounded-full">
@@ -151,7 +150,7 @@ function BillingPageContent() {
                 )}
               </div>
             </div>
-            {billing?.plan !== 'free' && !isUnlimited && (
+            {billing?.canManageBilling && (
               <button
                 onClick={handleManageSubscription}
                 disabled={portalLoading}
@@ -172,7 +171,7 @@ function BillingPageContent() {
             </div>
             <div>
               <p className="text-sm text-gray-600 mb-1">
-                {isUnlimited ? 'Status' : billing?.plan !== 'free' ? 'Credits Refresh' : 'Status'}
+                {isUnlimited ? 'Status' : billing?.plan !== 'free' ? 'Current period ends' : 'Status'}
               </p>
               <p className="text-lg font-semibold">
                 {isUnlimited
@@ -185,139 +184,12 @@ function BillingPageContent() {
           </div>
         </div>
 
-        {/* Upgrade Options */}
-        {billing?.plan === 'free' && !isUnlimited && (
-          <div className="mb-8">
-            <h3 className="text-xl font-bold mb-4">Upgrade Your Plan</h3>
-            <div className="grid md:grid-cols-2 gap-6">
-              {/* Standard Plan */}
-              <div className="border-2 border-gray-200 rounded-xl p-6 hover:border-blue-500 transition-colors">
-                <div className="flex items-center gap-2 mb-4">
-                  <Zap size={24} className="text-blue-500" />
-                  <h4 className="text-xl font-bold">Standard</h4>
-                </div>
-                <div className="mb-4">
-                  <div className="text-3xl font-bold mb-1">
-                    {appConfig.standardMonthlyCredits} credits/month
-                  </div>
-                  <p className="text-sm text-gray-500 mb-1">Perfect for regular users</p>
-                  <p className="text-xs text-gray-400">≈ $0.20 per try-on</p>
-                </div>
-                
-                {/* Features */}
-                <div className="mb-4 space-y-2">
-                  {getProductFeatures('standard').features.slice(0, 4).map((feature) => (
-                    <div key={feature.id} className="flex items-center gap-2 text-sm text-gray-600">
-                      <Check size={16} className="text-blue-500" />
-                      <span>{feature.name}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <Link
-                  href="/pricing"
-                  className="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors text-center block"
-                >
-                  See Pricing
-                </Link>
-              </div>
-
-              {/* Pro Plan */}
-              <div className="border-2 border-purple-200 rounded-xl p-6 hover:border-purple-500 transition-colors bg-gradient-to-br from-purple-50 to-white">
-                <div className="flex items-center gap-2 mb-4">
-                  <Crown size={24} className="text-purple-500" />
-                  <h4 className="text-xl font-bold">Pro</h4>
-                  <span className="bg-purple-100 text-purple-700 text-xs font-semibold px-2 py-1 rounded">POPULAR</span>
-                </div>
-                <div className="mb-4">
-                  <div className="text-3xl font-bold mb-1">
-                    {appConfig.proMonthlyCredits} credits/month
-                  </div>
-                  <p className="text-sm text-gray-500 mb-1">For power users and professionals</p>
-                  <p className="text-xs text-purple-600 font-semibold">≈ $0.08 per try-on • Best Value</p>
-                </div>
-                
-                {/* Features */}
-                <div className="mb-4 space-y-2">
-                  {getProductFeatures('pro').features.slice(0, 5).map((feature) => (
-                    <div key={feature.id} className="flex items-center gap-2 text-sm text-gray-600">
-                      <Check size={16} className="text-purple-500" />
-                      <span>{feature.name}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <Link
-                  href="/pricing"
-                  className="w-full py-3 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition-colors text-center block"
-                >
-                  See Pricing
-                </Link>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Credit Packs */}
-        {!isUnlimited && <div className="mb-8">
-          <h3 className="text-xl font-bold mb-4">Buy Credits</h3>
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="border border-gray-200 rounded-lg p-5 hover:border-blue-500 transition-colors">
-              <div className="flex items-center gap-2 mb-3">
-                <CreditCard size={20} className="text-gray-500" />
-                <h4 className="font-semibold">Small Pack</h4>
-              </div>
-              <div className="mb-4">
-                <div className="text-2xl font-bold">{appConfig.creditPackSmallAmount} credits</div>
-              </div>
-              <Link
-                href="/pricing"
-                className="w-full py-2 bg-gray-100 text-gray-900 rounded-lg font-semibold hover:bg-gray-200 transition-colors text-center block"
-              >
-                View Pricing
-              </Link>
-            </div>
-
-            <div className="border border-gray-200 rounded-lg p-5 hover:border-blue-500 transition-colors">
-              <div className="flex items-center gap-2 mb-3">
-                <Sparkles size={20} className="text-yellow-500" />
-                <h4 className="font-semibold">Large Pack</h4>
-              </div>
-              <div className="mb-4">
-                <div className="text-2xl font-bold">{appConfig.creditPackLargeAmount} credits</div>
-              </div>
-              <Link
-                href="/pricing"
-                className="w-full py-2 bg-gray-100 text-gray-900 rounded-lg font-semibold hover:bg-gray-200 transition-colors text-center block"
-              >
-                View Pricing
-              </Link>
-            </div>
-          </div>
+        {billing?.isFrozen && <p role="alert" className="mb-4 rounded-lg bg-amber-50 p-4">Your payment needs attention. Choose Manage above to update your payment method or review the invoice.</p>}
+        {!isUnlimited && <div className="space-y-3">
+          <Link href="/pricing" className="underline">View plans and credit packs</Link>
+          <p>Monthly credits are added after successful payment. Unused purchased credits remain available after cancellation.</p>
         </div>}
-
-        {/* Info Section */}
-        <div className="bg-gray-50 rounded-lg p-6">
-          <h3 className="text-lg font-semibold mb-3">How It Works</h3>
-          <ul className="space-y-2 text-sm text-gray-600">
-            <li>• {isUnlimited ? 'Your account is not charged credits for try-ons' : 'Each try-on uses 1 credit'}</li>
-            <li>• Subscription plans refresh credits monthly</li>
-            <li>• Credit packs are added to your balance immediately</li>
-            <li>• New users get 2 free try-ons to test the service</li>
-            <li>• You can upgrade, downgrade, or cancel anytime</li>
-          </ul>
-        </div>
       </div>
-
-      {showPaywall && billing && (
-        <PaywallModal
-          isOpen={showPaywall}
-          onClose={() => setShowPaywall(false)}
-          creditsAvailable={billing.creditsAvailable}
-          plan={billing.plan}
-          onTrial={isOnTrial}
-        />
-      )}
     </div>
   );
 }

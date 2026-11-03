@@ -1,3 +1,4 @@
+import { packCredits } from "@/lib/billing-catalog";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import Stripe from "stripe";
@@ -68,7 +69,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { getOrCreateUserBilling, grantCredits } = await import("@/lib/db-access");
+    const { getOrCreateUserBilling, grantCredits, hasSubscriptionAllowance } = await import("@/lib/db-access");
     const session = await getStripe().checkout.sessions.retrieve(sessionId, {
       expand: ["line_items.data.price", "payment_intent"],
     });
@@ -79,24 +80,19 @@ export async function POST(req: NextRequest) {
     const billingRow = await getOrCreateUserBilling(userId);
     const sessionCustomerId =
       typeof session.customer === "string" ? session.customer : session.customer?.id ?? null;
-    const ownsSession =
-      session.metadata?.clerkUserId === userId ||
-      session.client_reference_id === userId ||
-      Boolean(sessionCustomerId && billingRow.stripe_customer_id === sessionCustomerId);
+    const ownsSession = Boolean(sessionCustomerId && billingRow.stripe_customer_id === sessionCustomerId)
+      && (!session.metadata?.clerkUserId || session.metadata.clerkUserId === userId)
+      && (!session.client_reference_id || session.client_reference_id === userId);
     if (!ownsSession) {
       logger.warn("verify_checkout_session_owner_mismatch", { userId, sessionId: session.id });
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     if (session.mode !== "payment") {
-      return NextResponse.json({
-        ok: true,
-        granted: false,
-        reason: "not_one_time_payment",
-        sessionId: session.id,
-      });
+      const subId = typeof session.subscription === "string" ? session.subscription : session.subscription?.id;
+      const settled = Boolean(subId && session.status === "complete" && await hasSubscriptionAllowance(userId, subId));
+      return NextResponse.json({ ok:true, settled, granted:false, reason:settled ? "subscription_settled" : "awaiting_invoice" });
     }
-
     if (session.payment_status !== "paid") {
       return NextResponse.json({
         ok: true,
@@ -118,21 +114,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const priceIdFromSession =
-      session.metadata?.priceId ||
-      (session.line_items?.data?.[0]?.price?.id ?? "");
-
-    const creditAmountMap: Record<string, number> = {
-      [stripeConfig.starterPriceId]: 10,
-      [stripeConfig.starterXmasPriceId]: 20,
-      [stripeConfig.valuePriceId]: 30,
-      [stripeConfig.proPriceId]: 100,
-    };
-
-    const creditAmount =
-      parseInt(session.metadata?.creditAmount || "0", 10) ||
-      creditAmountMap[priceIdFromSession] ||
-      0;
+    const line = session.line_items?.data?.[0];
+    const priceIdFromSession = line?.price?.id ?? "";
+    const creditAmount = line?.quantity === 1 && session.line_items?.data.length === 1 && !session.line_items.has_more
+      ? packCredits(stripeConfig, priceIdFromSession) : 0;
 
     if (creditAmount <= 0) {
       return NextResponse.json({
@@ -161,6 +146,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       granted,
+      settled: true,
       creditsGranted: creditAmount,
       sessionId: session.id,
       paymentIntentId,
@@ -170,7 +156,7 @@ export async function POST(req: NextRequest) {
     const error = err instanceof Error ? err : new Error(String(err));
     logger.error("verify_checkout_session_failed", { error });
     return NextResponse.json(
-      { error: "Failed to verify checkout session", details: error.message },
+      { error: "Failed to verify checkout session" },
       { status: 500 }
     );
   }

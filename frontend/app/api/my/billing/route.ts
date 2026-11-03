@@ -84,6 +84,8 @@ export async function GET() {
       creditsRefreshAt: billing.credits_refresh_at,
       trialsRemaining: billing.trials_remaining,
       hasPurchase,
+      isFrozen: billing.is_frozen,
+      canManageBilling: Boolean(billing.stripe_customer_id),
       unlimitedCredits: isPrivileged,
       isPrivileged,
     });

@@ -255,7 +255,7 @@ async function createUsersBillingTable(): Promise<void> {
       plan TEXT NOT NULL DEFAULT 'free',
       credits_available INTEGER NOT NULL DEFAULT 0,
       credits_refresh_at TIMESTAMPTZ,
-      trials_remaining INTEGER NOT NULL DEFAULT 2,
+      trials_remaining INTEGER NOT NULL DEFAULT 1,
       is_frozen BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -264,7 +264,7 @@ async function createUsersBillingTable(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS users_billing_stripe_customer_idx ON users_billing (stripe_customer_id)`;
   await sql`CREATE INDEX IF NOT EXISTS users_billing_plan_idx ON users_billing (plan)`;
   // Backward-compatible column adds (safe to run repeatedly)
-  await sql`ALTER TABLE users_billing ADD COLUMN IF NOT EXISTS trials_remaining INTEGER NOT NULL DEFAULT 2`;
+  await sql`ALTER TABLE users_billing ADD COLUMN IF NOT EXISTS trials_remaining INTEGER NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE users_billing ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN NOT NULL DEFAULT false`;
 }
 
@@ -695,14 +695,14 @@ async function ensureUserBillingWithLock(
     const billing = existing.rows[0] as UserBilling;
     return {
       ...billing,
-      trials_remaining: billing.trials_remaining ?? 2,
+      trials_remaining: billing.trials_remaining ?? 1,
       is_frozen: billing.is_frozen ?? false,
     };
   }
 
   const inserted = await tx`
     INSERT INTO users_billing (user_id, plan, credits_available, trials_remaining, is_frozen)
-    VALUES (${userId}, 'free', ${appConfig.freeCredits}, 2, false)
+    VALUES (${userId}, 'free', ${appConfig.freeCredits}, 1, false)
     ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
     RETURNING *
   `;
@@ -859,6 +859,9 @@ async function reconcileCreditsFromLedger(userId: string): Promise<{
   }
 
   return runTransaction(async (tx) => {
+    // Lock before taking the ledger snapshot: a grant or job settlement must not
+    // commit between this aggregate and the balance comparison.
+    const billing = await ensureUserBillingWithLock(tx, userId);
     // Calculate net credits from ledger.
     // Exclude reconciliation adjustments to avoid feedback loops.
     const ledgerResult = await tx`
@@ -879,7 +882,6 @@ async function reconcileCreditsFromLedger(userId: string): Promise<{
     let netCreditsFromLedger = Number(ledgerResult.rows[0]?.net_credits ?? 0) || 0;
 
     // Get current billing balance
-    const billing = await ensureUserBillingWithLock(tx, userId);
     const currentBalance = billing.credits_available;
 
     // If the user is on a paid plan and the ledger is missing a plan baseline,
@@ -1016,7 +1018,7 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
         try {
           await sql`
             UPDATE users_billing
-            SET trials_remaining = COALESCE(trials_remaining, 2), updated_at = now()
+            SET trials_remaining = COALESCE(trials_remaining, 1), updated_at = now()
             WHERE user_id = ${userId}
           `;
           // Fetch again to get updated value
@@ -1026,14 +1028,14 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
           return updated.rows[0] as UserBilling;
         } catch {
           // If column doesn't exist, return with default value
-          return { ...billing, trials_remaining: 2, is_frozen: billing.is_frozen ?? false };
+          return { ...billing, trials_remaining: 1, is_frozen: billing.is_frozen ?? false };
         }
       }
       // If free plan trials have been consumed and there is no purchase, credits should be 0.
       // This corrects older records created with default free credits.
       const normalized = {
         ...billing,
-        trials_remaining: billing.trials_remaining ?? 2,
+        trials_remaining: billing.trials_remaining ?? 1,
         is_frozen: billing.is_frozen ?? false,
       };
       if (
@@ -1066,7 +1068,7 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
     try {
       const result = await sql`
         INSERT INTO users_billing (user_id, plan, credits_available, trials_remaining, is_frozen)
-        VALUES (${userId}, 'free', ${appConfig.freeCredits}, 2, false)
+        VALUES (${userId}, 'free', ${appConfig.freeCredits}, 1, false)
         ON CONFLICT (user_id) DO UPDATE SET updated_at = now()
         RETURNING *
       `;
@@ -1084,7 +1086,7 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
           RETURNING *
         `;
         if (result.rows.length > 0) {
-          return { ...(result.rows[0] as UserBilling), trials_remaining: 2, is_frozen: false };
+          return { ...(result.rows[0] as UserBilling), trials_remaining: 1, is_frozen: false };
         }
       }
       throw err;
@@ -1097,7 +1099,7 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
     const fetched = fetchResult.rows[0] as UserBilling;
     return {
       ...fetched,
-      trials_remaining: fetched.trials_remaining ?? 2,
+      trials_remaining: fetched.trials_remaining ?? 1,
       is_frozen: fetched.is_frozen ?? false,
     };
   });
@@ -1836,7 +1838,7 @@ export async function isUserOnFreeTrial(userId: string): Promise<boolean> {
 /**
  * Decrement credits in a transaction-safe way
  * Returns true if credits were available and decremented, false otherwise
- * During free trial, allows 2 free try-ons by decrementing trials_remaining
+ * During free trial, allows one free try-on by decrementing trials_remaining
  */
 export async function decrementCreditsIfAvailable(userId: string): Promise<boolean> {
   try {
@@ -1980,10 +1982,6 @@ export async function markFreeTrialUsed(userId: string): Promise<UserBilling> {
       UPDATE users_billing
       SET
         trials_remaining = 0,
-        credits_available = CASE
-          WHEN plan = 'free' THEN 0
-          ELSE credits_available
-        END,
         updated_at = now()
       WHERE user_id = ${userId} AND trials_remaining > 0
       RETURNING *
@@ -1999,14 +1997,14 @@ export async function markFreeTrialUsed(userId: string): Promise<UserBilling> {
 
 /**
  * Reset free trial for a user (for testing/admin purposes)
- * Note: In production, users should only get 2 free try-ons
+ * Note: In production, users should only get one free try-on
  */
 export async function resetFreeTrial(userId: string): Promise<UserBilling> {
   return withUsersBillingTable(async () => {
     const result = await sql`
       UPDATE users_billing
       SET
-        trials_remaining = 2,
+        trials_remaining = 1,
         updated_at = now()
       WHERE user_id = ${userId}
       RETURNING *
@@ -2144,13 +2142,11 @@ export async function setStripeCustomerIdForUser(
       SET
         stripe_customer_id = ${stripeCustomerId},
         updated_at = now()
-      WHERE user_id = ${userId}
+      WHERE user_id = ${userId} AND (stripe_customer_id IS NULL OR stripe_customer_id = ${stripeCustomerId})
       RETURNING *
     `;
 
-    if (result.rows.length === 0) {
-      return getOrCreateUserBilling(userId);
-    }
+    if (result.rows.length === 0) throw new Error("stripe_customer_mapping_conflict");
 
     const updated = result.rows[0] as UserBilling;
     return {
@@ -3346,4 +3342,67 @@ export async function deleteUserOutfit(
   );
 
   return result.rows.length > 0;
+}
+
+export type CheckoutAttempt = {attempt_id: string; price_id: string; session_id: string | null; created_at: Date};
+export async function reserveCheckout(userId: string, priceId: string): Promise<CheckoutAttempt> {
+  const result = await sql`
+    INSERT INTO billing_checkout_attempts(user_id, attempt_id, price_id)
+    VALUES (${userId}, ${generateUuid()}, ${priceId})
+    ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
+    RETURNING attempt_id, price_id, session_id, created_at
+  `;
+  return result.rows[0] as CheckoutAttempt;
+}
+export async function recordCheckout(userId:string, attempt:string, session:string) {
+  const result = await sql`UPDATE billing_checkout_attempts SET session_id=${session}
+    WHERE user_id=${userId} AND attempt_id=${attempt} AND (session_id IS NULL OR session_id=${session}) RETURNING session_id`;
+  if (!result.rows.length) throw new Error('checkout_attempt_changed');
+}
+export async function retireCheckout(userId:string, attempt:string) {
+  await sql`DELETE FROM billing_checkout_attempts WHERE user_id=${userId} AND attempt_id=${attempt}`;
+}
+
+export async function syncSubscriptionBilling(
+  customerId: string,
+  loadSnapshot: () => Promise<import('./subscription-lifecycle').SubscriptionSnapshot>,
+  award: import('./subscription-lifecycle').Award | null
+) {
+  await ensureUsersBillingTable(); await ensureCreditTables();
+  return runTransaction(async tx => {
+    // Serialize provider reads for a customer as well as database updates. Reordered
+    // notifications cannot undo a later cancellation or restore a delinquent plan.
+    const result = await tx`SELECT * FROM users_billing WHERE stripe_customer_id=${customerId} FOR UPDATE`;
+    if (result.rows.length !== 1) throw new Error('stripe_customer_mapping_needs_reconciliation');
+    const userId = String(result.rows[0].user_id);
+    const snapshot = await loadSnapshot();
+    if (award) {
+      const key = `stripe_period:${award.subscription}:${award.periodStart}`;
+      const legacyKey = `stripe_invoice:${award.invoiceId}:subscription_cycle`;
+      const prior = await tx`SELECT id FROM credit_ledger_entries WHERE entry_type='grant'
+        AND (request_id IN (${key}, ${legacyKey}) OR metadata->>'invoice_id'=${award.invoiceId}) LIMIT 1`;
+      if (!prior.rows.length) {
+        // Pre-cutover initial grants were anonymous balance resets. A replay must
+        // not credit them again; historical gaps require an explicit operator decision.
+        const cutover = await tx`SELECT started_at FROM subscription_billing_cutover WHERE singleton=true`;
+        if (!cutover.rows.length || award.created * 1000 < new Date(cutover.rows[0].started_at).getTime())
+          throw new Error('legacy_paid_invoice_needs_reconciliation');
+        const balance = await tx`UPDATE users_billing SET credits_available=credits_available+${award.credits}
+          WHERE user_id=${userId} RETURNING credits_available`;
+        await tx`INSERT INTO credit_ledger_entries(id,user_id,request_id,entry_type,credits_change,balance_after,metadata)
+          VALUES(${generateUuid()},${userId},${key},'grant',${award.credits},${balance.rows[0].credits_available},
+            ${JSON.stringify({source:'stripe',reason:'subscription_period',invoice_id:award.invoiceId,
+              subscription_id:award.subscription,price_id:award.price,period_start:award.periodStart,period_end:award.periodEnd})})`;
+      }
+    }
+    await tx`UPDATE users_billing SET plan=${snapshot.plan}, stripe_subscription_id=${snapshot.id},
+      is_frozen=${snapshot.frozen}, credits_refresh_at=${snapshot.endsAt}, updated_at=now() WHERE user_id=${userId}`;
+    return userId;
+  });
+}
+
+export async function hasSubscriptionAllowance(userId:string, subscriptionId:string): Promise<boolean> {
+  const rows = await sql`SELECT 1 FROM credit_ledger_entries WHERE user_id=${userId} AND entry_type='grant'
+    AND metadata->>'subscription_id'=${subscriptionId} LIMIT 1`;
+  return rows.rows.length > 0;
 }
