@@ -1,3 +1,4 @@
+import { NEW_PURCHASES_ENABLED, pausedCheckoutResponse } from "@/lib/purchase-availability";
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse, type NextRequest, type NextMiddleware, type NextFetchEvent } from 'next/server';
 import { buildCanonicalUrl, shouldRedirectToCanonicalHost } from '@/lib/domainRouting';
@@ -77,6 +78,10 @@ try {
 
 // Export proxy handler
 export default function proxy(req: NextRequest, event?: NextFetchEvent) {
+  if (!NEW_PURCHASES_ENABLED && req.method === 'POST' &&
+      req.nextUrl.pathname.replace(/\/+$/, '') === '/api/billing/create-checkout-session') {
+    return pausedCheckoutResponse();
+  }
   const forwardedHost = req.headers.get('x-forwarded-host') ?? req.headers.get('host');
   if (
     shouldRedirectToCanonicalHost({

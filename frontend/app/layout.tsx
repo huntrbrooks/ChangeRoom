@@ -1,3 +1,4 @@
+import { NEW_PURCHASES_ENABLED, PURCHASE_PAUSE_NOTICE } from '@/lib/purchase-availability';
 import type { Metadata, Viewport } from "next";
 import { ClerkProvider } from '@clerk/nextjs';
 import { Geist, Geist_Mono } from "next/font/google";
@@ -71,7 +72,7 @@ export default async function RootLayout({
   const _isBuildTime = process.env.NODE_ENV === 'production' && !process.env.VERCEL_ENV;
   const publishableKey = getClerkPublishableKey();
   
-  const statusMessage = process.env.NEXT_PUBLIC_STATUS_BANNER;
+  const statusMessage = NEW_PURCHASES_ENABLED ? process.env.NEXT_PUBLIC_STATUS_BANNER : PURCHASE_PAUSE_NOTICE;
   const allowedRedirectOrigins = getAllowedRedirectOrigins();
 
   // If key is invalid or missing, skip ClerkProvider entirely (especially during build)

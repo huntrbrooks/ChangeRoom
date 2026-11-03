@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import Stripe from "stripe";
+import { NEW_PURCHASES_ENABLED, pausedCheckoutResponse } from "@/lib/purchase-availability";
 import { z } from "zod";
 import { stripeConfig, appConfig } from "@/lib/config";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -26,6 +27,7 @@ function getStripe() {
  * Body: { priceId: string, mode: "subscription" | "payment", startTrial?: boolean }
  */
 export async function POST(req: NextRequest) {
+  if (!NEW_PURCHASES_ENABLED) return pausedCheckoutResponse();
   try {
     let userId: string | null = null;
     try {

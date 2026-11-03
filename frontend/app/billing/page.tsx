@@ -1,5 +1,6 @@
 'use client';
 
+import { NEW_PURCHASES_ENABLED, PURCHASE_PAUSE_NOTICE } from '@/lib/purchase-availability';
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
@@ -186,7 +187,7 @@ function BillingPageContent() {
         </div>
 
         {/* Upgrade Options */}
-        {billing?.plan === 'free' && !isUnlimited && (
+        {NEW_PURCHASES_ENABLED && billing?.plan === 'free' && !isUnlimited && (
           <div className="mb-8">
             <h3 className="text-xl font-bold mb-4">Upgrade Your Plan</h3>
             <div className="grid md:grid-cols-2 gap-6">
@@ -259,7 +260,7 @@ function BillingPageContent() {
         )}
 
         {/* Credit Packs */}
-        {!isUnlimited && <div className="mb-8">
+        {NEW_PURCHASES_ENABLED && !isUnlimited && <div className="mb-8">
           <h3 className="text-xl font-bold mb-4">Buy Credits</h3>
           <div className="grid md:grid-cols-2 gap-4">
             <div className="border border-gray-200 rounded-lg p-5 hover:border-blue-500 transition-colors">
@@ -296,6 +297,7 @@ function BillingPageContent() {
           </div>
         </div>}
 
+        {!NEW_PURCHASES_ENABLED && <p className="mb-5">{PURCHASE_PAUSE_NOTICE} <Link href="/pricing" className="underline">Open billing management</Link></p>}
         {/* Info Section */}
         <div className="bg-gray-50 rounded-lg p-6">
           <h3 className="text-lg font-semibold mb-3">How It Works</h3>
