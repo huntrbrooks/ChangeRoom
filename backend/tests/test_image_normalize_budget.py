@@ -31,3 +31,15 @@ def test_normalize_with_budget_shrinks_under_limit():
     assert len(out_bytes) <= 250_000
 
 
+
+
+def test_real_heif_is_decoded_for_phone_uploads():
+    import pillow_heif
+    from PIL import Image
+    from services.image_normalize import normalize_image_bytes
+    source = Image.new("RGB",(640,480),(22,100,120))
+    encoded = io.BytesIO()
+    pillow_heif.from_pillow(source).save(encoded)
+    data,mime,width,height = normalize_image_bytes(encoded.getvalue())
+    assert mime == "image/jpeg" and (width,height)==(640,480)
+    assert data.startswith(b"\xff\xd8")

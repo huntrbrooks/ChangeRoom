@@ -2,7 +2,7 @@ import React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import type { Metadata } from 'next';
-import { Shirt, Upload, Sparkles, ShoppingBag, ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 
 // Force dynamic rendering to avoid Clerk initialization issues during build
 export const dynamic = 'force-dynamic';
@@ -49,116 +49,15 @@ export default function HowItWorks() {
           Back to Home
         </Link>
 
-        <h1 className="text-4xl font-bold mb-4">How It Works</h1>
-        <p className="text-lg text-gray-600 mb-12">
-          Upload yourself once, add up to five wardrobe pieces, generate a realistic try-on, and shop similar looks without leaving the flow.
-        </p>
-
-        <div className="space-y-12">
-          {/* Step 1 */}
-          <div className="flex gap-6">
-            <div className="flex-shrink-0">
-              <div className="w-12 h-12 bg-black text-white rounded-full flex items-center justify-center text-xl font-bold">
-                1
-              </div>
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-3 mb-3">
-                <Upload className="text-blue-500" size={24} />
-                <h2 className="text-2xl font-bold">Sign In & Upload Yourself</h2>
-              </div>
-              <p className="text-gray-600 mb-4">
-                Create or sign in to your account, then upload a clear full-body photo. The first photo you upload becomes your main reference.
-              </p>
-              <ul className="list-disc list-inside space-y-2 text-gray-600 ml-4">
-                <li>Use a full-body photo with your face visible</li>
-                <li>Bright, even lighting works best</li>
-                <li>Plain backgrounds avoid artifacts</li>
-                <li>Upload multiple references if you want options</li>
-              </ul>
-            </div>
-          </div>
-
-          {/* Step 2 */}
-          <div className="flex gap-6">
-            <div className="flex-shrink-0">
-              <div className="w-12 h-12 bg-black text-white rounded-full flex items-center justify-center text-xl font-bold">
-                2
-              </div>
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-3 mb-3">
-                <Shirt className="text-green-500" size={24} />
-                <h2 className="text-2xl font-bold">Upload Wardrobe Items</h2>
-              </div>
-              <p className="text-gray-600 mb-4">
-                Add up to five items per look. Drag to reorder, replace any item, and use bulk upload for faster processing.
-              </p>
-              <ul className="list-disc list-inside space-y-2 text-gray-600 ml-4">
-                <li>AI auto-tags category, color, style, brand, and fit hints</li>
-                <li>First clothing item is treated as the primary piece</li>
-                <li>Wearing style options appear when available (e.g., tuck vs. untuck)</li>
-              </ul>
-            </div>
-          </div>
-
-          {/* Step 3 */}
-          <div className="flex gap-6">
-            <div className="flex-shrink-0">
-              <div className="w-12 h-12 bg-black text-white rounded-full flex items-center justify-center text-xl font-bold">
-                3
-              </div>
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-3 mb-3">
-                <Sparkles className="text-yellow-500" size={24} />
-                <h2 className="text-2xl font-bold">Generate Your Look</h2>
-              </div>
-              <p className="text-gray-600 mb-4">
-                Hit the try-on button to start the pipeline. We wake the service, apply wearing rules, and render a photorealistic result—usually in a couple of minutes.
-              </p>
-              <ul className="list-disc list-inside space-y-2 text-gray-600 ml-4">
-                <li>AI matches each item to your body shape and pose</li>
-                <li>Progress loader keeps you updated during generation</li>
-                <li>Errors are surfaced early so you can retry fast</li>
-              </ul>
-            </div>
-          </div>
-
-          {/* Step 4 */}
-          <div className="flex gap-6">
-            <div className="flex-shrink-0">
-              <div className="w-12 h-12 bg-black text-white rounded-full flex items-center justify-center text-xl font-bold">
-                4
-              </div>
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-3 mb-3">
-                <ShoppingBag className="text-purple-500" size={24} />
-                <h2 className="text-2xl font-bold">Shop & Save the Look</h2>
-              </div>
-              <p className="text-gray-600 mb-4">
-                After your try-on renders, browse similar products and keep what you like.
-              </p>
-              <ul className="list-disc list-inside space-y-2 text-gray-600 ml-4">
-                <li>Shop comparable items from multiple retailers</li>
-                <li>Download or share the try-on image instantly</li>
-                <li>Keep the experience focused on one clean pitch flow from upload to result</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-
-        {/* Tips Section */}
-        <div className="mt-16 p-6 bg-blue-50 rounded-xl border border-blue-200">
-          <h3 className="text-xl font-bold mb-4">Pro Tips</h3>
-          <ul className="space-y-2 text-gray-700">
-            <li>• <strong>Main references:</strong> Keep your best self photo first; drag to reorder anytime.</li>
-            <li>• <strong>Wardrobe slots:</strong> Use up to 5 items per look—great for full outfits.</li>
-            <li>• <strong>Pitch flow:</strong> Keep the wardrobe tight so the first result lands quickly and clearly.</li>
-            <li>• <strong>Fast retries:</strong> If something looks off, replace a single item and try again.</li>
-          </ul>
-        </div>
+        <h1 className="text-4xl font-bold mb-4">How to try on a look</h1>
+        <p className="text-lg text-gray-600 mb-10">Start with a clear photo and up to five garments. The result illustrates styling; it cannot tell you which size fits.</p>
+        <ol className="space-y-8 text-gray-700">
+          <li><h2 className="font-bold text-xl">1. Sign in and choose your photo</h2><p>Use a sample or a photo of yourself that you have permission to use. Full-body photos in even light work best. Keep each file under 10 MB. If your phone cannot select a HEIC photo, export a JPEG and choose it instead.</p></li>
+          <li><h2 className="font-bold text-xl">2. Add garments for this session</h2><p>Choose garment photos or a sample. These selections stay in this browser tab. Remove a selected garment to make room for another.</p></li>
+          <li><h2 className="font-bold text-xl">3. Generate the look</h2><p>Press Try it on to send the selected photos for AI processing. A verified account uses an available free trial first, then one credit per standard look. Trial images have a watermark. We restore your trial or credit if generation fails.</p></li>
+          <li><h2 className="font-bold text-xl">4. Download or reopen your result</h2><p>Completed images are available under Your recent looks for 24 hours. Download the JPEG to keep it longer. If you close the page, sign in and refresh that list before starting again. Shopping suggestions, when available, link to retailers; prices and sizing are confirmed on the retailer’s site.</p></li>
+        </ol>
+        <p className="mt-8">Manage renewal or cancellation from <Link className="underline" href="/billing">Billing</Link>. See <Link className="underline" href="/privacy-policy">Privacy</Link> for photo handling.</p>
 
         {/* CTA */}
         <div className="mt-12 text-center">

@@ -339,12 +339,16 @@ async def test_vton_can_use_openrouter_content_fallback_after_safety_rewrites(mo
     assert "general-audience" in user_message
 
 
-def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeypatch):
-    from services import analyze_user
+def test_paid_result_retries_safely_and_keeps_provider_metadata_private(client, sample_image_bytes, monkeypatch):
+    import base64
+    import uuid
+    from unittest.mock import AsyncMock
+    from services import auth, tryon_jobs
     from services import vton
 
-    async def fake_user_attrs(_files):
-        return {}
+    monkeypatch.setenv("BACKEND_AUTH_MODE", "clerk")
+    monkeypatch.setattr(auth, "_verify_clerk_token",AsyncMock(return_value={"sub":"user_retry"}))
+    monkeypatch.setattr(tryon_jobs,"_call",AsyncMock(side_effect=["credits",True]))
 
     openai_calls = {"n": 0}
 
@@ -362,7 +366,7 @@ def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeyp
         return DummyResponse(
             ok=True,
             data={
-                "data": [{"b64_json": "AAAA"}]
+                "data": [{"b64_json": base64.b64encode(sample_image_bytes).decode()}]
             },
         )
 
@@ -385,7 +389,6 @@ def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeyp
             },
         )
 
-    monkeypatch.setattr(analyze_user, "analyze_user_attributes", fake_user_attrs)
     monkeypatch.setattr(vton, "_openai_images_edit", fake_openai_edit)
     monkeypatch.setattr(vton, "_gemini_post_json", fake_gemini_post)
 
@@ -397,10 +400,12 @@ def test_try_on_endpoint_includes_retry_info(client, sample_image_bytes, monkeyp
         "category": "upper_body",
         "garment_metadata": '{"description":"lingerie"}',
     }
-    resp = client.post("/api/try-on", files=files, data=data)
+    rid = str(uuid.uuid4())
+    resp = client.post("/api/try-on", files=files, data=data, headers={"Authorization": "Bearer fixture","X-Request-Id":rid})
     assert resp.status_code == 200
     payload = resp.json()
     assert "image_url" in payload
-    assert "retry_info" in payload
-    assert isinstance(payload["retry_info"], list)
+    assert "retry_info" not in payload
+    assert openai_calls["n"] == 3
+    assert payload["image_url"] == f"/api/try-on/jobs/{rid}/result"
     assert payload.get("modesty_applied") is True

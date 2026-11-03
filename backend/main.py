@@ -1,7 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from typing import Any, Dict, List, Optional
 import uvicorn
 import os
@@ -26,8 +25,8 @@ if sys.stderr.encoding != 'utf-8':
 # Add current directory to path to find services module
 sys.path.insert(0, str(Path(__file__).parent))
 
-from services import vton, gemini, shop, analyze_clothing, analyze_user, model_photo_processor
-from services import preprocess_clothing
+from services import vton, gemini, shop
+from services import tryon_jobs
 from services.image_normalize import normalize_image_bytes, ensure_heif_registered
 from services.auth import require_backend_auth
 
@@ -41,6 +40,7 @@ logging.basicConfig(
 # Silence httpx INFO logs to avoid leaking API keys in URL query params.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx2").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="IGetDressed.Online API")
@@ -101,6 +101,30 @@ allowed_origins = sorted(set(default_allowed_origins + env_allowed_origins))
 
 allowed_origin_regex = os.getenv("ALLOWED_ORIGIN_REGEX", "").strip() or None
 
+# Cap incoming bytes, including chunked requests, before Starlette finishes spooling files.
+class RequestBodyLimit:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") != "POST":
+            return await self.app(scope, receive, send)
+        limit = MAX_TOTAL_SIZE + 256 * 1024
+        raw = dict(scope.get("headers", [])).get(b"content-length", b"0")
+        if not raw.isdigit() or int(raw) > limit:
+            return await JSONResponse({"detail": "Upload too large"}, status_code=413)(scope, receive, send)
+        used = 0
+        async def limited():
+            nonlocal used
+            event = await receive()
+            used += len(event.get("body", b""))
+            if used > limit:
+                raise HTTPException(413, "Upload too large")
+            return event
+        return await self.app(scope, limited, send)
+
+app.add_middleware(RequestBodyLimit)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,  # Specific origins for production
@@ -113,9 +137,7 @@ app.add_middleware(
     expose_headers=["X-ChangeRoom-Stack", "X-Request-Id", "X-ChangeRoom-Request-Id"],
 )
 
-# Create uploads directory if it doesn't exist
-UPLOADS_DIR = Path("uploads")
-UPLOADS_DIR.mkdir(exist_ok=True)
+
 
 # File upload security limits
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 10 * 1024 * 1024))  # 10MB default
@@ -208,7 +230,7 @@ async def read_and_normalize_upload(
     Read an UploadFile, enforce size limits, and normalize to JPEG/PNG for downstream model calls.
     Returns (bytes, mime_type, width, height).
     """
-    contents = await file.read()
+    contents = await file.read(MAX_FILE_SIZE + 1)
     if len(contents) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=413,
@@ -217,8 +239,8 @@ async def read_and_normalize_upload(
 
     # Normalize (handles EXIF orientation + downscale + consistent encoding).
     try:
-        normalized, mime_type, w, h = normalize_image_bytes(
-            contents, max_dimension=max_dimension, prefer_mime="image/jpeg"
+        normalized, mime_type, w, h = await asyncio.to_thread(
+            normalize_image_bytes, contents, max_dimension=max_dimension, prefer_mime="image/jpeg"
         )
         return normalized, mime_type, w, h
     except Exception as e:
@@ -236,87 +258,36 @@ async def read_and_normalize_upload(
                 )
         raise HTTPException(status_code=415, detail=f"Could not decode image: {str(e)}")
 
-# Mount static files for serving uploaded images
-app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
-
 @app.get("/")
 async def root():
     return {"message": "IGetDressed.Online API is running"}
 
 
-@app.post("/api/preprocess-model-photos", dependencies=[Depends(require_backend_auth)])
-async def preprocess_model_photos_endpoint(
-    request: Request,
-    model_images: List[UploadFile] = File(...),
-):
-    """
-    Analyze, normalize, metadata-embed, and store model reference photos.
+# The subscriber path processes uploads in memory. Legacy storage/metadata endpoints
+# used public filenames without ownership; retire them rather than expose old media.
+@app.post("/api/preprocess-model-photos")
+@app.post("/api/preprocess-clothing")
+@app.post("/api/analyze-clothing")
+@app.post("/api/analyze-and-save-clothing")
+@app.get("/api/read-image-metadata")
+async def retired_media_endpoint():
+    raise HTTPException(410, "Legacy image storage is disabled. Upload photos in the studio.")
 
-    When multiple photos are uploaded this returns a generated composite model image
-    intended to be the single person reference for the try-on call.
-    """
+
+_generation_slots = asyncio.Semaphore(max(1,min(8,int(os.getenv("TRYON_CONCURRENCY","1")))))
+
+async def reserve_worker_slot():
     try:
-        ip = get_client_ip(request)
-        if not check_rate_limit(f"preprocess-model:{ip}", limit=12, window_seconds=60):
-            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
-
-        if len(model_images) > 5:
-            raise HTTPException(status_code=400, detail="Maximum 5 model photos allowed")
-        if len(model_images) == 0:
-            raise HTTPException(status_code=400, detail="At least one model photo is required")
-
-        image_bytes_list: List[bytes] = []
-        original_filenames: List[str] = []
-        total_size = 0
-        for index, image_file in enumerate(model_images):
-            is_valid, error_msg = validate_image_file(image_file)
-            if not is_valid:
-                raise HTTPException(status_code=400, detail=f"Model image validation failed: {error_msg}")
-
-            raw = await image_file.read()
-            if len(raw) > MAX_FILE_SIZE:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"Model image too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB",
-                )
-            total_size += len(raw)
-            if total_size > MAX_TOTAL_SIZE:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"Total upload size too large. Maximum: {MAX_TOTAL_SIZE / (1024*1024):.1f}MB",
-                )
-
-            image_bytes_list.append(raw)
-            original_filenames.append(image_file.filename or f"model_{index + 1}.jpg")
-
-        result = await model_photo_processor.process_model_photos(
-            image_bytes_list,
-            original_filenames,
-            output_dir=str(UPLOADS_DIR),
-        )
-        logger.info(
-            "Model photo preprocessing complete: count=%s source=%s",
-            len(model_images),
-            result.get("primary", {}).get("source"),
-        )
-        return result
-    except HTTPException:
-        raise
-    except model_photo_processor.ModelPhotoProcessingError as e:
-        logger.error(
-            "Model photo preprocessing failed provider=%s code=%s message=%s",
-            e.provider,
-            e.code,
-            e.message,
-            exc_info=True,
-        )
-        raise HTTPException(status_code=502, detail=f"{e.provider} {e.code}: {e.message}")
-    except Exception as e:
-        logger.error(f"Error in preprocess-model-photos endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        await asyncio.wait_for(_generation_slots.acquire(), timeout=0.25)
+    except asyncio.TimeoutError:
+        raise HTTPException(429, "The fitting room is busy. No credit was used; try again shortly.")
+    try:
+        yield
+    finally:
+        _generation_slots.release()
 
 
-@app.post("/api/try-on", dependencies=[Depends(require_backend_auth)])
+@app.post("/api/try-on", dependencies=[Depends(require_backend_auth), Depends(reserve_worker_slot)])
 async def try_on(
     request: Request,
     user_image: Optional[UploadFile] = File(None),  # Backward compatibility
@@ -335,304 +306,76 @@ async def try_on(
     Supports multiple user images (up to 5) for better context.
     Supports multiple clothing items for full outfit try-on.
     """
-    rid = get_request_id(request)
-    logger.info(f"[try-on] request_id={rid} received")
+    rid = request.headers.get("x-request-id", "")
+    subject = getattr(request.state, "user_id", None)
+    if not subject:
+        raise HTTPException(401, "A verified user session is required")
+    if clothing_file_urls is not None or clothing_file_url is not None:
+        raise HTTPException(400, "Saved file paths are not accepted")
+    if not check_rate_limit(f"try-on:{subject}", limit=10, window_seconds=60):
+        raise HTTPException(429, "Please try again shortly")
+    people = list(user_images or ([user_image] if user_image else []))
+    clothes = list(clothing_images or []) + ([clothing_image] if clothing_image else [])
+    if not people or not clothes:
+        raise HTTPException(422, "A person photo and clothing image are required")
+    if len(people) > 5 or len(clothes) > 5:
+        raise HTTPException(400, "Maximum 5 person photos and 5 clothing items")
+    if sum(f.size or 0 for f in people + clothes) > MAX_TOTAL_SIZE:
+        raise HTTPException(413, "Total upload size exceeds limit")
 
-    # Rate limit per IP to protect expensive endpoint (best-effort)
-    ip = get_client_ip(request)
-    if not check_rate_limit(f"try-on:{ip}", limit=10, window_seconds=60):
-        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
+    def parse_meta(value):
+        if not value:
+            return {}
+        if len(value) > 65536:
+            raise HTTPException(400, "Metadata exceeds limit")
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            raise HTTPException(400, "Invalid metadata")
+        return parsed if isinstance(parsed, dict) else {}
+
+    metadata = parse_meta(garment_metadata)
+    # Do not infer or store age, gender, skin tone or body measurements.
+    person_inputs, garment_inputs, quality = [], [], []
+    for is_person, files in ((True, people), (False, clothes)):
+        for f in files:
+            valid, _ = validate_image_file(f)
+            if not valid:
+                raise HTTPException(415, "Unsupported image file")
+            contents, _, w, h = await read_and_normalize_upload(f, label="Photo")
+            if is_person and min(w or 0, h or 0) < 400:
+                raise HTTPException(422, "User image resolution too low")
+            if is_person:
+                person_inputs.append(io.BytesIO(contents))
+                quality.append({"low_res": min(w, h)<900, "width": w, "height": h})
+            else:
+                garment_inputs.append(io.BytesIO(contents))
+
+    funding = await tryon_jobs.claim(rid, subject)
     try:
-        # Collect user images (normalized to JPEG/PNG in-memory)
-        user_image_files = []
-        user_quality_flags = []
-        MIN_DIM_HARD_FAIL = 400  # px
-        MIN_DIM_WARN = 900      # px
-        total_size = 0
-        
-        # Handle multiple uploaded user images
-        if user_images:
-            for img in user_images:
-                # Validate user image
-                is_valid, error_msg = validate_image_file(img)
-                if not is_valid:
-                    raise HTTPException(status_code=400, detail=f"User image validation failed: {error_msg}")
+        generated = await asyncio.wait_for(vton.generate_try_on(
+            person_inputs, garment_inputs, category or "upper_body", metadata,
+            user_attributes={}, main_index=main_index or 0, user_quality_flags=quality), timeout=480)
+        value = generated.get("image_url") if isinstance(generated, dict) else generated
+        image = await asyncio.to_thread(tryon_jobs.private_jpeg, value, funding == "trial")
+    except BaseException as exc:
+        # Includes task cancellation; a crashed worker is independently reconciled by sweep.
+        await asyncio.shield(tryon_jobs.settle(rid, subject, None))
+        if isinstance(exc, asyncio.CancelledError):
+            raise
+        if not isinstance(exc, Exception):
+            raise
+        is_safety = any(key in str(exc).lower() for key in ("safety", "prohibited_content", "image_blocked"))
+        logger.warning("generation failed job=%s type=%s", rid, type(exc).__name__)
+        raise HTTPException(422 if is_safety else 502,
+            "Image blocked by safety filters; no credit was charged." if is_safety else
+            "Generation failed; your credit or trial has been restored.")
+    await tryon_jobs.settle(rid, subject, image)
+    logger.info("generation completed job=%s", rid)
+    return {"job_id": rid, "usedFreeTrial": funding == "trial",
+            "image_url": f"/api/try-on/jobs/{rid}/result",
+            "modesty_applied": bool(isinstance(generated, dict) and generated.get("modesty_applied"))}
 
-                normalized_bytes, _mime, w, h = await read_and_normalize_upload(
-                    img, label="User image", max_dimension=2200
-                )
-                total_size += len(normalized_bytes)
-                min_dim = min(w, h) if w and h else None
-                if min_dim is not None and min_dim < MIN_DIM_HARD_FAIL:
-                    raise HTTPException(
-                        status_code=422,
-                        detail="User image resolution too low. Please upload a higher-resolution photo.",
-                    )
-                user_quality_flags.append(
-                    {
-                        "name": img.filename or f"user_{len(user_quality_flags)+1}",
-                        "width": w,
-                        "height": h,
-                        "min_dim": min_dim,
-                        "low_res": bool(min_dim is not None and min_dim < MIN_DIM_WARN),
-                    }
-                )
-                user_image_files.append(io.BytesIO(normalized_bytes))
-                
-        # Handle single user image (backward compatibility) if no list provided
-        elif user_image:
-             is_valid, error_msg = validate_image_file(user_image)
-             if not is_valid:
-                 raise HTTPException(status_code=400, detail=error_msg)
-
-             normalized_bytes, _mime, w, h = await read_and_normalize_upload(
-                 user_image, label="User image", max_dimension=2200
-             )
-             total_size += len(normalized_bytes)
-             min_dim = min(w, h) if w and h else None
-             if min_dim is not None and min_dim < MIN_DIM_HARD_FAIL:
-                 raise HTTPException(
-                     status_code=422,
-                     detail="User image resolution too low. Please upload a higher-resolution photo.",
-                 )
-             user_quality_flags.append(
-                 {
-                     "name": user_image.filename or "user_image",
-                     "width": w,
-                     "height": h,
-                     "min_dim": min_dim,
-                     "low_res": bool(min_dim is not None and min_dim < MIN_DIM_WARN),
-                 }
-             )
-             user_image_files.append(io.BytesIO(normalized_bytes))
-             
-        if not user_image_files:
-             raise HTTPException(status_code=400, detail="At least one user image is required")
-
-        # Limit to 5 user images
-        if len(user_image_files) > 5:
-            logger.warning(f"Received {len(user_image_files)} user images, limiting to 5")
-            user_image_files = user_image_files[:5]
-        
-        # total_size already includes user images; continue accumulating clothing to enforce MAX_TOTAL_SIZE.
-        
-        # Collect all clothing images from various sources
-        clothing_image_files = []
-        
-        # Handle multiple uploaded images (new format)
-        if clothing_images:
-            for img in clothing_images:
-                # Validate clothing image
-                is_valid, error_msg = validate_image_file(img)
-                if not is_valid:
-                    raise HTTPException(status_code=400, detail=f"Clothing image validation failed: {error_msg}")
-
-                normalized_bytes, _mime, _w, _h = await read_and_normalize_upload(
-                    img, label="Clothing image", max_dimension=2200
-                )
-                total_size += len(normalized_bytes)
-                clothing_image_files.append(io.BytesIO(normalized_bytes))
-        
-        # Handle single uploaded image (backward compatibility)
-        if clothing_image:
-            # Validate clothing image
-            is_valid, error_msg = validate_image_file(clothing_image)
-            if not is_valid:
-                raise HTTPException(status_code=400, detail=f"Clothing image validation failed: {error_msg}")
-
-            normalized_bytes, _mime, _w, _h = await read_and_normalize_upload(
-                clothing_image, label="Clothing image", max_dimension=2200
-            )
-            total_size += len(normalized_bytes)
-            clothing_image_files.append(io.BytesIO(normalized_bytes))
-        
-        # Validate total size
-        if total_size > MAX_TOTAL_SIZE:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Total upload size too large. Maximum: {MAX_TOTAL_SIZE / (1024*1024):.1f}MB"
-            )
-        
-        # Handle multiple file URLs (new format - comma-separated)
-        opened_files = []  # Track opened files for cleanup
-        if clothing_file_urls:
-            urls = [url.strip() for url in clothing_file_urls.split(",") if url.strip()]
-            for url in urls:
-                try:
-                    filename = url.split("/")[-1].split("?")[0]
-                    if "/uploads/" in url:
-                        filename = url.split("/uploads/")[-1].split("?")[0]
-                    file_path = UPLOADS_DIR / filename
-                    if file_path.exists():
-                        file_handle = open(file_path, 'rb')
-                        clothing_image_files.append(file_handle)
-                        opened_files.append(file_handle)
-                        logger.info(f"Loaded saved file from URL: {filename}")
-                    else:
-                        logger.warning(f"File not found for URL: {filename}")
-                except Exception as e:
-                    logger.warning(f"Could not load file from URL {url}: {e}")
-        
-        # Handle single file URL (backward compatibility)
-        if clothing_file_url:
-            try:
-                filename = clothing_file_url.split("/")[-1].split("?")[0]
-                if "/uploads/" in clothing_file_url:
-                    filename = clothing_file_url.split("/uploads/")[-1].split("?")[0]
-                file_path = UPLOADS_DIR / filename
-                if file_path.exists():
-                    file_handle = open(file_path, 'rb')
-                    clothing_image_files.append(file_handle)
-                    opened_files.append(file_handle)
-                    logger.info(f"Loaded saved file from URL: {filename}")
-                else:
-                    logger.warning(f"File not found for URL: {filename}")
-            except Exception as e:
-                logger.warning(f"Could not load file from URL {clothing_file_url}: {e}")
-        
-        # Validate that at least one clothing source is provided
-        if not clothing_image_files:
-            raise HTTPException(
-                status_code=422, 
-                detail="At least one clothing image or clothing_file_url must be provided"
-            )
-        
-        # Limit to 5 items
-        if len(clothing_image_files) > 5:
-            logger.warning(f"Received {len(clothing_image_files)} clothing items, limiting to 5")
-            # Close extra files (only those we opened from URLs)
-            for extra_file in clothing_image_files[5:]:
-                if extra_file in opened_files:
-                    try:
-                        if hasattr(extra_file, 'close'):
-                            extra_file.close()
-                        opened_files.remove(extra_file)
-                    except Exception as e:
-                        logger.warning(f"Error closing extra file: {e}")
-            clothing_image_files = clothing_image_files[:5]
-        
-        # Parse metadata if provided
-        metadata = None
-        if garment_metadata:
-            try:
-                import json
-                # Handle both string and dict inputs, ensure UTF-8 encoding
-                if isinstance(garment_metadata, str):
-                    metadata = json.loads(garment_metadata)
-                else:
-                    metadata = garment_metadata
-            except Exception as e:
-                logger.warning(f"Could not parse garment_metadata: {e}")
-                # Try to clean smart quotes if present
-                try:
-                    if isinstance(garment_metadata, str):
-                        cleaned = garment_metadata.replace('\u201c', '"').replace('\u201d', '"').replace('\u2018', "'").replace('\u2019', "'")
-                        metadata = json.loads(cleaned)
-                except:
-                    logger.error(f"Failed to clean and parse metadata: {e}")
-
-        parsed_model_metadata: Dict[str, Any] = {}
-        if model_metadata:
-            try:
-                parsed = json.loads(model_metadata) if isinstance(model_metadata, str) else model_metadata
-                if isinstance(parsed, dict):
-                    parsed_model_metadata = parsed
-            except Exception as e:
-                logger.warning(f"Could not parse model_metadata: {e}")
-        
-        # Use category from metadata if available, otherwise use provided or default
-        final_category = category or (metadata.get('category') if metadata else None) or "upper_body"
-        
-        logger.info(f"Try-on request received for category: {final_category} with {len(clothing_image_files)} clothing item(s)")
-        if metadata:
-            logger.info(f"Using metadata: {list(metadata.keys())}")
-            
-        # Analyze user attributes using AI (automatic metadata extraction)
-        user_attributes = {}
-        try:
-            # We use a copy of user files list for analysis to avoid seeking issues if not handled carefully,
-            # though the analysis function handles seeking.
-            logger.info("Starting automatic user attribute analysis...")
-            user_attributes = await analyze_user.analyze_user_attributes(user_image_files)
-        except Exception as e:
-            logger.warning(f"User attribute analysis failed (continuing without it): {e}")
-
-        if parsed_model_metadata:
-            user_attributes = {
-                **(user_attributes or {}),
-                "body_pose": parsed_model_metadata.get("model:bodyPose") or parsed_model_metadata.get("body_pose"),
-                "skin_tone": parsed_model_metadata.get("model:skinTone") or parsed_model_metadata.get("skin_tone") or (user_attributes or {}).get("skin_tone"),
-                "approximate_measurements": parsed_model_metadata.get("model:approximateMeasurements") or parsed_model_metadata.get("approximate_measurements"),
-                "proportions": parsed_model_metadata.get("model:proportions") or parsed_model_metadata.get("proportions"),
-                "lighting_condition": parsed_model_metadata.get("model:lightingCondition") or parsed_model_metadata.get("lighting_condition"),
-                "background_type": parsed_model_metadata.get("model:backgroundType") or parsed_model_metadata.get("background_type"),
-                "model_metadata": parsed_model_metadata,
-            }
-        
-        result = None
-        result_url = None
-        try:
-            result = await vton.generate_try_on(
-                user_image_files, 
-                clothing_image_files, 
-                final_category,
-                metadata,
-                user_attributes=user_attributes,
-                main_index=main_index if main_index is not None else 0,
-                user_quality_flags=user_quality_flags
-            )
-            result_url = result.get("image_url") if isinstance(result, dict) else result
-            logger.info(f"Try-on completed successfully. Result URL: {result_url}")
-        finally:
-            # Close any files we opened from URLs
-            for file_handle in opened_files:
-                try:
-                    if hasattr(file_handle, 'close'):
-                        file_handle.close()
-                except Exception as e:
-                    logger.warning(f"Error closing file handle: {e}")
-        
-        # Backward-compatible response: always include image_url; optionally include retry_info
-        if isinstance(result, dict):
-            return {
-                "image_url": result.get("image_url"),
-                "retry_info": result.get("retry_info", []),
-                "modesty_applied": bool(result.get("modesty_applied")),
-            }
-        return {"image_url": result}
-    except HTTPException:
-        raise
-    except Exception as e:
-        error_detail = str(e)
-        error_type = type(e).__name__
-        logger.error(f"Error in try-on endpoint: {error_type}: {error_detail}", exc_info=True)
-        # Provide more helpful error messages
-        # Treat safety/policy blocks and “no image after retries with IMAGE_* finish reason” as 422 so the UI can warn/penalize.
-        if (
-            "IMAGE_SAFETY" in error_detail
-            or "PROHIBITED_CONTENT" in error_detail
-            or "no candidates returned" in error_detail.lower()
-            or "safety filter" in error_detail.lower()
-            or (
-                "no image generated after" in error_detail.lower()
-                and "finish reason:" in error_detail.lower()
-                and "image_" in error_detail.lower()
-            )
-        ):
-            raise HTTPException(
-                status_code=422,
-                detail="The image request was blocked by safety filters. Please choose less revealing clothing or use a more neutral description."
-            )
-        if "OPENAI_API_KEY" in error_detail or "environment variable is required" in error_detail:
-            error_detail = "OpenAI API key not configured. Set OPENAI_API_KEY in the Render dashboard."
-        elif "GEMINI_API_KEY" in error_detail or "GOOGLE_API_KEY" in error_detail:
-            error_detail = "Gemini API key not configured. Set GEMINI_API_KEY (or GOOGLE_API_KEY) if optional safety helpers are enabled."
-        elif "ValueError" in error_type and "required" in error_detail.lower():
-            # Catch any ValueError about missing required variables
-            error_detail = f"Configuration error: {error_detail}. Please check your Render environment variables."
-        # Log full error details for debugging (this will appear in Render logs)
-        logger.error(f"Full error details - Type: {error_type}, Message: {error_detail}, Exception: {repr(e)}")
-        raise HTTPException(status_code=500, detail=error_detail)
 
 @app.post("/api/clothing/adjust-description", dependencies=[Depends(require_backend_auth)])
 async def adjust_description(request: Request):
@@ -675,41 +418,9 @@ async def adjust_description(request: Request):
         strategy = "heuristic"
         updated_meta: Dict[str, Any] = metadata
 
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
-        if api_key:
-            try:
-                async with httpx.AsyncClient() as client:
-                    new_meta, prompt_additions, summary = await vton.rewrite_for_modesty_gemini(
-                        client,
-                        api_key=api_key,
-                        metadata=metadata,
-                        prompt=description,
-                        last_failure=last_failure,
-                        strictness=strictness,
-                    )
-                if "description" not in new_meta and description:
-                    new_meta = {**new_meta, "description": description}
-                updated_meta, _safe_prompt, heur_summary = vton.rewrite_for_modesty_heuristic(
-                    new_meta,
-                    prompt_additions or description,
-                    strictness=strictness,
-                )
-                summary = f"{summary}; {heur_summary}" if summary else heur_summary
-                strategy = "gemini_rewrite"
-            except Exception as e:
-                logger.warning(f"Adjust description gemini rewrite failed; falling back to heuristic: {e}")
-                updated_meta, _safe_prompt, summary = vton.rewrite_for_modesty_heuristic(
-                    metadata,
-                    description,
-                    strictness=strictness,
-                )
-                strategy = "heuristic_fallback"
-        else:
-            updated_meta, _safe_prompt, summary = vton.rewrite_for_modesty_heuristic(
-                metadata,
-                description,
-                strictness=strictness,
-            )
+        updated_meta, _safe_prompt, summary = vton.rewrite_for_modesty_heuristic(
+            metadata, description, strictness=strictness)
+        strategy = "heuristic"
 
         updated_description = updated_meta.get("description") if isinstance(updated_meta, dict) else ""
         if not isinstance(updated_description, str) or not updated_description.strip():
@@ -747,322 +458,15 @@ async def identify_products(
         contents, _mime, _w, _h = await read_and_normalize_upload(
             clothing_image, label="Clothing image", max_dimension=2200
         )
+        await tryon_jobs.authorize_extra(request, "identify")
         analysis = await gemini.analyze_garment(contents)  # Now async
-        logger.info(f"Product identification completed. Analysis: {analysis}")
+        logger.info("Product identification completed")
         return analysis
-    except Exception as e:
-        logger.error(f"Error in identify-products endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-async def analyze_clothing_stream(clothing_images: List[UploadFile], save_files: bool = True):
-    """
-    Generator function that yields progress updates as items are analyzed and saved.
-    """
-    total_items = len(clothing_images)
-    
-    try:
-        # Send initial progress
-        yield f"data: {json.dumps({'type': 'progress', 'progress': 0, 'current': 0, 'total': total_items, 'message': 'Starting analysis...'})}\n\n"
-        
-        analyzed_items = []
-        for idx, clothing_image in enumerate(clothing_images):
-            try:
-                is_valid, error_msg = validate_image_file(clothing_image)
-                if not is_valid:
-                    raise HTTPException(status_code=400, detail=error_msg)
-
-                contents, _mime, _w, _h = await read_and_normalize_upload(
-                    clothing_image, label="Clothing image", max_dimension=2200
-                )
-                original_filename = clothing_image.filename or f"item_{idx + 1}"
-                
-                # Update progress: starting item analysis
-                progress = int((idx / total_items) * 100)
-                yield f"data: {json.dumps({'type': 'progress', 'progress': progress, 'current': idx + 1, 'total': total_items, 'message': f'Analyzing item {idx + 1}/{total_items}: {original_filename}...'})}\n\n"
-                # Small delay to ensure progress is visible
-                await asyncio.sleep(0.1)
-                
-                logger.info(f"Analyzing item {idx + 1}: {original_filename}")
-                
-                # Analyze and save the item
-                if save_files:
-                    result = await analyze_clothing.analyze_and_save_clothing_item(
-                        contents,
-                        original_filename,
-                        str(UPLOADS_DIR),
-                        save_file=True
-                    )
-                    analysis = result
-                    
-                    # Get the saved file path and URL (handle None result)
-                    if result:
-                        saved_file_path = result.get("saved_file", "")
-                        saved_filename = result.get("saved_filename", "")
-                        file_url = f"/uploads/{saved_filename}" if saved_filename else ""
-                    else:
-                        saved_file_path = ""
-                        saved_filename = ""
-                        file_url = ""
-                    
-                    item_result = {
-                        "index": idx,
-                        "original_filename": original_filename,
-                        "analysis": analysis,
-                        "saved_file": saved_file_path,
-                        "saved_filename": saved_filename,
-                        "file_url": file_url,
-                        "status": "success"
-                    }
-                else:
-                    # Just analyze without saving
-                    analysis = await analyze_clothing.analyze_clothing_item(contents, original_filename)
-                    item_result = {
-                        "index": idx,
-                        "original_filename": original_filename,
-                        "analysis": analysis,
-                        "status": "success"
-                    }
-                
-                analyzed_items.append(item_result)
-                
-                # Update progress: item completed - send item update
-                progress = int(((idx + 1) / total_items) * 100)
-                yield f"data: {json.dumps({'type': 'item_complete', 'item': item_result, 'progress': progress, 'current': idx + 1, 'total': total_items, 'message': f'Completed item {idx + 1}/{total_items}'})}\n\n"
-                
-            except Exception as e:
-                logger.error(f"Error analyzing item {idx + 1}: {e}", exc_info=True)
-                item_result = {
-                    "index": idx,
-                    "original_filename": clothing_image.filename or f"item_{idx + 1}",
-                    "error": str(e),
-                    "status": "error",
-                    "analysis": {
-                        "category": "unknown",
-                        "detailed_description": "clothing item",
-                        "suggested_filename": f"unknown_item_{idx + 1}.jpg"
-                    }
-                }
-                analyzed_items.append(item_result)
-                # Still update progress even on error - send item update
-                progress = int(((idx + 1) / total_items) * 100)
-                yield f"data: {json.dumps({'type': 'item_complete', 'item': item_result, 'progress': progress, 'current': idx + 1, 'total': total_items, 'message': f'Error analyzing item {idx + 1}'})}\n\n"
-        
-        # Send final result
-        yield f"data: {json.dumps({'type': 'complete', 'items': analyzed_items})}\n\n"
-        
-    except Exception as e:
-        logger.error(f"Error in analyze-clothing stream: {e}", exc_info=True)
-        yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-
-@app.post("/api/analyze-clothing", dependencies=[Depends(require_backend_auth)])
-async def analyze_clothing_items(
-    request: Request,
-    clothing_images: List[UploadFile] = File(...),
-    save_files: bool = Form(True)
-):
-    """
-    Analyzes multiple clothing items with real-time progress updates.
-    Saves files with embedded metadata and proper naming by default.
-    Returns a streaming response with progress and final results including file URLs.
-    """
-    try:
-        ip = get_client_ip(request)
-        if not check_rate_limit(f"analyze-clothing:{ip}", limit=20, window_seconds=60):
-            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
-        logger.info(f"Clothing analysis request received for {len(clothing_images)} items (save_files={save_files})")
-        
-        if len(clothing_images) > 5:
-            raise HTTPException(status_code=400, detail="Maximum 5 clothing items allowed")
-        
-        return StreamingResponse(
-            analyze_clothing_stream(clothing_images, save_files=save_files),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no"  # Disable buffering for nginx
-            }
-        )
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error in analyze-clothing endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/analyze-and-save-clothing", dependencies=[Depends(require_backend_auth)])
-async def analyze_and_save_clothing_items(
-    clothing_images: List[UploadFile] = File(...),
-    save_files: bool = Form(True),
-    output_dir: str = Form("uploads")
-):
-    """
-    Analyzes clothing items, embeds metadata, and saves them with proper naming.
-    Returns analysis results with file paths.
-    """
-    try:
-        logger.info(f"Analyze and save request received for {len(clothing_images)} items")
-        
-        if len(clothing_images) > 5:
-            raise HTTPException(status_code=400, detail="Maximum 5 clothing items allowed")
-        
-        results = []
-        for idx, clothing_image in enumerate(clothing_images):
-            try:
-                is_valid, error_msg = validate_image_file(clothing_image)
-                if not is_valid:
-                    raise HTTPException(status_code=400, detail=error_msg)
-
-                contents, _mime, _w, _h = await read_and_normalize_upload(
-                    clothing_image, label="Clothing image", max_dimension=2200
-                )
-                original_filename = clothing_image.filename or f"item_{idx + 1}"
-                
-                logger.info(f"Processing item {idx + 1}: {original_filename}")
-                result = await analyze_clothing.analyze_and_save_clothing_item(
-                    contents,
-                    original_filename,
-                    output_dir,
-                    save_files
-                )
-                
-                results.append({
-                    "index": idx,
-                    "original_filename": original_filename,
-                    "analysis": result,
-                    "status": "success"
-                })
-                
-            except Exception as e:
-                logger.error(f"Error processing item {idx + 1}: {e}", exc_info=True)
-                results.append({
-                    "index": idx,
-                    "original_filename": clothing_image.filename or f"item_{idx + 1}",
-                    "error": str(e),
-                    "status": "error"
-                })
-        
-        return {"items": results, "total": len(results)}
-        
-    except Exception as e:
-        logger.error(f"Error in analyze-and-save-clothing endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/read-image-metadata", dependencies=[Depends(require_backend_auth)])
-async def read_image_metadata(request: Request, image_path: str):
-    """
-    Reads embedded metadata from a saved image file.
-    
-    Args:
-        image_path: Path to the image file (relative to uploads directory or absolute)
-    """
-    try:
-        ip = get_client_ip(request)
-        if not check_rate_limit(f"read-metadata:{ip}", limit=60, window_seconds=60):
-            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
-
-        # Security: only allow reading files within uploads directory (no absolute paths, no traversal)
-        if os.path.isabs(image_path):
-            raise HTTPException(status_code=400, detail="image_path must be a relative path within uploads")
-
-        uploads_root = (Path(UPLOADS_DIR)).resolve()
-        candidate = (uploads_root / image_path).resolve()
-        if uploads_root not in candidate.parents and candidate != uploads_root:
-            raise HTTPException(status_code=400, detail="Invalid image_path")
-
-        if not candidate.exists() or not candidate.is_file():
-            raise HTTPException(status_code=404, detail="Image file not found")
-        
-        metadata = analyze_clothing.read_metadata_from_image(str(candidate))
-        
-        if metadata is None:
-            return {"message": "No metadata found in image", "image_path": image_path}
-        
-        return {"metadata": metadata, "image_path": str(candidate.relative_to(uploads_root))}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error reading image metadata: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/preprocess-clothing", dependencies=[Depends(require_backend_auth)])
-async def preprocess_clothing_batch(
-    request: Request,
-    clothing_images: List[UploadFile] = File(...)
-):
-    """
-    Batch preprocessing endpoint for clothing images.
-    
-    Uses OpenAI to analyze up to 5 images in a single batch call.
-    Returns structured metadata and saves files with proper naming.
-    
-    This endpoint implements the clean architecture:
-    - OpenAI: Analyzes images and provides structured metadata + recommended filenames
-    - Backend: Saves files, handles storage, wires everything for Gemini
-    
-    Args:
-        clothing_images: List of uploaded image files (max 5)
-        
-    Returns:
-        JSON with items array containing metadata and file URLs
-    """
-    try:
-        ip = get_client_ip(request)
-        if not check_rate_limit(f"preprocess-clothing:{ip}", limit=15, window_seconds=60):
-            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
-        logger.info(f"Batch preprocessing request received for {len(clothing_images)} images")
-        
-        if len(clothing_images) > 5:
-            raise HTTPException(status_code=400, detail="Maximum 5 clothing items allowed")
-        
-        if len(clothing_images) == 0:
-            raise HTTPException(status_code=400, detail="At least one image is required")
-        
-        # Read all images into memory
-        image_bytes_list = []
-        original_filenames = []
-        
-        for image_file in clothing_images:
-            is_valid, error_msg = validate_image_file(image_file)
-            if not is_valid:
-                raise HTTPException(status_code=400, detail=error_msg)
-
-            normalized, _mime, _w, _h = await read_and_normalize_upload(
-                image_file, label="Clothing image", max_dimension=2200
-            )
-            image_bytes_list.append(normalized)
-            original_filenames.append(image_file.filename or "unknown")
-        
-        # Call batch preprocessing service
-        processed_items = await preprocess_clothing.preprocess_clothing_batch(
-            image_bytes_list,
-            original_filenames,
-            str(UPLOADS_DIR)
-        )
-        
-        logger.info(f"Batch preprocessing complete: {len(processed_items)} items processed")
-        
-        # Log body_regions for debugging
-        for idx, item in enumerate(processed_items):
-            if item.get("status") == "success":
-                body_region = item.get("body_region") or item.get("analysis", {}).get("body_region") or item.get("category", "MISSING")
-                logger.info(f"Item {idx} body_region: {body_region}")
-            else:
-                logger.warning(f"Item {idx} failed: {item.get('error', 'Unknown error')}")
-        
-        return {
-            "items": processed_items,
-            "total": len(processed_items)
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in preprocess-clothing endpoint: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Failed to preprocess clothing images: {str(e)}"
-        )
+    except Exception:
+        logger.error("Error in identify-products endpoint")
+        raise HTTPException(status_code=502, detail="Shopping lookup unavailable")
 
 @app.post("/api/shop", dependencies=[Depends(require_backend_auth)])
 async def shop_endpoint(
@@ -1074,13 +478,15 @@ async def shop_endpoint(
         ip = get_client_ip(request)
         if not check_rate_limit(f"shop:{ip}", limit=60, window_seconds=60):
             raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
-        logger.info(f"Shop request received. Query: {query}, Budget: {budget}")
-        results = shop.search_products(query, budget)
+        await tryon_jobs.authorize_extra(request, "shop")
+        results = await asyncio.to_thread(shop.search_products, query, budget)
         logger.info(f"Shop search completed. Found {len(results)} results")
         return {"results": results}
-    except Exception as e:
-        logger.error(f"Error in shop endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.error("Error in shop endpoint")
+        raise HTTPException(status_code=502, detail="Shopping lookup unavailable")
 
 if __name__ == "__main__":
     # Set UTF-8 encoding environment variables

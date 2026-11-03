@@ -969,7 +969,7 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                             sanitized = _sanitize_clothing_description(normalized)
                             normalized_instructions.append(sanitized)
                         else:
-                            logger.warning(f"Wearing instruction at index {idx} is invalid and will be ignored: {instruction!r}")
+                            logger.warning("Invalid wearing instruction at index %d", idx)
                 else:
                     normalized = _normalize_instruction(wearing_instructions)
                     if normalized:
@@ -985,7 +985,7 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                     text_prompt += "\n\nPer-item wearing instructions (non-negotiable):\n"
                     for idx, item_info in enumerate(items_wearing_styles):
                         if not isinstance(item_info, dict):
-                            logger.warning(f"Ignoring invalid item_wearing_styles entry at index {idx}: {item_info!r}")
+                            logger.warning("Invalid style at index %d", idx)
                             continue
                         try:
                             item_index = int(item_info.get('index', 0))
@@ -1229,11 +1229,10 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                     if not response.is_success:
                         last_error = f"{response.status_code}:{response.text[:500]}"
                         logger.error(
-                            "xAI/Grok try-on fallback failed attempt=%s model=%s code=%s message=%s",
+                            "xAI/Grok try-on fallback failed attempt=%s model=%s code=%s",
                             retry_attempt,
                             model,
                             response.status_code,
-                            response.text[:500],
                         )
                     else:
                         image_url = _extract_xai_image_url(response.json(), default_mime_type="image/jpeg")
@@ -1265,8 +1264,7 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                         "xAI/Grok try-on fallback exception attempt=%s model=%s code=exception message=%s",
                         retry_attempt,
                         model,
-                        e,
-                        exc_info=True,
+                        type(e).__name__,
                     )
 
                 if retry_attempt < max_retries + 1:
@@ -1323,11 +1321,10 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                     if not response.is_success:
                         last_error = f"{response.status_code}:{response.text[:500]}"
                         logger.error(
-                            "OpenRouter try-on fallback failed attempt=%s model=%s code=%s message=%s",
+                            "OpenRouter try-on fallback failed attempt=%s model=%s code=%s",
                             retry_attempt,
                             model,
                             response.status_code,
-                            response.text[:500],
                         )
                         if is_nsfw_rejection(http_status=response.status_code, error_text=response.text):
                             return await generate_with_xai_fallback(
@@ -1757,7 +1754,7 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                             error_code = None
                             error_type = None
                             pass
-                        logger.error(f"OpenAI try-on failed (attempt {attempt}): {response.status_code} - {error_text}")
+                        logger.warning("OpenAI request failed attempt=%d status=%d", attempt, response.status_code)
                         last_failure_details = {
                             "reason": "http_error",
                             "status": response.status_code,
@@ -1796,11 +1793,10 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                                 "modificationsSummary": f"OpenAI model {failed_model} was unavailable; retrying with {model_name}.",
                             })
                             logger.warning(
-                                "OpenAI image model unavailable; switching from %s to %s after code=%s message=%s",
+                                "OpenAI image model unavailable; switching from %s to %s after code=%s",
                                 failed_model,
                                 model_name,
                                 error_code or response.status_code,
-                                error_text[:300],
                             )
                             continue
 
@@ -1877,7 +1873,7 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                         "has_image": False,
                         "attempt": attempt,
                     }
-                    logger.warning(f"No usable image on attempt {attempt}. Details: {last_failure_details}")
+                    logger.warning("No usable image on attempt %d", attempt)
                     should_rewrite = is_content_rejection(
                         error_text=json.dumps(data, ensure_ascii=False)[:1200],
                     )
@@ -1948,7 +1944,7 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                         )
                     continue
                 except Exception as e:
-                    logger.error(f"Error calling OpenAI try-on on attempt {attempt}: {e}")
+                    logger.warning("Generation attempt %d failed (%s)", attempt, type(e).__name__)
                     last_failure_details = {"reason": "exception", "error": str(e), "attempt": attempt}
                     if is_openai_credit_exhausted(exception=e):
                         return await generate_with_openrouter_fallback(
@@ -1984,5 +1980,5 @@ async def _generate_with_openai(user_image_files, garment_image_files, category=
                     continue
 
     except Exception as e:
-        logger.error(f"Error in OpenAI try-on generation: {e}", exc_info=True)
+        logger.error("Generation failed (%s)", type(e).__name__)
         raise e

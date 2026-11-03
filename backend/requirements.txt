@@ -4,6 +4,7 @@ uvicorn
 # All Gemini API calls now use direct REST API with httpx
 httpx
 requests
+psycopg[binary]>=3.2,<4
 python-multipart
 python-dotenv
 python-jose[cryptography]

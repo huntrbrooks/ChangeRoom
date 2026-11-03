@@ -56,6 +56,8 @@ def normalize_image_bytes(
     ensure_heif_registered()
 
     with Image.open(io.BytesIO(image_bytes)) as im:
+        if im.width * im.height > 52_000_000:
+            raise ValueError("Image exceeds supported pixel dimensions")
         im = ImageOps.exif_transpose(im)
 
         width, height = im.size if im and hasattr(im, "size") else (None, None)
