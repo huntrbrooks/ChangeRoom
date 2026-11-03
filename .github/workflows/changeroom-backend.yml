@@ -38,6 +38,7 @@ jobs:
       - name: Rehearse data recovery on a separate synthetic database
         env:
           PGPASSWORD: ci-only
+          CHANGEROOM_CI_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
           PGHOST: '127.0.0.1'
           PGUSER: crtest
         run: |

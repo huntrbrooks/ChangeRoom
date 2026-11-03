@@ -6,6 +6,8 @@ backups, or network storage. Reports what was and was not restored.
 import argparse
 import base64
 import hashlib
+import ipaddress
+import json
 import os
 from pathlib import Path
 import shutil
@@ -41,7 +43,18 @@ TABLES=('users_billing','credit_ledger_entries','tryon_jobs','person_images')
 COUNT_SQL='SELECT '+ ' + '.join(f'(SELECT count(*) FROM public.{t})' for t in TABLES)
 PNG=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR4nGMMSFnAwMDAxAAGAA/KAVgj5iRsAAAAAElFTkSuQmCC')
 u='drill_synthetic_owner';job='0e7fe4c1-d24f-4f00-9710-28e4dae3a170';stale='5d26ffc4-2848-49af-b1bd-c5af422b53ec';objkey='person/user_drill_synthetic_owner/fixture.png'
-require(sql("SELECT current_database()='recovery_test' AND current_user='crtest' AND inet_server_addr()='127.0.0.1'::inet")=='t','Wrong target')
+# A runner's loopback port is forwarded to its own Postgres service container.
+# Verify that exact container, not an arbitrary remote/private network address.
+server_ip = '127.0.0.1'
+service_id = os.environ.get('CHANGEROOM_CI_POSTGRES_CONTAINER')
+if service_id:
+    require(os.environ.get('GITHUB_ACTIONS') == 'true', 'Container target allowed only inside GitHub CI')
+    container = json.loads(cmd(['docker', 'inspect', '--type=container', service_id]))[0]
+    networks = container['NetworkSettings']['Networks'].values()
+    addresses = [str(ipaddress.IPv4Address(n['IPAddress'])) for n in networks if n.get('IPAddress')]
+    require(len(addresses) == 1, 'Expected one address on the disposable service container')
+    server_ip = addresses[0]
+require(sql(f"SELECT current_database()='recovery_test' AND current_user='crtest' AND inet_server_addr()='{server_ip}'::inet")=='t','Wrong target')
 # Refuse non-fixture rows BEFORE using, seeding or restoring into the database.
 for t in TABLES:
     if sql(f"SELECT to_regclass('public.{t}') IS NOT NULL")=='t':
