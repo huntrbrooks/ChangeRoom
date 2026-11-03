@@ -3,7 +3,6 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useUser } from '@clerk/nextjs';
 import { aud, offers, type Offer } from '@/lib/billing-catalog';
-import { stripePublicConfig } from '@/lib/config';
 import { hasUsableClerkPublishableKey } from '@/lib/clerk-public-config';
 
 export function PricingTable({ showCreditPacks = false }: { showCreditPacks?: boolean }) {
@@ -24,7 +23,7 @@ function Cards({showCreditPacks, signedIn}: {showCreditPacks: boolean; signedIn:
     try {
       const response = await fetch('/api/billing/create-checkout-session', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ priceId: stripePublicConfig[offer.key], mode: offer.mode }),
+        body: JSON.stringify({ sku: offer.sku }),
       });
       const result = await response.json();
       if (!response.ok || !result.url) {

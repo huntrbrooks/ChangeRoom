@@ -77,16 +77,6 @@ export const stripeConfig = createLazyConfig(() => {
   };
 });
 
-// Client-safe config: exposes only public price IDs (no secrets)
-export const stripePublicConfig = createLazyConfig(() => ({
-  starterPriceId: process.env.NEXT_PUBLIC_STRIPE_STARTER_PRICE_ID || "",
-  starterXmasPriceId: process.env.NEXT_PUBLIC_STRIPE_STARTER_XMAS_PRICE_ID || "",
-  valuePriceId: process.env.NEXT_PUBLIC_STRIPE_VALUE_PRICE_ID || "",
-  proPriceId: process.env.NEXT_PUBLIC_STRIPE_PRO_PRICE_ID || "",
-  creatorPriceId: process.env.NEXT_PUBLIC_STRIPE_CREATOR_PRICE_ID || "",
-  powerPriceId: process.env.NEXT_PUBLIC_STRIPE_POWER_PRICE_ID || "",
-}));
-
 // Database Configuration - lazy access
 export const dbConfig = createLazyConfig(() => ({
   url: requireEnv("DATABASE_URL"),

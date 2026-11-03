@@ -5,15 +5,15 @@ import { NEW_PURCHASES_ENABLED, pausedCheckoutResponse } from "@/lib/purchase-av
 import { z } from "zod";
 import { stripeConfig, appConfig } from "@/lib/config";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { offerForPrice } from "@/lib/billing-catalog";
+import { resolveCheckout } from "@/lib/billing-catalog";
 import { priceMatchesOffer } from "@/lib/subscription-lifecycle";
 import { subscriptionCheckout, CheckoutConflict } from "@/lib/subscription-checkout";
 import { logger } from "@/lib/logger";
 
-const checkoutRequestSchema = z.object({
+const checkoutRequestSchema = z.union([z.object({sku:z.string().min(1).max(40)}).strict(), z.object({
   priceId: z.string().trim().regex(/^price_/, "Invalid price ID"),
   mode: z.enum(["subscription", "payment"]),
-}).strict();
+}).strict()]);
 
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
 function getStripe() {
@@ -81,7 +81,6 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    const { priceId, mode } = parsed.data;
 
     // Validate Stripe configuration
     if (!stripeConfig.secretKey || !stripeConfig.secretKey.trim()) {
@@ -107,10 +106,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const offer = offerForPrice(stripeConfig, priceId);
-    if (!offer || offer.mode !== mode) {
+    const selection = resolveCheckout(stripeConfig, parsed.data);
+    if (!selection) {
       return NextResponse.json({ error: 'This price is not available.' }, { status: 400 });
     }
+    const {offer,priceId,mode} = selection;
     const stripe = getStripe();
     if (!priceMatchesOffer(await stripe.prices.retrieve(priceId), offer))
       throw new Error('Stripe price disagrees with the published offer');

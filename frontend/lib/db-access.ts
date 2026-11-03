@@ -839,149 +839,6 @@ export async function cleanupStaleCreditHoldsForUser(
 }
 
 /**
- * Reconcile credits_available with ledger entries to fix discrepancies.
- * This ensures credits are never "lost" due to race conditions or bugs.
- * Only runs if there are ledger entries (to avoid unnecessary work for new users).
- */
-async function reconcileCreditsFromLedger(userId: string): Promise<{
-  corrected: boolean;
-  oldBalance: number;
-  newBalance: number;
-} | null> {
-  await ensureCreditTables();
-  
-  // Quick check: if no ledger entries exist, skip reconciliation
-  const hasLedgerEntries = await sql`
-    SELECT 1 FROM credit_ledger_entries WHERE user_id = ${userId} LIMIT 1
-  `;
-  if (hasLedgerEntries.rows.length === 0) {
-    return null;
-  }
-
-  return runTransaction(async (tx) => {
-    // Lock before taking the ledger snapshot: a grant or job settlement must not
-    // commit between this aggregate and the balance comparison.
-    const billing = await ensureUserBillingWithLock(tx, userId);
-    // Calculate net credits from ledger.
-    // Exclude reconciliation adjustments to avoid feedback loops.
-    const ledgerResult = await tx`
-      SELECT 
-        SUM(CASE 
-          WHEN entry_type = 'grant' THEN credits_change
-          WHEN entry_type = 'debit' THEN 0  -- debits are 0 (hold already deducted)
-          WHEN entry_type = 'hold' THEN credits_change  -- holds are negative
-          WHEN entry_type = 'release' THEN credits_change  -- releases are positive (refund)
-          WHEN entry_type = 'refund' THEN credits_change
-          WHEN entry_type = 'adjustment'
-            AND COALESCE(metadata->>'reason', '') <> 'reconciliation' THEN credits_change
-          ELSE 0
-        END) as net_credits
-      FROM credit_ledger_entries
-      WHERE user_id = ${userId}
-    `;
-    let netCreditsFromLedger = Number(ledgerResult.rows[0]?.net_credits ?? 0) || 0;
-
-    // Get current billing balance
-    const currentBalance = billing.credits_available;
-
-    // If the user is on a paid plan and the ledger is missing a plan baseline,
-    // seed the ledger to match the current billing balance (legacy safety).
-    if (billing.plan !== "free" && billing.credits_refresh_at) {
-      const baselineExists = await tx`
-        SELECT 1
-        FROM credit_ledger_entries
-        WHERE user_id = ${userId}
-          AND entry_type = 'adjustment'
-          AND COALESCE(metadata->>'reason', '') IN ('plan_reset', 'plan_baseline')
-        LIMIT 1
-      `;
-      if (baselineExists.rows.length === 0) {
-        const delta = currentBalance - netCreditsFromLedger;
-        if (delta !== 0) {
-          await tx`
-            INSERT INTO credit_ledger_entries (
-              id,
-              user_id,
-              request_id,
-              entry_type,
-              credits_change,
-              balance_after,
-              metadata
-            )
-            VALUES (
-              ${generateUuid()},
-              ${userId},
-              NULL,
-              'adjustment',
-              ${delta},
-              ${currentBalance},
-              ${JSON.stringify({ reason: "plan_baseline", plan: billing.plan })}
-            )
-          `;
-          netCreditsFromLedger = currentBalance;
-        }
-      }
-    }
-
-    // Expected balance = ledger net (holds already accounted for in ledger)
-    const expectedBalance = netCreditsFromLedger;
-
-    // If there's a discrepancy, fix it
-    if (Math.abs(currentBalance - expectedBalance) > 0.01) {
-      console.warn(
-        `credit_reconciliation: fixing discrepancy for user ${userId}: ` +
-        `billing=${currentBalance}, expected=${expectedBalance} (ledger=${netCreditsFromLedger}), diff=${expectedBalance - currentBalance}`
-      );
-
-      // Update billing to match expected balance
-      await tx`
-        UPDATE users_billing
-        SET 
-          credits_available = ${expectedBalance},
-          updated_at = now()
-        WHERE user_id = ${userId}
-        RETURNING *
-      `;
-
-      // Log the reconciliation as an adjustment entry
-      await tx`
-        INSERT INTO credit_ledger_entries (
-          id,
-          user_id,
-          request_id,
-          entry_type,
-          credits_change,
-          balance_after,
-          metadata
-        )
-        VALUES (
-          ${generateUuid()},
-          ${userId},
-          NULL,
-          'adjustment',
-          ${expectedBalance - currentBalance},
-          ${expectedBalance},
-          ${JSON.stringify({
-            reason: "reconciliation",
-            old_balance: currentBalance,
-            calculated_from_ledger: netCreditsFromLedger,
-            expected_balance: expectedBalance,
-          })}
-        )
-      `;
-
-      return {
-        corrected: true,
-        oldBalance: currentBalance,
-        newBalance: expectedBalance,
-      };
-    }
-
-    return null;
-  });
-}
-
-/**
  * Get or create user billing record
  * Creates with free plan and default credits if doesn't exist
  */
@@ -996,16 +853,8 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
       console.warn("billing: failed to cleanup stale holds (non-fatal)", e);
     }
 
-    // CRITICAL: Reconcile credits BEFORE fetching billing record
-    // This ensures we always return the corrected value
-    try {
-      await reconcileCreditsFromLedger(userId);
-    } catch (e) {
-      // Do not block billing reads if reconciliation fails; just log.
-      console.warn("billing: failed to reconcile credits (non-fatal)", e);
-    }
-
-    // Fetch billing record AFTER reconciliation to get corrected value
+    // Historical purchases can predate the ledger. Reading an account must never
+    // replace its balance with a partial sum. Investigate drift via diagnostics.
     const existing = await sql`
       SELECT * FROM users_billing WHERE user_id = ${userId}
     `;
@@ -1031,37 +880,11 @@ export async function getOrCreateUserBilling(userId: string): Promise<UserBillin
           return { ...billing, trials_remaining: 1, is_frozen: billing.is_frozen ?? false };
         }
       }
-      // If free plan trials have been consumed and there is no purchase, credits should be 0.
-      // This corrects older records created with default free credits.
-      const normalized = {
+      return {
         ...billing,
         trials_remaining: billing.trials_remaining ?? 1,
         is_frozen: billing.is_frozen ?? false,
       };
-      if (
-        normalized.plan === "free" &&
-        normalized.trials_remaining === 0 &&
-        (normalized.credits_available ?? 0) > 0 &&
-        !normalized.stripe_subscription_id
-      ) {
-        const hasPurchase = await hasPaidCreditGrant(userId);
-        if (!hasPurchase) {
-          const updated = await sql`
-            UPDATE users_billing
-            SET credits_available = 0, updated_at = now()
-            WHERE user_id = ${userId}
-            RETURNING *
-          `;
-          if (updated.rows.length > 0) {
-            return {
-              ...(updated.rows[0] as UserBilling),
-              trials_remaining: 0,
-              is_frozen: (updated.rows[0] as UserBilling).is_frozen ?? false,
-            };
-          }
-        }
-      }
-      return normalized;
     }
 
     // Create new record
@@ -1320,15 +1143,6 @@ export async function finalizeDebitFromHold(
     return updatedHold.rows[0] as CreditHold;
   });
   
-  // Reconcile credits after finalizing debit to ensure consistency
-  if (hold) {
-    try {
-      await reconcileCreditsFromLedger(hold.user_id);
-    } catch (e) {
-      console.warn("finalizeDebitFromHold: reconciliation failed (non-fatal)", e);
-    }
-  }
-  
   return hold;
 }
 
@@ -1417,15 +1231,6 @@ export async function releaseCreditHold(
 
     return updatedHold.rows[0] as CreditHold;
   });
-  
-  // Reconcile credits after releasing hold to ensure consistency
-  if (hold) {
-    try {
-      await reconcileCreditsFromLedger(hold.user_id);
-    } catch (e) {
-      console.warn("releaseCreditHold: reconciliation failed (non-fatal)", e);
-    }
-  }
   
   return hold;
 }
@@ -1536,17 +1341,7 @@ export async function grantCredits(
     return updated.rows[0] as UserBilling;
   });
   
-  // Reconcile credits after granting to ensure consistency
-  try {
-    await reconcileCreditsFromLedger(userId);
-    // Fetch fresh billing after reconciliation
-    const freshBilling = await getOrCreateUserBilling(userId);
-    return freshBilling;
-  } catch (e) {
-    // If reconciliation fails, return the result from the transaction
-    console.warn("grantCredits: reconciliation failed (non-fatal)", e);
-    return result;
-  }
+  return result;
 }
 
 /**
