@@ -11,7 +11,6 @@ import { PostHogClientProvider } from "./providers/PostHogProvider";
 import { AnalyticsUserSync } from "./components/AnalyticsUserSync";
 import { GlobalErrorGuards } from "./components/GlobalErrorGuards";
 import { PageViewTracker } from "./components/PageViewTracker";
-import { CANONICAL_ORIGIN } from "@/lib/domainRouting";
 import { getAllowedRedirectOrigins } from "@/lib/clerkAuthConfig";
 import { getClerkPublishableKey } from "@/lib/clerk-public-config";
 
@@ -110,7 +109,7 @@ export default async function RootLayout({
       signInUrl="/sign-in"
       signUpUrl="/sign-up"
       allowedRedirectOrigins={allowedRedirectOrigins}
-      afterSignOutUrl={CANONICAL_ORIGIN}
+      afterSignOutUrl="/"
       appearance={{
         elements: {
           formButtonPrimary: 'bg-black hover:bg-gray-900 text-white font-semibold',

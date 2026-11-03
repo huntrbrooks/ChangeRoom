@@ -72,7 +72,7 @@ try {
       if (!isPublicRoute(req)) {
         await auth.protect();
       }
-    });
+    }, { signInUrl: "/sign-in", signUpUrl: "/sign-up" });
   }
 } catch (error) {
   console.error('Failed to create Clerk proxy handler:', error);

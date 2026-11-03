@@ -17,11 +17,31 @@ function isolatedDatabase(env: Env): boolean {
   });
 }
 
+const liveAppHosts = new Set([
+  'igetdressed.online', 'www.igetdressed.online', 'getdressed.online',
+  'www.getdressed.online', 'changeroom.vercel.app',
+]);
+
+// Stripe builds success/cancel/portal URLs from NEXT_PUBLIC_APP_URL. Accept
+// only a clean origin pinned independently to this staging site's hostname.
+export function stagingAppOrigin(env: Env): string | undefined {
+  try {
+    const url = new URL(env.NEXT_PUBLIC_APP_URL || '');
+    const host = url.hostname.toLowerCase();
+    if (url.origin !== env.NEXT_PUBLIC_APP_URL ||
+        url.protocol !== 'https:' || url.port || url.username || url.password ||
+        !/^(?:[a-z0-9-]+\.)+[a-z0-9-]+$/.test(host) ||
+        host !== env.CHANGEROOM_STAGING_APP_HOST || liveAppHosts.has(host))
+      return undefined;
+    return url.origin;
+  } catch { return undefined; }
+}
+
 export function unsafePreview(env: Env): boolean {
   if (env.VERCEL_ENV !== 'preview') return false;
   let api: URL;
   try { api = new URL(env.NEXT_PUBLIC_API_URL || ''); } catch { return true; }
-  return env.CHANGEROOM_ISOLATED_PREVIEW !== 'true' || !isolatedDatabase(env) ||
+  return env.CHANGEROOM_ISOLATED_PREVIEW !== 'true' || !isolatedDatabase(env) || !stagingAppOrigin(env) ||
     !env.STRIPE_SECRET_KEY?.startsWith('sk_test_') ||
     !env.CLERK_SECRET_KEY?.startsWith('sk_test_') ||
     !env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.startsWith('pk_test_') ||
