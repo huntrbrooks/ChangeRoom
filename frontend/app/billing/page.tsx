@@ -116,7 +116,7 @@ function BillingPageContent() {
             <span className="hidden sm:inline">Back to Home</span>
           </Link>
           <h1 className="min-w-0 text-center text-base sm:text-xl font-bold truncate">
-            Billing &amp; Subscription
+            Billing &amp; credits
           </h1>
           <div className="w-10 sm:w-24" aria-hidden /> {/* Spacer for centering */}
         </div>
@@ -186,8 +186,8 @@ function BillingPageContent() {
 
         {billing?.isFrozen && <p role="alert" className="mb-4 rounded-lg bg-amber-50 p-4">Your payment needs attention. Choose Manage above to update your payment method or review the invoice.</p>}
         {!isUnlimited && <div className="space-y-3">
-          <Link href="/pricing" className="underline">View plans and credit packs</Link>
-          <p>Monthly credits are added after successful payment. Unused purchased credits remain available after cancellation.</p>
+          <Link href="/pricing" className="underline">View one-time credit packs</Link>
+          <p>Pack credits are added after a successful one-time payment. Packs do not renew. If you have an existing subscription, you can still manage it here; unused purchased credits remain after cancellation.</p>
         </div>}
       </div>
     </div>

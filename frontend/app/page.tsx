@@ -3328,7 +3328,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
               <div className="min-w-0">
                 <p className="font-semibold text-black text-sm sm:text-base">Free Try-Ons Available!</p>
                 <p className="text-xs sm:text-sm text-slate-600 mt-0.5">
-                  You have {billing.trialsRemaining} free try-on{billing.trialsRemaining !== 1 ? 's' : ''}. View pricing for monthly credit allowances.
+                  You have {billing.trialsRemaining} free try-on{billing.trialsRemaining !== 1 ? 's' : ''}. View pricing for one-time credit packs.
                 </p>
               </div>
             </div>

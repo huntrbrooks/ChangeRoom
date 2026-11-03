@@ -11,10 +11,10 @@ export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'Pricing | IGetDressed.Online',
-  description: 'Choose a subscription or credit pack for AI try-on and shopping.',
+  description: 'One-time credit packs for virtual try-on. No subscription or automatic renewal.',
   openGraph: {
     title: 'Pricing | IGetDressed.Online',
-    description: 'Pick your plan for virtual try-on and shopping tools.',
+    description: 'See one-time try-on credit packs and manage existing billing.',
     url: 'https://igetdressed.online/pricing',
   },
 };
@@ -52,10 +52,10 @@ function PricingPageContent() {
       <div className="container mx-auto px-4 py-8 md:py-12 max-w-4xl">
         <div className="text-center mb-8 space-y-3">
           <h1 className="text-3xl md:text-4xl font-semibold text-[#8B5CF6] tracking-tight">
-            Pricing &amp; Plans
+            Credit pack pricing
           </h1>
           <p className="text-base md:text-lg text-black/70">
-            {canCreateCheckout() ? 'Pick a subscription or credit pack and checkout securely via Stripe.' : PURCHASE_PAUSE_NOTICE}
+            {canCreateCheckout() ? 'Choose a one-time credit pack. You pay once; packs do not renew.' : PURCHASE_PAUSE_NOTICE}
           </p>
           <div className="pt-2 flex justify-center">
             <Link

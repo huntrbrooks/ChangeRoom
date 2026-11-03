@@ -88,7 +88,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">6. Payment and Billing</h2>
             <p className="leading-relaxed mb-4">
-              Certain features of the Service may require payment. By purchasing credits or a subscription, you agree to:
+              Certain features require credits. New purchases, when available, are one-time credit packs. When you buy a pack, you agree to:
             </p>
             <ul className="list-disc list-inside space-y-2 ml-4">
               <li>Pay all charges associated with your account</li>
@@ -97,7 +97,7 @@ export default function TermsOfService() {
               <li>Use the amount, currency, billing interval and credit allowance shown before payment to decide whether to purchase</li>
             </ul>
             <p className="leading-relaxed mt-4">
-              One-time credit packs do not renew. Monthly subscriptions renew automatically until cancelled. Credits are added after successful payment. If a renewal fails, paid generation may pause while you update your payment method. Unused purchased credits carry over after cancellation. Cancel in <Link href="/billing" className="underline">Manage billing</Link>; the Stripe portal displays the effective date. Contact <SupportEmail /> if a charge is wrong, the service fails, or you need help cancelling or requesting a refund. Include a receipt reference, never card details.
+              One-time credit packs do not renew. New subscriptions are closed. If you already have a monthly subscription, it renews until cancelled. Credits are added after successful payment. If a renewal fails, paid generation may pause while you update your payment method. Unused purchased credits carry over after cancellation. Cancel in <Link href="/billing" className="underline">Manage billing</Link>; the Stripe portal displays the effective date. Contact <SupportEmail /> if a charge is wrong, the service fails, or you need help cancelling or requesting a refund. Include a receipt reference, never card details.
             </p>
           </section>
 
