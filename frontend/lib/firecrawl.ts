@@ -1,24 +1,16 @@
-import Firecrawl from '@mendable/firecrawl-js';
-
-/**
- * IMPORTANT (build stability):
- * Don't instantiate Firecrawl at module-import time, because Next.js may evaluate API routes during `next build`
- * (Collecting page data). If FIRECRAWL_API_KEY isn't set at build-time, that would crash the build.
- *
- * Instead, lazily create the client the first time a scrape/search/crawl function is called.
- */
-let _firecrawl: Firecrawl | null = null;
-function getFirecrawlClient(): Firecrawl {
+// Only the two product-page operations below are used. Keep parsing on the server.
+async function scrape(url: string, options: { formats: unknown[] }): Promise<{ json?: Record<string, unknown> }> {
   const apiKey = process.env.FIRECRAWL_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "FIRECRAWL_API_KEY is not set. Configure it in Vercel Project Settings → Environment Variables."
-    );
-  }
-  if (!_firecrawl) {
-    _firecrawl = new Firecrawl({ apiKey });
-  }
-  return _firecrawl;
+  if (!apiKey) throw new Error('Product lookup is not configured');
+  const response = await fetch('https://api.firecrawl.dev/v2/scrape', {
+    method: 'POST', cache: 'no-store', signal: AbortSignal.timeout(30000),
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, ...options }),
+  });
+  if (!response.ok) throw new Error(`Product lookup failed (${response.status})`);
+  const result = await response.json();
+  if (!result.success || !result.data) throw new Error('Product lookup returned no data');
+  return result.data;
 }
 
 export interface ProductData {
@@ -38,8 +30,7 @@ export interface ProductData {
  */
 export async function scrapeProductPage(url: string): Promise<ProductData | null> {
   try {
-    const firecrawl = getFirecrawlClient();
-    const result = await firecrawl.scrape(url, {
+    const result = await scrape(url, {
       formats: [
         'markdown',
         {
@@ -76,83 +67,12 @@ export async function scrapeProductPage(url: string): Promise<ProductData | null
 }
 
 /**
- * Search the web for fashion items
- * Great for trend discovery and inspiration
- */
-export async function searchFashionItems(query: string, limit = 10) {
-  try {
-    const firecrawl = getFirecrawlClient();
-    const result = await firecrawl.search(query, {
-      limit,
-      scrapeOptions: {
-        formats: ['markdown'],
-      },
-    });
-
-    // Firecrawl v2 client returns a structured object (web/news/images), not { success, data }.
-    return result?.web ?? [];
-  } catch (error) {
-    console.error('Firecrawl search error:', error);
-    return [];
-  }
-}
-
-/**
- * Crawl a fashion retailer to build product catalog
- * Use for bulk importing from partner sites
- */
-export async function crawlRetailer(
-  retailerUrl: string,
-  options: { limit?: number; includePatterns?: string[] } = {}
-) {
-  const { limit = 50, includePatterns } = options;
-
-  try {
-    const firecrawl = getFirecrawlClient();
-    const result = await firecrawl.crawl(retailerUrl, {
-      limit,
-      includePaths: includePatterns,
-      scrapeOptions: {
-        formats: [
-          {
-            type: 'json',
-            schema: {
-              type: 'object',
-              properties: {
-                products: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      title: { type: 'string' },
-                      price: { type: 'string' },
-                      imageUrl: { type: 'string' },
-                      productUrl: { type: 'string' },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        ],
-      },
-    });
-
-    return result;
-  } catch (error) {
-    console.error('Firecrawl crawl error:', error);
-    return null;
-  }
-}
-
-/**
  * Extract all product images from a page
  * Useful for finding multiple views of clothing items
  */
 export async function extractProductImages(url: string): Promise<string[]> {
   try {
-    const firecrawl = getFirecrawlClient();
-    const result = await firecrawl.scrape(url, {
+    const result = await scrape(url, {
       formats: [
         {
           type: 'json',
@@ -174,18 +94,4 @@ export async function extractProductImages(url: string): Promise<string[]> {
     return [];
   }
 }
-
-/**
- * Find similar products across the web
- * Great for "Shop Similar" feature
- */
-export async function findSimilarProducts(productName: string, brand?: string) {
-  const query = brand 
-    ? `${productName} ${brand} buy online`
-    : `${productName} clothing buy online`;
-  
-  return searchFashionItems(query, 20);
-}
-
-export default getFirecrawlClient;
 

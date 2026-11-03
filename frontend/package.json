@@ -17,7 +17,6 @@
     "@google/genai": "^1.30.0",
     "@google/generative-ai": "^0.21.0",
     "@mediapipe/tasks-vision": "^0.10.14",
-    "@mendable/firecrawl-js": "^4.10.0",
     "@vercel/mcp-adapter": "^1.0.0",
     "@vercel/postgres": "^0.10.0",
     "axios": "^1.13.2",
@@ -31,7 +30,7 @@
     "resend": "^6.6.0",
     "stripe": "^18.0.0",
     "svix": "^1.76.1",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -53,7 +52,10 @@
   },
   "overrides": {
     "jws": "4.0.1",
-    "postcss": "8.5.14",
-    "ws": "8.17.1"
+    "postcss": "8.5.32",
+    "ws": "8.22.1",
+    "mcp-handler": "1.1.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@hono/node-server": "2.1.6"
   }
 }

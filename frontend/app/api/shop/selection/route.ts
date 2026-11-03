@@ -7,7 +7,7 @@ import { logger } from '@/lib/logger';
 
 const selectionSchema = z.object({
   clothingItemId: z.string().trim().min(1),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 /**

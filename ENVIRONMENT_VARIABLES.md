@@ -148,7 +148,7 @@ Upload signing and clothing preprocessing now run through the Render backend. Th
 | `NEXT_PUBLIC_STATUS_BANNER` | Optional status banner text | (none) | `Maintenance at 2pm AEST` |
 | `NEXT_PUBLIC_ENABLE_TRYON_FROM_URL` | Enable the non-core "Try On Any URL" flow in the UI | `false` | `true` |
 | `NEXT_PUBLIC_ENABLE_MY_OUTFITS` | Enable the non-core saved-outfits UI in the homepage flow | `false` | `true` |
-| `FRONTRUNNER_DEMO_PASSWORD` | Server-side password for the private `/frontrunnerau` pitch room | `bintang` | `replace_me` |
+| `FRONTRUNNER_DEMO_PASSWORD` | Server-side password for the private `/frontrunnerau` pitch room (no default: the room stays locked when unset) | — | `replace_me` |
 | `FRONTRUNNER_DEMO_COOKIE_SECRET` | Server-side secret used to sign the private demo session cookie | falls back to `FRONTRUNNER_DEMO_PASSWORD` | `your-long-random-secret` |
 | `NEXT_PUBLIC_PAYWALL_BYPASS_EMAILS` | Comma-separated emails to bypass paywall | (none) | `admin@example.com` |
 | `FIRECRAWL_API_KEY` | Firecrawl API key (Try-on-from-URL) | (none) | `fc-...` |
