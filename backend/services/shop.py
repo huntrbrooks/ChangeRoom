@@ -10,16 +10,8 @@ def search_products(query, budget=None):
     """
     api_key = os.getenv("SERPAPI_API_KEY")
     if not api_key:
-        logger.warning("SERPAPI_API_KEY not set. Returning mock data.")
-        return [
-            {
-                "title": f"Mock Result for {query}",
-                "price": "$45.00",
-                "link": "#",
-                "thumbnail": "https://via.placeholder.com/150",
-                "source": "Mock"
-            }
-        ]
+        logger.warning("Product search not configured")
+        return []
 
     params = {
         "engine": "google_shopping",
@@ -65,7 +57,7 @@ def search_products(query, budget=None):
         return parsed_results
 
     except requests.exceptions.RequestException as e:
-        logger.error(f"Request error searching products: {e}", exc_info=True)
+        logger.warning("Shopping upstream request failed")
         return []
     except ValueError as e:
         logger.error(f"JSON parsing error in product search: {e}", exc_info=True)

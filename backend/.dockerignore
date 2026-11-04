@@ -1,0 +1,9 @@
+# Nothing enters the builder unless listed (including local .env files and uploaded images).
+**
+!Dockerfile
+!requirements.txt
+!requirements.lock
+!main.py
+!container_entrypoint.py
+!services/
+!services/*.py

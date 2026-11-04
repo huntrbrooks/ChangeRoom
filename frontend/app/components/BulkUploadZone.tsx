@@ -3,17 +3,12 @@ import React, { useCallback, useState, useEffect } from 'react';
 import { Upload, Loader2, X, RefreshCw } from 'lucide-react';
 import {
   getWearingStyleOptions,
-  getDefaultWearingStyle,
-  hasWearingStyleOptions,
 } from '@/lib/wearingStyles';
 import {
   convertToOptimalImageFile,
   isLikelyImageFile,
   needsConversionToOptimal,
 } from '@/lib/imageConversion';
-import { fetchWithRequestId } from '@/lib/fetchWithRequestId';
-import { resolveBackendApiUrl } from '@/lib/backend-url';
-import { buildDemoAnalyses } from '@/lib/pitchDemo';
 import { logger } from '@/lib/logger';
 
 function normalizeCategory(raw: string | undefined | null): string {
@@ -78,7 +73,6 @@ interface BulkUploadZoneProps {
     | Map<number, { tone: 'success' | 'warning' | 'error'; message: string }>
     | Record<number, { tone: 'success' | 'warning' | 'error'; message: string }>;
   onAdjustDescription?: (index: number) => void;
-  API_URL?: string;
   /**
    * When false, uploads are blocked and a login prompt can be shown.
    * Defaults to true to preserve existing behavior.
@@ -92,8 +86,6 @@ interface BulkUploadZoneProps {
   blockedMessage?: string;
   /** Message shown when backend availability blocks uploads. */
   disabledMessage?: string;
-  /** Optional async getter for backend Authorization headers. */
-  getBackendAuthHeaders?: () => Promise<Record<string, string>>;
   /** Enable local analysis fallback when backend auth is unavailable. */
   enableGuestDemo?: boolean;
 }
@@ -108,13 +100,11 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
   adjustingItemIndices,
   adjustDescriptionFeedback,
   onAdjustDescription,
-  API_URL,
   isAuthenticated = true,
   isUploadEnabled = true,
   onAuthRequired,
   blockedMessage = 'Please sign in to upload clothing items.',
   disabledMessage = 'Try-on is temporarily unavailable.',
-  getBackendAuthHeaders,
   enableGuestDemo = false,
 }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -125,8 +115,6 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
   const [wearingStyles, setWearingStyles] = useState<Map<number, string>>(new Map());
   const [objectUrls, setObjectUrls] = useState<Map<number, string>>(new Map());
   const uploadsBlocked = (!isAuthenticated && !enableGuestDemo) || !isUploadEnabled;
-  const backendUrl = resolveBackendApiUrl(API_URL);
-  const resolvedApiUrl = backendUrl.apiUrl;
 
   const requireAuth = useCallback(() => {
     if (enableGuestDemo) {
@@ -148,40 +136,6 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
 
     return true;
   }, [blockedMessage, disabledMessage, enableGuestDemo, isAuthenticated, isUploadEnabled, onAuthRequired]);
-
-  const buildDemoFallbackResult = useCallback(
-    (sourceFiles: File[], startIndex: number) => {
-      const analyses = buildDemoAnalyses(sourceFiles, startIndex);
-      const filesWithMetadata = sourceFiles.map((file, idx) => {
-        const analysis = analyses[idx]?.analysis;
-        const cloned = new File([file], file.name, { type: file.type || 'image/jpeg' });
-        const fileWithMeta = cloned as FileWithMetadata;
-        if (analysis) {
-          fileWithMeta.metadata = { ...(analysis.metadata || {}), demoPreview: true };
-          fileWithMeta.detailed_description = analysis.description || analysis.short_description || '';
-          fileWithMeta.category = analysis.category;
-          fileWithMeta.item_type = analysis.item_type || '';
-          if (analysis.brand) {
-            fileWithMeta.brand = analysis.brand;
-          }
-        }
-        return cloned;
-      });
-
-      setProgressPercent(100);
-      setAnalysisProgress('Demo mode active. Using local clothing analysis.');
-      setAnalyzedItems((prev) => {
-        const next = [...prev];
-        analyses.forEach((analysis, idx) => {
-          next[startIndex + idx] = analysis;
-        });
-        return next;
-      });
-
-      return { files: filesWithMetadata, analyses };
-    },
-    []
-  );
 
   const confirmConvertToOptimal = useCallback((filesToCheck: File[]) => {
     const needs = filesToCheck.filter((f) => needsConversionToOptimal(f));
@@ -256,316 +210,26 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
     };
   }, [uploadedFiles]);
 
-  const analyzeFiles = useCallback(async (filesToAnalyze: File[], startIndex: number = 0) => {
-    if (filesToAnalyze.length === 0) return { files: [], analyses: [] };
-    if (!requireAuth()) {
-      return { files: [], analyses: [] };
-    }
-
+  // Selecting or replacing garments only prepares local files. Generation is the
+  // first time photos leave the browser; the optional shopping step is separate.
+  const analyzeFiles = useCallback(async (selected: File[], startIndex = 0) => {
+    if (!selected.length || !requireAuth()) return { files: [], analyses: [] };
     setIsAnalyzing(true);
-    setAnalysisProgress('Preparing clothing items for upload...');
-    setProgressPercent(0);
-    
-    // Initialize items with 'analyzing' status for new files
-    const initialItems: AnalyzedItem[] = filesToAnalyze.map((file, idx) => ({
-      index: startIndex + idx,
-      original_filename: file.name,
-      status: 'analyzing'
-    }));
-    
-    // Update analyzed items - preserve existing, add new analyzing ones
-    setAnalyzedItems(prev => {
-      const newItems = [...prev];
-      initialItems.forEach((item, idx) => {
-        newItems[startIndex + idx] = item;
-      });
-      return newItems;
-    });
-
     try {
-      const effectiveFiles = await maybeConvertFiles(filesToAnalyze);
-
-      if (enableGuestDemo) {
-        return buildDemoFallbackResult(effectiveFiles, startIndex);
-      }
-
-      if (!resolvedApiUrl) {
-        setAnalysisProgress(`Backend unavailable. ${backendUrl.reason ?? ''}`.trim());
-        setIsAnalyzing(false);
-        return { files: [], analyses: [] };
-      }
-      // Update progress to reflect upload step
-      setProgressPercent(10);
-      setAnalysisProgress('Sending images to backend for OpenAI analysis...');
-      
-      // Create FormData with files to analyze
-      const formData = new FormData();
-      effectiveFiles.forEach((file) => {
-        formData.append('clothing_images', file);
+      const files = await maybeConvertFiles(selected);
+      const analyses: AnalyzedItem[] = files.map((file, i) => ({
+        index: startIndex + i, original_filename: file.name, status: 'success',
+      }));
+      setAnalyzedItems(previous => {
+        const next = [...previous];
+        for (const item of analyses) next[item.index] = item;
+        return next;
       });
-
-      // Call the new batch preprocessing endpoint
-      const authHeaders = getBackendAuthHeaders ? await getBackendAuthHeaders() : {};
-      const response = await fetchWithRequestId(`${resolvedApiUrl}/api/preprocess-clothing`, {
-        method: 'POST',
-        body: formData,
-        headers: authHeaders,
-        // Don't set Content-Type header, let browser set it with boundary
-      }, { prefix: 'preprocess', force: true });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: response.statusText }));
-        throw new Error(errorData.error || errorData.detail || `Analysis failed: ${response.statusText}`);
-      }
-
-      setProgressPercent(65);
-      setAnalysisProgress('Analyzing clothing with OpenAI...');
-
-      // Parse JSON response
-      const result = await response.json();
-      setProgressPercent(85);
-      setAnalysisProgress('Processing results...');
-      const processedItems = result.items || [];
-
-      if (processedItems.length === 0) {
-        throw new Error('No items returned from preprocessing');
-      }
-
-      setProgressPercent(90);
-      setAnalysisProgress('Finalizing analysis results...');
-
-      // Transform backend response to frontend format
-      const allAnalyses: AnalyzedItem[] = processedItems.map((item: {
-        index?: number;
-        original_filename?: string;
-        analysis?: AnalyzedItem['analysis'];
-        error?: string;
-        status?: string;
-        file_url?: string;
-        saved_filename?: string;
-        saved_file?: string;
-      storage_path?: string;
-        metadata?: Record<string, unknown>;
-        body_region?: string;
-        category?: string;
-        subcategory?: string;
-        color?: string;
-        style?: string;
-        brand?: string;
-        description?: string;
-        tags?: string[];
-        filename?: string;
-        recommended_filename?: string;
-        url?: string;
-      }, idx: number) => {
-        const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
-        const originalFilename = item.original_filename || 
-          (metadata && 'original_filename' in metadata ? String(metadata.original_filename) : undefined) ||
-          effectiveFiles[idx]?.name || 
-          `item_${startIndex + idx}`;
-        const brand =
-          item.analysis?.brand ||
-          item.brand ||
-          (typeof (metadata as { brand?: unknown }).brand === 'string'
-            ? (metadata as { brand?: string }).brand
-            : undefined);
-        
-        const normalizedCategory = normalizeCategory(
-          item.analysis?.body_region || item.body_region || item.analysis?.category || item.category || 'unknown'
-        );
-
-        return {
-        index: startIndex + idx,
-        original_filename: originalFilename,
-        analysis: {
-          body_region: normalizedCategory || 'unknown',
-          category: normalizedCategory || 'unknown',  // For backward compatibility
-          item_type: item.analysis?.item_type || item.subcategory || '',
-          color: item.analysis?.color || item.color,
-          style: item.analysis?.style || item.style,
-          brand,
-          description: item.analysis?.description || item.analysis?.short_description || item.description || '',
-          detailed_description: item.analysis?.description || item.analysis?.short_description || item.description || '',
-          short_description: item.analysis?.short_description || item.description || '',
-          tags: item.analysis?.tags || item.tags || [],
-          suggested_filename: item.filename || item.recommended_filename || item.saved_filename,
-          metadata: metadata || item.analysis || {}
-        },
-        saved_filename: item.filename || item.saved_filename,
-        file_url: item.url || item.file_url,
-        storage_path: item.storage_path,
-        status: (item.status === 'error' ? 'error' : item.status === 'analyzing' ? 'analyzing' : 'success') as 'analyzing' | 'success' | 'error'
-      };
-      });
-
-      logger.info('batch_preprocessing_complete', { itemCount: allAnalyses.length });
-
-      // Update analyzed items - preserve existing, update new ones
-      setAnalyzedItems(prev => {
-        const newItems = [...prev];
-        allAnalyses.forEach((analysis, idx) => {
-          newItems[startIndex + idx] = analysis;
-        });
-        return newItems;
-      });
-
-      // Initialize wearing styles map - preserve existing or set defaults
-      const localWearingStyles = new Map<number, string>(wearingStyles);
-      allAnalyses.forEach((item, idx) => {
-        const actualIdx = startIndex + idx;
-        // Initialize wearing style if options are available
-        if (item.analysis) {
-          const category = item.analysis.category || item.analysis.body_region || '';
-          const itemType = item.analysis.item_type || '';
-          if (hasWearingStyleOptions(category, itemType)) {
-            // Check if file already has a wearing style
-            const existingFile = effectiveFiles[idx];
-            const existingStyle = existingFile ? (existingFile as FileWithMetadata).wearing_style : null;
-            
-            // Use existing style if valid, otherwise use default
-            if (existingStyle) {
-              const styleOptions = getWearingStyleOptions(category, itemType);
-              const isValidStyle = styleOptions.some(opt => opt.value === existingStyle);
-              if (isValidStyle) {
-                localWearingStyles.set(actualIdx, existingStyle);
-              } else {
-                const defaultStyle = getDefaultWearingStyle(category, itemType);
-                if (defaultStyle) {
-                  localWearingStyles.set(actualIdx, defaultStyle);
-                }
-              }
-            } else {
-              const defaultStyle = getDefaultWearingStyle(category, itemType);
-              if (defaultStyle) {
-                localWearingStyles.set(actualIdx, defaultStyle);
-              }
-            }
-          }
-        }
-      });
-      // Update state with the new map
-      setWearingStyles(localWearingStyles);
-
-      // Process files for parent component
-      const processedFiles: File[] = [];
-      const API_URL_PROCESS = resolvedApiUrl || '';
-      
-      for (let idx = 0; idx < effectiveFiles.length; idx++) {
-        const file = effectiveFiles[idx];
-        const item = allAnalyses[idx];
-        const processedItem = processedItems[idx];
-        const actualIdx = startIndex + idx;
-        const brandFromItem =
-          (processedItem?.metadata as { brand?: unknown })?.brand ??
-          processedItem?.brand ??
-          processedItem?.analysis?.brand;
-        
-        if (item?.file_url && processedItem) {
-          // File was saved on server - fetch it and create File object with metadata
-          try {
-            const fileUrl = item.file_url.startsWith('http') 
-              ? item.file_url 
-              : `${API_URL_PROCESS}${item.file_url}`;
-            
-            const response = await fetch(fileUrl);
-            const blob = await response.blob();
-            const savedFilename = item.saved_filename || file.name;
-            const newFile = new File([blob], savedFilename, { type: blob.type || file.type });
-            
-            // Attach metadata to the file object for try-on API
-            const fileWithMeta = newFile as FileWithMetadata;
-            fileWithMeta.metadata = processedItem.metadata || {};
-            fileWithMeta.detailed_description = processedItem.description || '';
-            fileWithMeta.category = normalizeCategory(processedItem.category) || 'unknown';
-            fileWithMeta.item_type = processedItem.subcategory || '';
-            if (brandFromItem && typeof brandFromItem === 'string') {
-              fileWithMeta.brand = brandFromItem;
-            }
-            fileWithMeta.file_url = fileUrl; // Store URL for try-on API
-            fileWithMeta.saved_filename = savedFilename;
-            fileWithMeta.storage_path = processedItem.storage_path;
-            // Add wearing style if set
-            const wearingStyle = localWearingStyles.get(actualIdx);
-            if (wearingStyle) {
-              fileWithMeta.wearing_style = wearingStyle;
-            }
-            
-            processedFiles.push(newFile);
-          } catch (error) {
-            console.warn(`Failed to fetch saved file for ${file.name}, using original:`, error);
-            // Fallback to original file
-            const newFile = new File([file], item.saved_filename || file.name, { type: file.type });
-            const fileWithMeta = newFile as FileWithMetadata;
-            fileWithMeta.metadata = processedItem?.metadata || {};
-            fileWithMeta.detailed_description = processedItem?.description || '';
-            fileWithMeta.category = normalizeCategory(processedItem?.category) || 'unknown';
-            fileWithMeta.category = normalizeCategory(processedItem?.category) || 'unknown';
-            fileWithMeta.item_type = processedItem?.subcategory || '';
-            if (brandFromItem && typeof brandFromItem === 'string') {
-              fileWithMeta.brand = brandFromItem;
-            }
-            // Add wearing style if set
-            const wearingStyle = localWearingStyles.get(actualIdx);
-            if (wearingStyle) {
-              fileWithMeta.wearing_style = wearingStyle;
-            }
-            processedFiles.push(newFile);
-          }
-        } else {
-          // Use original file with metadata attached
-          const newFile = new File([file], file.name, { type: file.type });
-          const fileWithMeta = newFile as FileWithMetadata;
-          if (processedItem) {
-            fileWithMeta.metadata = processedItem.metadata || {};
-            fileWithMeta.detailed_description = processedItem.description || '';
-            fileWithMeta.category = processedItem.category || 'unknown';
-            fileWithMeta.item_type = processedItem.subcategory || '';
-            if (brandFromItem && typeof brandFromItem === 'string') {
-              fileWithMeta.brand = brandFromItem;
-            }
-          }
-          // Add wearing style if set
-          const wearingStyle = localWearingStyles.get(actualIdx);
-          if (wearingStyle) {
-            fileWithMeta.wearing_style = wearingStyle;
-          }
-          processedFiles.push(newFile);
-        }
-      }
-
       setProgressPercent(100);
-      setAnalysisProgress('Analysis complete!');
-
-      return { files: processedFiles, analyses: allAnalyses };
-    } catch (error: unknown) {
-      if (enableGuestDemo) {
-        return buildDemoFallbackResult(filesToAnalyze, startIndex);
-      }
-      console.error('Error analyzing clothing items:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Analysis failed';
-      setAnalysisProgress(`Error: ${errorMessage}`);
-      setProgressPercent(0);
-      
-      // Mark new items as error
-      setAnalyzedItems(prev => {
-        const newItems = [...prev];
-        for (let idx = 0; idx < filesToAnalyze.length; idx++) {
-          newItems[startIndex + idx] = {
-            index: startIndex + idx,
-            original_filename: filesToAnalyze[idx].name,
-            status: 'error' as const,
-            error: errorMessage
-          };
-        }
-        return newItems;
-      });
-      
-      // Still allow files to be added even if analysis fails
-      return { files: filesToAnalyze, analyses: [] };
-    } finally {
-      setIsAnalyzing(false);
-    }
-  }, [backendUrl.reason, buildDemoFallbackResult, enableGuestDemo, resolvedApiUrl, getBackendAuthHeaders, maybeConvertFiles, requireAuth]);
+      setAnalysisProgress('Garments ready on this device.');
+      return { files, analyses };
+    } finally { setIsAnalyzing(false); }
+  }, [maybeConvertFiles, requireAuth]);
 
   const handleBulkUpload = useCallback(async (files: File[], shouldReplace: boolean = false) => {
     if (files.length === 0) return;
@@ -734,7 +398,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
               }
             </span>
             <span className="mt-2 block px-2 text-xs text-slate-500 sm:text-sm">
-              Drag and drop images here or tap to select. Items will be analyzed and categorized automatically.
+              Drag and drop images here or tap to select. Photos stay on this device until you generate a look.
             </span>
             <input
               type="file"
@@ -870,13 +534,7 @@ export const BulkUploadZone: React.FC<BulkUploadZoneProps> = ({
                     </button>
                     <div className="w-full h-24 sm:h-32 rounded bg-black/5 overflow-hidden flex items-center justify-center">
                       <img
-                        src={
-                          item?.file_url 
-                            ? (item.file_url.startsWith('http')
-                                ? item.file_url
-                                : `${resolvedApiUrl || ''}${item.file_url}`)
-                            : objectUrls.get(idx) || ''
-                        }
+                        src={objectUrls.get(idx) || ''}
                         alt={item?.saved_filename || item?.analysis?.suggested_filename || item?.original_filename || file.name}
                         className="block max-w-full max-h-full h-auto w-auto rounded"
                         onError={(e) => {

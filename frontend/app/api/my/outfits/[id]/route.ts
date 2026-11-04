@@ -8,7 +8,7 @@ import { getUserPrimaryEmail } from "@/lib/bypass-config";
  */
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> | { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const { userId } = await auth();
 

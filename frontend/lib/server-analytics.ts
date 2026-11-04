@@ -1,5 +1,6 @@
 import { ANALYTICS_EVENTS, type AnalyticsEventName } from './analytics-events';
 import { logger } from './logger';
+import { optionalAnalyticsEnabled } from './optional-analytics';
 
 const key = process.env.POSTHOG_KEY;
 const host = (process.env.POSTHOG_HOST || 'https://us.i.posthog.com').replace(
@@ -14,7 +15,7 @@ export async function captureServerEvent(
   properties: EventPayload = {},
   distinctId?: string,
 ): Promise<void> {
-  if (!key) return;
+  if (!optionalAnalyticsEnabled() || !key) return;
 
   try {
     await fetch(`${host}/capture/`, {

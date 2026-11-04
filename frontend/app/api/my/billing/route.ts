@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isTryonStaff } from "@/lib/tryon-staff";
 import { getUserPrimaryEmail } from "@/lib/bypass-config";
 
 /**
@@ -48,7 +49,7 @@ export async function GET() {
 
   try {
     const {
-      getEffectiveUserBilling,
+      getOrCreateUserBilling,
       hasPaidCreditGrant,
       upsertUserProfileFromClerk,
     } = await import(
@@ -72,7 +73,8 @@ export async function GET() {
       console.warn("billing: failed to sync current Clerk user profile", profileErr);
     }
 
-    const { billing, isPrivileged } = await getEffectiveUserBilling(userId, userEmail);
+    const billing = await getOrCreateUserBilling(userId);
+    const isPrivileged = isTryonStaff(userId);
     const hasPurchase =
       isPrivileged ||
       billing.plan !== "free" ||
@@ -84,6 +86,8 @@ export async function GET() {
       creditsRefreshAt: billing.credits_refresh_at,
       trialsRemaining: billing.trials_remaining,
       hasPurchase,
+      isFrozen: billing.is_frozen,
+      canManageBilling: Boolean(billing.stripe_customer_id),
       unlimitedCredits: isPrivileged,
       isPrivileged,
     });

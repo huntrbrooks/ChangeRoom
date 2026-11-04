@@ -1,63 +1,88 @@
 'use client';
 
-import posthog from 'posthog-js';
 import { ANALYTICS_EVENTS, type AnalyticsEventName } from './analytics-events';
+import { optionalAnalyticsEnabled } from './optional-analytics';
 
+type AnalyticsClient = typeof import('posthog-js')['default'];
 const key = process.env.NEXT_PUBLIC_POSTHOG_KEY;
-const host =
-  (process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com').replace(
-    /\/+$/,
-    '',
-  );
+const host = (process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com').replace(/\/+$/, '');
+let client: AnalyticsClient | undefined;
+let initialization: Promise<boolean> | undefined;
+let identityVersion = 0;
+let pendingResetVersion: number | undefined;
 
-let initialized = false;
-
-export function initAnalytics(): void {
-  if (initialized) return;
-  if (typeof window === 'undefined') return;
-  if (!key) return;
-
-  posthog.init(key, {
-    api_host: host,
-    capture_pageview: false,
-    autocapture: false,
-    person_profiles: 'identified_only',
-    persistence: 'localStorage',
-  });
-  initialized = true;
+export function initAnalytics(): Promise<boolean> {
+  if (!optionalAnalyticsEnabled() || typeof window === 'undefined' || !key)
+    return Promise.resolve(false);
+  if (client) return Promise.resolve(true);
+  // Import itself reads browser storage, so even module loading belongs behind the gate.
+  initialization ??= import('posthog-js').then(({ default: sdk }) => {
+    if (!optionalAnalyticsEnabled()) return false;
+    sdk.init(key, {
+      api_host: host,
+      capture_pageview: false,
+      autocapture: false,
+      person_profiles: 'identified_only',
+      persistence: 'localStorage',
+    });
+    // init may restore a persisted identity. Apply a still-current sign-out
+    // before releasing any events waiting for SDK readiness.
+    if (pendingResetVersion === identityVersion) sdk.reset();
+    pendingResetVersion = undefined;
+    client = sdk;
+    return true;
+  }).catch(() => false);
+  return initialization;
 }
 
-export function identifyUser(
+async function withAnalytics(action: (sdk: AnalyticsClient) => void | boolean): Promise<boolean> {
+  if (!optionalAnalyticsEnabled() || !await initAnalytics() || !optionalAnalyticsEnabled() || !client)
+    return false;
+  try {
+    return action(client) !== false;
+  } catch {
+    // Optional measurement must not break product, authentication or payment flows.
+    return false;
+  }
+}
+
+export async function identifyUser(
   userId: string | undefined,
   properties?: Record<string, unknown>,
-): void {
-  if (!initialized || !userId) return;
-  posthog.identify(userId, properties);
+): Promise<boolean> {
+  const version = ++identityVersion;
+  return userId ? withAnalytics(sdk => {
+    if (version !== identityVersion) return false;
+    sdk.identify(userId, properties);
+  }) : false;
 }
 
 export function resetAnalytics(): void {
-  if (!initialized) return;
-  posthog.reset();
+  // Invalidate a pending identity operation if sign-out wins the SDK-load race.
+  identityVersion += 1;
+  if (!optionalAnalyticsEnabled()) return;
+  if (!client) {
+    // Do not load the SDK just to reset it; honor this reset if it later loads.
+    pendingResetVersion = identityVersion;
+    return;
+  }
+  try { client.reset(); } catch { /* Optional measurement only. */ }
 }
 
-export function captureEvent(
+export async function captureEvent(
   event: AnalyticsEventName,
   properties?: Record<string, unknown>,
-): void {
-  if (!initialized) return;
-  posthog.capture(event, properties);
+): Promise<void> {
+  await withAnalytics(sdk => { sdk.capture(event, properties); });
 }
 
-export function capturePageView(path: string, properties?: Record<string, unknown>): void {
-  captureEvent(ANALYTICS_EVENTS.PAGE_VIEW, {
-    path,
-    ...properties,
-  });
+export function capturePageView(path: string, properties?: Record<string, unknown>): Promise<void> {
+  return captureEvent(ANALYTICS_EVENTS.PAGE_VIEW, { path, ...properties });
 }
 
 export function getDistinctId(): string | undefined {
-  if (!initialized) return undefined;
-  return posthog.get_distinct_id();
+  if (!optionalAnalyticsEnabled() || !client) return undefined;
+  try { return client.get_distinct_id(); } catch { return undefined; }
 }
 
 export { ANALYTICS_EVENTS };

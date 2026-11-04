@@ -196,13 +196,7 @@ export const optimizeImageFile = async (
   options: OptimizeImageOptions = {}
 ): Promise<OptimizeImageResult> => {
   if (typeof window === 'undefined') {
-    return {
-      file,
-      didOptimize: false,
-      originalBytes: file.size,
-      finalBytes: file.size,
-      mimeTypeChanged: false,
-    };
+    throw new Error('Photo preparation requires a browser.');
   }
 
   const {
@@ -224,18 +218,8 @@ export const optimizeImageFile = async (
     sourceMime === 'image/heic' || sourceMime === 'image/heif';
   const targetMimeType =
     preferredMimeType || (forceJpeg ? fallbackMime : sourceMime);
-  const needsMimeConversion = targetMimeType !== sourceMime;
-
-  const shouldProcess = file.size > maxBytes || needsMimeConversion;
-  if (!shouldProcess) {
-    return {
-      file,
-      didOptimize: false,
-      originalBytes: file.size,
-      finalBytes: file.size,
-      mimeTypeChanged: false,
-    };
-  }
+  // Compressed byte size does not bound decoded pixels. Even a small JPEG can
+  // be a full-resolution phone photo, so every upload follows the resize path.
 
   // Decode the image explicitly before optimization.
   // This avoids flaky Image.onload behavior and prevents failures when Data URLs are too large.
@@ -245,84 +229,84 @@ export const optimizeImageFile = async (
   );
   const image = decoded.drawable;
 
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    if (decoded.cleanup) decoded.cleanup();
-    throw new Error('Canvas not supported in this browser.');
-  }
-
-  const drawScaledImage = (width: number, height: number) => {
-    canvas.width = Math.max(1, Math.round(width));
-    canvas.height = Math.max(1, Math.round(height));
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-  };
-
-  const sizedImage = image as { width?: number; height?: number };
-  const srcW = sizedImage.width || decoded.width || 1;
-  const srcH = sizedImage.height || decoded.height || 1;
-
-  const originalLongestSide = Math.max(srcW, srcH);
-  const scale =
-    originalLongestSide > maxDimension
-      ? maxDimension / originalLongestSide
-      : 1;
-
-  let workingWidth = srcW * scale;
-  let workingHeight = srcH * scale;
-  drawScaledImage(workingWidth, workingHeight);
-
-  let currentQuality = initialQuality;
-  let blob = await canvasToBlob(canvas, targetMimeType, currentQuality);
-
-  const absoluteMinDimensionClamped = Math.min(
-    Math.max(1, absoluteMinDimension),
-    maxDimension
-  );
-
-  while (blob.size > maxBytes) {
-    if (currentQuality > minQuality + 0.005) {
-      currentQuality = Math.max(minQuality, currentQuality - qualityStep);
-    } else {
-      const longestSide = Math.max(workingWidth, workingHeight);
-      if (longestSide <= absoluteMinDimensionClamped) {
-        break;
-      }
-      workingWidth = Math.max(
-        absoluteMinDimensionClamped,
-        workingWidth * dimensionStep
-      );
-      workingHeight = Math.max(
-        absoluteMinDimensionClamped,
-        workingHeight * dimensionStep
-      );
-      drawScaledImage(workingWidth, workingHeight);
+  try {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Canvas not supported in this browser.');
     }
 
-    blob = await canvasToBlob(canvas, targetMimeType, currentQuality);
-  }
+    const drawScaledImage = (width: number, height: number) => {
+      canvas.width = Math.max(1, Math.round(width));
+      canvas.height = Math.max(1, Math.round(height));
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (targetMimeType === 'image/jpeg') {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    };
 
-  if (blob.size > maxBytes) {
-    if (decoded.cleanup) decoded.cleanup();
-    throw new Error(
-      'We could not shrink this photo below the 10MB limit. Please choose a smaller image.'
+    const sizedImage = image as { width?: number; height?: number };
+    const srcW = sizedImage.width || decoded.width || 1;
+    const srcH = sizedImage.height || decoded.height || 1;
+
+    const originalLongestSide = Math.max(srcW, srcH);
+    const scale =
+      originalLongestSide > maxDimension
+        ? maxDimension / originalLongestSide
+        : 1;
+
+    let workingWidth = srcW * scale;
+    let workingHeight = srcH * scale;
+    drawScaledImage(workingWidth, workingHeight);
+
+    let currentQuality = initialQuality;
+    let blob = await canvasToBlob(canvas, targetMimeType, currentQuality);
+
+    const absoluteMinDimensionClamped = Math.min(
+      Math.max(1, absoluteMinDimension),
+      maxDimension
     );
+
+    while (blob.size > maxBytes) {
+      if (currentQuality > minQuality + 0.005) {
+        currentQuality = Math.max(minQuality, currentQuality - qualityStep);
+      } else {
+        const longestSide = Math.max(workingWidth, workingHeight);
+        if (longestSide <= absoluteMinDimensionClamped) {
+          break;
+        }
+        const nextLongestSide = Math.max(absoluteMinDimensionClamped, longestSide * dimensionStep);
+        workingWidth *= nextLongestSide / longestSide;
+        workingHeight *= nextLongestSide / longestSide;
+        drawScaledImage(workingWidth, workingHeight);
+      }
+
+      blob = await canvasToBlob(canvas, targetMimeType, currentQuality);
+    }
+
+    if (blob.size > maxBytes) {
+      throw new Error(
+        'We could not shrink this photo below the 10MB limit. Please choose a smaller image.'
+      );
+    }
+
+    const optimizedFile = new File([blob], file.name, {
+      type: targetMimeType,
+      lastModified: Date.now(),
+    });
+
+    return {
+      file: optimizedFile,
+      didOptimize: true,
+      originalBytes: file.size,
+      finalBytes: optimizedFile.size,
+      mimeTypeChanged: optimizedFile.type !== file.type,
+    };
+  } finally {
+    decoded.cleanup?.();
   }
-
-  const optimizedFile = new File([blob], file.name, {
-    type: targetMimeType,
-    lastModified: Date.now(),
-  });
-
-  if (decoded.cleanup) decoded.cleanup();
-  return {
-    file: optimizedFile,
-    didOptimize: true,
-    originalBytes: file.size,
-    finalBytes: optimizedFile.size,
-    mimeTypeChanged: optimizedFile.type !== file.type,
-  };
 };
 
 

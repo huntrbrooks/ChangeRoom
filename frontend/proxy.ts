@@ -1,4 +1,5 @@
-import { NEW_PURCHASES_ENABLED, pausedCheckoutResponse } from "@/lib/purchase-availability";
+import { unsafePreview } from "@/lib/preview-isolation";
+import { canCreateCheckout, pausedCheckoutResponse } from "@/lib/purchase-availability";
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse, type NextRequest, type NextMiddleware, type NextFetchEvent } from 'next/server';
 import { buildCanonicalUrl, shouldRedirectToCanonicalHost } from '@/lib/domainRouting';
@@ -13,6 +14,8 @@ const isPublicRoute = createRouteMatcher([
   '/api/webhooks/clerk(.*)',
   '/how-it-works',
   '/about',
+  '/support',
+  '/status',
   '/pricing',
   // MCP OAuth metadata endpoints must be publicly accessible
   '/.well-known/oauth-authorization-server(.*)',
@@ -69,7 +72,7 @@ try {
       if (!isPublicRoute(req)) {
         await auth.protect();
       }
-    });
+    }, { signInUrl: "/sign-in", signUpUrl: "/sign-up" });
   }
 } catch (error) {
   console.error('Failed to create Clerk proxy handler:', error);
@@ -78,7 +81,10 @@ try {
 
 // Export proxy handler
 export default function proxy(req: NextRequest, event?: NextFetchEvent) {
-  if (!NEW_PURCHASES_ENABLED && req.method === 'POST' &&
+  if (unsafePreview(process.env)) {
+    return NextResponse.json({ error: 'isolated_preview_not_configured' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+  }
+  if (!canCreateCheckout() && req.method === 'POST' &&
       req.nextUrl.pathname.replace(/\/+$/, '') === '/api/billing/create-checkout-session') {
     return pausedCheckoutResponse();
   }

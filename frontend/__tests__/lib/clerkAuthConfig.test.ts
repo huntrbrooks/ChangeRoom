@@ -42,3 +42,11 @@ describe("clerkAuthConfig", () => {
     ]);
   });
 });
+
+it('allows only the pinned staging sign-in return origin in a preview', async () => {
+  const { getAllowedRedirectOrigins } = await import('@/lib/clerkAuthConfig');
+  const env = {VERCEL_ENV:'preview', NEXT_PUBLIC_APP_URL:'https://stage.example.invalid',
+    CHANGEROOM_STAGING_APP_HOST:'stage.example.invalid'};
+  expect(getAllowedRedirectOrigins(env)).toEqual(['https://stage.example.invalid']);
+  expect(getAllowedRedirectOrigins({...env, NEXT_PUBLIC_APP_URL:'https://igetdressed.online'})).toEqual([]);
+});

@@ -14,7 +14,7 @@ function getStripe() {
 
 /**
  * POST /api/billing/portal
- * Creates a Stripe Billing Portal session for managing subscription
+ * Creates a Stripe Billing Portal session for managing an existing billing account.
  */
 export async function POST(_req: NextRequest) {
   try {
@@ -56,7 +56,7 @@ export async function POST(_req: NextRequest) {
 
     if (!billing.stripe_customer_id) {
       return NextResponse.json(
-        { error: "No Stripe customer found. Please create a subscription first." },
+        { error: "No billing account is linked yet. If you have already purchased a credit pack, contact gerard@aihuntrconsulting.com for help." },
         { status: 400 }
       );
     }

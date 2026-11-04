@@ -1,19 +1,20 @@
-import { NEW_PURCHASES_ENABLED, PURCHASE_PAUSE_NOTICE } from '@/lib/purchase-availability';
+import { canCreateCheckout, PURCHASE_PAUSE_NOTICE } from '@/lib/purchase-availability';
 import Image from 'next/image';
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { ArrowLeft } from 'lucide-react';
 import { PricingTable } from '../components/PricingTable';
+import { SupportEmail } from '../components/HelpPage';
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'Pricing | IGetDressed.Online',
-  description: 'Choose a subscription or credit pack for AI try-on and shopping.',
+  description: 'One-time credit packs for virtual try-on. No subscription or automatic renewal.',
   openGraph: {
     title: 'Pricing | IGetDressed.Online',
-    description: 'Pick your plan for virtual try-on and shopping tools.',
+    description: 'See one-time try-on credit packs and manage existing billing.',
     url: 'https://igetdressed.online/pricing',
   },
 };
@@ -51,27 +52,33 @@ function PricingPageContent() {
       <div className="container mx-auto px-4 py-8 md:py-12 max-w-4xl">
         <div className="text-center mb-8 space-y-3">
           <h1 className="text-3xl md:text-4xl font-semibold text-[#8B5CF6] tracking-tight">
-            Pricing &amp; Plans
+            Credit pack pricing
           </h1>
           <p className="text-base md:text-lg text-black/70">
-            {NEW_PURCHASES_ENABLED ? 'Pick a subscription or credit pack and checkout securely via Stripe.' : PURCHASE_PAUSE_NOTICE}
+            {canCreateCheckout() ? 'Choose a one-time credit pack. You pay once; packs do not renew.' : PURCHASE_PAUSE_NOTICE}
           </p>
           <div className="pt-2 flex justify-center">
             <Link
-              href="https://billing.stripe.com/p/login/6oU14n1e8drn28E9D9bMQ00"
-              target="_blank"
-              rel="noopener noreferrer"
+              href="/billing"
               className="inline-flex items-center justify-center rounded-full bg-[#8B5CF6] px-5 py-2.5 text-white font-semibold hover:bg-[#7a4ee2] transition-colors"
             >
               Manage billing or cancel a subscription
             </Link>
           </div>
+          {/* Only production may send a customer to the live Stripe email portal. */}
+          {process.env.VERCEL_ENV === 'production' && (
+            <div>
+              <a className="underline text-sm" href="https://billing.stripe.com/p/login/6oU14n1e8drn28E9D9bMQ00" rel="noreferrer">
+                Access the Stripe portal by email
+              </a>
+            </div>
+          )}
         </div>
 
         <div className="bg-white border border-[#8B5CF6]/30 rounded-2xl p-4 md:p-6 shadow-sm">
-           {NEW_PURCHASES_ENABLED ? <PricingTable showCreditPacks /> : (
+           {canCreateCheckout() ? <PricingTable showCreditPacks /> : (
             <p className="text-center text-sm text-slate-700">
-              Existing customers can still access invoices, update payment details, and manage their subscription through the billing portal. For help, email <a className="underline" href="mailto:gerard@aihuntrconsulting.com">gerard@aihuntrconsulting.com</a>.
+              Existing customers can still access invoices, update payment details, and manage their subscription through the billing portal. For help with a charge, missing credits or cancellation, contact <SupportEmail />.
             </p>
           )}
         </div>

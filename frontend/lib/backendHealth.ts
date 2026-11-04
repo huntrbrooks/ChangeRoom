@@ -43,16 +43,26 @@ export async function probeBackendHealth(
     const response = await fetchImpl(target, {
       cache: "no-store",
       headers: {
-        Accept: "application/json, text/plain;q=0.9, text/html;q=0.8",
+        Accept: "application/json",
       },
       method: "GET",
+      redirect: "error",
       signal: controller.signal,
     });
 
     const bodyText = await response.text();
 
-    if (response.ok && !/service suspended/i.test(bodyText)) {
-      return { ok: true, message: null, status: response.status };
+    if (response.status === 200) {
+      const stack = response.headers.get("X-ChangeRoom-Stack");
+      const mime = (response.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+      if (mime === "application/json" && (stack === "fastapi-worker" || stack === "fastapi-render")) {
+        try {
+          if (JSON.parse(bodyText)?.message === "IGetDressed.Online API is running") {
+            return { ok: true, message: null, status: 200 };
+          }
+        } catch { /* A gateway can send a login page with a JSON content type. */ }
+      }
+      return { ok: false, message: "The configured address did not return the try-on service.", status: 200 };
     }
 
     return {

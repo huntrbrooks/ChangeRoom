@@ -6,7 +6,6 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useUser, useAuth } from '@clerk/nextjs';
 import { httpClient } from '@/lib/httpClient';
-import { fetchWithRequestId } from '@/lib/fetchWithRequestId';
 import { UploadZone } from './components/UploadZone';
 import { BulkUploadZone } from './components/BulkUploadZone';
 import { TryOnFromUrl } from './components/TryOnFromUrl';
@@ -27,7 +26,6 @@ import {
   Heart,
   LayoutGrid,
   Loader2,
-  Plus,
   RefreshCw,
   Search,
   Shirt,
@@ -42,18 +40,19 @@ import {
   ZoomIn,
 } from 'lucide-react';
 import { getWearingStylePromptText } from '@/lib/wearingStyles';
-import { getUserPrimaryEmail, isBypassUser } from '@/lib/bypass-config';
+import { getUserPrimaryEmail } from '@/lib/bypass-config';
 import { hasUsableClerkPublishableKey } from '@/lib/clerk-public-config';
 import { ensureAbsoluteUrl } from '@/lib/url';
 import { resolveBackendApiUrl } from '@/lib/backend-url';
 import { probeBackendHealth } from '@/lib/backendHealth';
-import { isMyOutfitsEnabled, isTryOnFromUrlEnabled } from '@/lib/featureFlags';
+import { isShoppingMatchesEnabled, isTryOnFromUrlEnabled } from '@/lib/featureFlags';
 import { ANALYTICS_EVENTS, captureEvent } from '@/lib/analytics';
 import { trackTrialConsumed, trackOutfitGenerated } from '@/lib/userEvents';
 import { getBillingBannerState } from '@/lib/billingBanner';
 import { getDemoTryOnImageUrl, getDemoTryOnProducts } from '@/lib/pitchDemo';
 import { logger } from '@/lib/logger';
 import { recordClientDiagnostic } from '@/lib/clientDiagnostics';
+import { PHOTO_PREPARATION_ERROR, prepareTryOnImageFiles } from '@/lib/imageConversion';
 
 // Force dynamic rendering to prevent static generation issues with Clerk
 export const dynamic = 'force-dynamic';
@@ -87,6 +86,7 @@ interface ProcessedModelPhoto {
 }
 
 interface BillingInfo {
+  isFrozen?: boolean;
   plan: 'free' | 'standard' | 'pro';
   creditsAvailable: number;
   creditsRefreshAt: Date | null;
@@ -126,48 +126,7 @@ const formatCurrency = (value?: number | null, currency?: string | null) => {
 };
 
 const DATA_IMAGE_URL_PATTERN = /^data:image\/[a-zA-Z0-9.+-]+;base64,/i;
-const HTTP_IMAGE_URL_PATTERN = /^https?:\/\//i;
 const BLOB_URL_PATTERN = /^blob:/i;
-const BASE64_IMAGE_PATTERN = /^[A-Za-z0-9+/=\s]+$/;
-const IMAGE_PATH_PATTERN = /(?:^|\/)(?:uploads|images|generated|results|static|tmp)\//i;
-const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|webp|gif|avif)(?:[?#].*)?$/i;
-
-const normalizeTryOnResultImageUrl = (
-  rawUrl: unknown,
-  backendBaseUrl: string
-): string | null => {
-  if (typeof rawUrl !== 'string') {
-    return null;
-  }
-
-  const trimmed = rawUrl.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  if (
-    DATA_IMAGE_URL_PATTERN.test(trimmed) ||
-    HTTP_IMAGE_URL_PATTERN.test(trimmed) ||
-    BLOB_URL_PATTERN.test(trimmed)
-  ) {
-    return trimmed;
-  }
-
-  const compact = trimmed.replace(/\s+/g, '');
-  if (compact.length > 1000 && BASE64_IMAGE_PATTERN.test(compact)) {
-    return `data:image/png;base64,${compact}`;
-  }
-
-  if (
-    trimmed.startsWith('/') ||
-    IMAGE_PATH_PATTERN.test(trimmed) ||
-    IMAGE_EXTENSION_PATTERN.test(trimmed)
-  ) {
-    return ensureAbsoluteUrl(trimmed, backendBaseUrl) || null;
-  }
-
-  return null;
-};
 
 const addImageCacheBust = (url: string): string =>
   DATA_IMAGE_URL_PATTERN.test(url) || BLOB_URL_PATTERN.test(url)
@@ -291,6 +250,7 @@ function HomeContentWithClerk() {
 
   return (
     <HomeContent
+      key={user?.id || "signed-out"}
       auth={{
         user,
         isLoaded,
@@ -322,9 +282,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const { user, isLoaded, getToken, isSignedIn, isAuthLoaded } = auth;
   const router = useRouter();
   const backendApi = useMemo(() => resolveBackendApiUrl(), []);
-  const myOutfitsEnabled = useMemo(() => isMyOutfitsEnabled(), []);
   const pitchDemoEnabled = false;
   const tryOnFromUrlEnabled = useMemo(() => isTryOnFromUrlEnabled(), []);
+  const shoppingMatchesEnabled = isShoppingMatchesEnabled();
   const [userImages, setUserImages] = useState<File[]>([]);
   const [processedModelPhoto, setProcessedModelPhoto] = useState<ProcessedModelPhoto | null>(null);
   const [modelPhotoStatus, setModelPhotoStatus] = useState<'idle' | 'processing' | 'ready' | 'error'>('idle');
@@ -342,6 +302,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const [modestyApplied, setModestyApplied] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [isProductSearchLoading, setIsProductSearchLoading] = useState(false);
+  const [findShoppingMatches, setFindShoppingMatches] = useState(false);
   const [productSearchAttempted, setProductSearchAttempted] = useState(false);
   const [productSearchError, setProductSearchError] = useState<string | null>(
     null
@@ -349,12 +310,17 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isTryOnLoading, setIsTryOnLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [photoPreparationProgress, setPhotoPreparationProgress] = useState<string | null>(null);
+  const photoPreparationRef = useRef(false);
+  const photoPreparationControllerRef = useRef<AbortController | null>(null);
+  const photoPreparationMountedRef = useRef(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [isPreviewResult, setIsPreviewResult] = useState(false);
   const [guestPreviewConsumed, setGuestPreviewConsumed] = useState(false);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [billingStatus, setBillingStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [billingError, setBillingError] = useState<string | null>(null);
+  const [healthAttempt, setHealthAttempt] = useState(0);
   const [backendAvailability, setBackendAvailability] = useState<BackendAvailability>(
     backendApi.apiUrl ? 'checking' : 'unavailable'
   );
@@ -370,8 +336,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const [showWardrobeLimitModal, setShowWardrobeLimitModal] = useState(false);
   const [isAddingSavedItem, setIsAddingSavedItem] = useState(false);
   const [blockedWardrobeIndices, setBlockedWardrobeIndices] = useState<Set<number>>(new Set());
-  const [adjustingDescriptionIndices, setAdjustingDescriptionIndices] = useState<Set<number>>(new Set());
-  const [lastSafetyBlockDetail, setLastSafetyBlockDetail] = useState<string | null>(null);
   const [activeWardrobeAudience, setActiveWardrobeAudience] = useState<WardrobeAudience>('Women');
   const [showWardrobeFilters, setShowWardrobeFilters] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
@@ -380,25 +344,27 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const [activeMirrorThumb, setActiveMirrorThumb] = useState(0);
   const [isMirrorExpanded, setIsMirrorExpanded] = useState(false);
   const [shopProductOffset, setShopProductOffset] = useState(0);
-  const [adjustDescriptionFeedback, setAdjustDescriptionFeedback] = useState<
-    Map<number, { tone: 'success' | 'warning' | 'error'; message: string }>
-  >(new Map());
   const cardClass =
     "rounded-lg border border-slate-200/80 bg-white/95 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-sm";
   const cardPadding = "p-4 sm:p-5 md:p-6";
   const resultImageLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const creditLoggedRef = useRef(false);
   const trialConsumedRef = useRef(false);
-  const contentBlockWarnedRef = useRef(false);
-  const creditHoldAppliedRef = useRef(false);
   const virtualMirrorSectionRef = useRef<HTMLElement | null>(null);
   const stickyHeaderRef = useRef<HTMLElement | null>(null);
   const mobileActionBarRef = useRef<HTMLDivElement | null>(null);
   const selfUploadInputRef = useRef<HTMLInputElement | null>(null);
   const wardrobeUploadInputRef = useRef<HTMLInputElement | null>(null);
   const actionFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const modelPhotoProcessingRunRef = useRef(0);
   const modelPhotoAutoRunKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    photoPreparationMountedRef.current = true;
+    return () => {
+      photoPreparationMountedRef.current = false;
+      photoPreparationControllerRef.current?.abort();
+    };
+  }, []);
 
   const withRetry = useCallback(
     async function withRetryFn<T>(fn: () => Promise<T>, retries = 2, delayMs = 1500): Promise<T> {
@@ -495,95 +461,12 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     [backendApi.apiUrl, backendApi.reason, backendAvailability, backendAvailabilityMessage, setError]
   );
 
-  const preprocessModelPhotos = useCallback(
-    async (files: File[]) => {
-      const runId = modelPhotoProcessingRunRef.current + 1;
-      modelPhotoProcessingRunRef.current = runId;
-
-      if (files.length === 0) {
-        setProcessedModelPhoto(null);
-        setModelPhotoStatus('idle');
-        setModelPhotoMessage(null);
-        return;
-      }
-
-      if (pitchDemoEnabled || backendAvailability !== 'healthy') {
-        setProcessedModelPhoto(null);
-        setModelPhotoStatus('idle');
-        setModelPhotoMessage(null);
-        return;
-      }
-
-      const API_URL = getBackendApiUrl('Model photo preprocessing');
-      if (!API_URL) {
-        setProcessedModelPhoto(null);
-        setModelPhotoStatus('error');
-        setModelPhotoMessage('Model photo analysis is unavailable.');
-        return;
-      }
-
-      try {
-        setModelPhotoStatus('processing');
-        setModelPhotoMessage(
-          files.length > 1
-            ? 'Analysing model photos and creating a try-on reference...'
-            : 'Analysing model photo...'
-        );
-
-        const formData = new FormData();
-        files.slice(0, 5).forEach((file) => {
-          formData.append('model_images', file);
-        });
-        const headers = await getBackendAuthHeaders();
-        const response = await fetchWithRequestId(`${API_URL}/api/preprocess-model-photos`, {
-          method: 'POST',
-          body: formData,
-          headers,
-        }, { prefix: 'model-preprocess', force: true });
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ detail: response.statusText }));
-          throw new Error(errorData.detail || errorData.error || `Model analysis failed: ${response.statusText}`);
-        }
-
-        const result = await response.json();
-        if (modelPhotoProcessingRunRef.current !== runId) {
-          return;
-        }
-
-        const primary = result?.primary || {};
-        const rawUrl = primary.image_url || primary.file_url;
-        const imageUrl = ensureAbsoluteUrl(rawUrl) || rawUrl;
-        if (!imageUrl) {
-          throw new Error('Model preprocessing returned no image URL.');
-        }
-
-        setProcessedModelPhoto({
-          imageUrl,
-          metadata: primary.metadata || result.metadata || {},
-          source: primary.source || (files.length > 1 ? 'composite' : 'single'),
-          storagePath: primary.storage_path,
-          mimeType: primary.mime_type,
-        });
-        setModelPhotoStatus('ready');
-        setModelPhotoMessage(
-          files.length > 1
-            ? 'Composite model reference ready for try-on.'
-            : 'Model reference ready for try-on.'
-        );
-      } catch (error) {
-        if (modelPhotoProcessingRunRef.current !== runId) {
-          return;
-        }
-        const message = error instanceof Error ? error.message : 'Model photo analysis failed.';
-        console.error('Model photo preprocessing failed', error);
-        setProcessedModelPhoto(null);
-        setModelPhotoStatus('error');
-        setModelPhotoMessage(message);
-      }
-    },
-    [backendAvailability, getBackendApiUrl, getBackendAuthHeaders, pitchDemoEnabled]
-  );
+  const preprocessModelPhotos = useCallback((files: File[]) => {
+    // Person images stay on-device until the customer requests a generation.
+    setProcessedModelPhoto(null);
+    setModelPhotoStatus(files.length ? 'ready' : 'idle');
+    setModelPhotoMessage(files.length ? 'Ready to generate. Your photos have not been uploaded.' : null);
+  }, []);
 
   const updateUserImagesAndPreprocess = useCallback(
     (files: File[]) => {
@@ -694,9 +577,21 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [backendApi.apiUrl, backendApi.reason]);
+  }, [backendApi.apiUrl, backendApi.reason, healthAttempt]);
 
   const isSignedInReady = isAuthLoaded && isSignedIn;
+
+  const [recentLooks, setRecentLooks] = useState<{id: string; updated_at: string}[]>([]);
+  const [historyError, setHistoryError] = useState(false);
+  const loadRecentLooks = useCallback(async () => {
+    if (!isSignedInReady) return;
+    try {
+      const { data } = await httpClient.get('/api/try-on/recent');
+      setRecentLooks(data.looks || []);
+      setHistoryError(false);
+    } catch { setHistoryError(true); }
+  }, [isSignedInReady]);
+  useEffect(() => { setRecentLooks([]); void loadRecentLooks(); }, [user?.id, loadRecentLooks]);
 
   const fetchBilling = useCallback(async () => {
     try {
@@ -814,12 +709,12 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
   // Check if user email is in bypass list
   const userEmail = getUserPrimaryEmail(user);
-  const isBypass = isBypassUser(userEmail) || Boolean(billing?.unlimitedCredits);
+  const isBypass = Boolean(billing?.unlimitedCredits);
   const redirectToPricing = useCallback(() => {
-    router.push('/pricing?promo=xmas');
+    router.push('/pricing');
   }, [router]);
 
-  const isOnTrial = billing && (billing.trialsRemaining ?? 0) > 0 && !isBypass;
+  const isOnTrial = billing && (billing.trialsRemaining ?? 0) > 0 && !isBypass && user?.primaryEmailAddress?.verification?.status === 'verified';
   const isAuthenticated = isAuthLoaded ? Boolean(isSignedIn) : isLoaded && !!user;
   const isGuestPitchDemo = pitchDemoEnabled && !isAuthenticated;
   const hasCreditsAvailable = billing ? billing.unlimitedCredits || billing.creditsAvailable > 0 : false;
@@ -841,6 +736,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const canAttemptTryOn =
     (isAuthenticated || pitchDemoEnabled) &&
     !isGenerating &&
+    !photoPreparationProgress &&
     modelPhotoStatus !== 'processing' &&
     modelPhotoStatus !== 'error' &&
     modelPhotoReadyForTryOn &&
@@ -944,25 +840,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     [showActionFeedback]
   );
 
-  const handleViewAllProducts = useCallback(() => {
-    if (generatedImage && user) {
-      setIsShopSaveOpen(true);
-      reportUiAction('shop_view_all', 'completed', { mode: 'shop_save_modal' });
-      return;
-    }
-
-    const el = document.getElementById('shop-the-look');
-    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    showActionFeedback(
-      products.length > 0
-        ? 'All current matches are visible below.'
-        : 'These are preview shopping links. Generate a look to unlock live product matches.',
-      products.length > 0 ? 'success' : 'info',
-      'shop_view_all',
-      { hasGeneratedImage: Boolean(generatedImage), productCount: products.length }
-    );
-  }, [generatedImage, products.length, reportUiAction, showActionFeedback, user]);
-
   const handleProductStep = useCallback(
     (direction: 1 | -1) => {
       if (shopProductsForDisplay.length <= 1) {
@@ -1004,7 +881,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       setLookFeedback(nextFeedback);
       showActionFeedback(
         nextFeedback === 'liked'
-          ? 'Saved that you liked this look.'
+          ? 'You liked this look.'
           : 'Thanks. Try another wardrobe item or generate a new look.',
         nextFeedback === 'liked' ? 'success' : 'info',
         'look_feedback',
@@ -1023,7 +900,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `igetdressed-look-${Date.now()}.png`;
+    link.download = `igetdressed-look-${Date.now()}.jpg`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -1037,16 +914,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         'info',
         'download_look_without_result'
       );
-      return;
-    }
-
-    if (isPreviewResult && !isBypass) {
-      showActionFeedback(
-        'Upgrade to download the clean, watermark-free result.',
-        'warning',
-        'download_preview_requires_upgrade'
-      );
-      redirectToPricing();
       return;
     }
 
@@ -1066,9 +933,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   }, [
     downloadImage,
     generatedImage,
-    isBypass,
-    isPreviewResult,
-    redirectToPricing,
     reportUiAction,
     showActionFeedback,
   ]);
@@ -1079,11 +943,12 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     }
 
     if (!isAuthLoaded || !isSignedIn) {
-      setError('Please sign in to upload images.');
+      setError('Sign in to choose photos or generate a look.');
+      if (isAuthLoaded) router.push('/sign-in');
       return false;
     }
     return true;
-  }, [isAuthLoaded, isSignedIn, pitchDemoEnabled, setError]);
+  }, [isAuthLoaded, isSignedIn, pitchDemoEnabled, setError, router]);
 
   const markGuestPreviewConsumed = useCallback(() => {
     if (typeof window !== 'undefined') {
@@ -1301,9 +1166,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       // Replace all existing items with new batch
       setWardrobeItems(newItems);
       setBlockedWardrobeIndices(new Set());
-      setAdjustingDescriptionIndices(new Set());
-      setLastSafetyBlockDetail(null);
-      setAdjustDescriptionFeedback(new Map());
     } else {
       // Append new items to existing ones
       setWardrobeItems((prev) => [...prev, ...newItems]);
@@ -1324,24 +1186,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       });
       return next;
     });
-    setAdjustingDescriptionIndices(prev => {
-      if (prev.size === 0) return prev;
-      const next = new Set<number>();
-      prev.forEach((value) => {
-        if (value === index) return;
-        next.add(value > index ? value - 1 : value);
-      });
-      return next;
-    });
-    setAdjustDescriptionFeedback(prev => {
-      if (prev.size === 0) return prev;
-      const next = new Map<number, { tone: 'success' | 'warning' | 'error'; message: string }>();
-      prev.forEach((value, key) => {
-        if (key === index) return;
-        next.set(key > index ? key - 1 : key, value);
-      });
-      return next;
-    });
   };
 
   const handleItemReplace = (index: number, file: File, analysis: AnalyzedItem) => {
@@ -1356,299 +1200,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       next.delete(index);
       return next;
     });
-    setAdjustingDescriptionIndices(prev => {
-      if (prev.size === 0) return prev;
-      const next = new Set(prev);
-      next.delete(index);
-      return next;
-    });
-    setAdjustDescriptionFeedback(prev => {
-      if (prev.size === 0) return prev;
-      const next = new Map(prev);
-      next.delete(index);
-      return next;
-    });
   };
 
-  const handleAdjustDescription = useCallback(async (index: number) => {
-    if (!isAuthenticated) {
-      setError('Description adjustments are available after sign-in.');
-      return;
-    }
-
-    if (!requireAuth()) {
-      return;
-    }
-    const entry = wardrobeItems[index];
-    if (!entry) {
-      return;
-    }
-
-    const fileMeta = entry.file as FileWithMetadata;
-    const analysisMeta = entry.analysis?.analysis;
-    const baseDescription =
-      (
-        analysisMeta?.description ||
-        analysisMeta?.short_description ||
-        fileMeta.detailed_description ||
-        (typeof fileMeta.metadata?.description === 'string'
-          ? fileMeta.metadata.description
-          : '') ||
-        ''
-      )
-        .toString()
-        .trim();
-
-    const metadata: Record<string, unknown> = {
-      ...(fileMeta.metadata && typeof fileMeta.metadata === 'object' ? fileMeta.metadata : {}),
-    };
-
-    if (analysisMeta?.category) metadata.category = analysisMeta.category;
-    if (analysisMeta?.item_type) metadata.item_type = analysisMeta.item_type;
-    if (analysisMeta?.color) metadata.color = analysisMeta.color;
-    if (analysisMeta?.style) metadata.style = analysisMeta.style;
-    if (analysisMeta?.brand) metadata.brand = analysisMeta.brand;
-    if (analysisMeta?.tags) metadata.tags = analysisMeta.tags;
-    if (baseDescription) metadata.description = baseDescription;
-
-    setAdjustingDescriptionIndices(prev => {
-      const next = new Set(prev);
-      next.add(index);
-      return next;
-    });
-    setAdjustDescriptionFeedback(prev => {
-      if (prev.size === 0) return prev;
-      const next = new Map(prev);
-      next.delete(index);
-      return next;
-    });
-
-    try {
-      const backendAuthHeaders = await getBackendAuthHeaders();
-      const API_URL = getBackendApiUrl('Description adjustments');
-      if (!API_URL) {
-        return;
-      }
-      const response = await httpClient.post(
-        `${API_URL}/api/clothing/adjust-description`,
-        {
-          description: baseDescription,
-          metadata,
-          strictness: contentBlockWarnedRef.current ? 'max' : 'moderate',
-          last_failure: {
-            reason: 'content_safety_block',
-            detail: lastSafetyBlockDetail || undefined,
-          },
-        },
-        {
-          headers: {
-            ...backendAuthHeaders,
-          },
-        }
-      );
-
-      const updatedMetadata =
-        response?.data?.metadata && typeof response.data.metadata === 'object'
-          ? (response.data.metadata as Record<string, unknown>)
-          : metadata;
-      const updatedDescription =
-        typeof response?.data?.description === 'string'
-          ? response.data.description
-          : typeof updatedMetadata.description === 'string'
-          ? (updatedMetadata.description as string)
-          : baseDescription;
-
-      setWardrobeItems(prev => {
-        if (!prev[index]) return prev;
-        const next = [...prev];
-        const prevEntry = prev[index];
-        const prevFile = prevEntry.file as FileWithMetadata;
-        
-        // Create a new file object with updated metadata (File objects can't be cloned, so we mutate the existing one)
-        // but create a new entry object to ensure React detects the change
-        const nextFile = prevFile;
-        nextFile.metadata = { ...updatedMetadata };
-        if (updatedDescription) {
-          nextFile.detailed_description = updatedDescription;
-        }
-        if (typeof updatedMetadata.category === 'string') {
-          nextFile.category = updatedMetadata.category;
-        }
-        if (typeof updatedMetadata.item_type === 'string') {
-          nextFile.item_type = updatedMetadata.item_type;
-        }
-        if (typeof updatedMetadata.brand === 'string') {
-          nextFile.brand = updatedMetadata.brand;
-        }
-
-        const fallbackItemType =
-          typeof updatedMetadata.item_type === 'string'
-            ? updatedMetadata.item_type
-            : analysisMeta?.item_type ||
-              (updatedDescription
-                ? updatedDescription.split(/\s+/).slice(0, 4).join(' ')
-                : '');
-        const normalizedTags = Array.isArray(updatedMetadata.tags)
-          ? updatedMetadata.tags.filter((tag): tag is string => typeof tag === 'string')
-          : analysisMeta?.tags || [];
-        const nextCategory =
-          typeof updatedMetadata.category === 'string'
-            ? updatedMetadata.category
-            : analysisMeta?.category || analysisMeta?.body_region || 'unknown';
-
-        let updatedAnalysis: AnalyzedItem;
-        if (prevEntry.analysis?.analysis) {
-          // Create a new analysis object with updated fields
-          const newAnalysis = { 
-            ...prevEntry.analysis.analysis,
-          };
-          // Always update description fields when updatedDescription is provided
-          if (updatedDescription) {
-            newAnalysis.description = updatedDescription;
-            newAnalysis.short_description = updatedDescription;
-            newAnalysis.detailed_description = updatedDescription;
-          }
-          if (fallbackItemType) newAnalysis.item_type = fallbackItemType;
-          newAnalysis.category = nextCategory;
-          newAnalysis.body_region = newAnalysis.body_region || nextCategory;
-          newAnalysis.tags = normalizedTags;
-          newAnalysis.metadata = { ...(newAnalysis.metadata || {}), ...updatedMetadata };
-          if (typeof updatedMetadata.color === 'string') newAnalysis.color = updatedMetadata.color;
-          if (typeof updatedMetadata.style === 'string') newAnalysis.style = updatedMetadata.style;
-          if (typeof updatedMetadata.brand === 'string') newAnalysis.brand = updatedMetadata.brand;
-          
-          updatedAnalysis = { 
-            ...prevEntry.analysis, 
-            analysis: newAnalysis, 
-            status: 'success' as const 
-          };
-        } else {
-          updatedAnalysis = {
-            index,
-            original_filename:
-              prevEntry.analysis?.original_filename || prevEntry.file.name,
-            analysis: {
-              body_region: nextCategory,
-              category: nextCategory,
-              item_type: fallbackItemType || undefined,
-              brand:
-                typeof updatedMetadata.brand === 'string'
-                  ? updatedMetadata.brand
-                  : analysisMeta?.brand || undefined,
-              short_description: updatedDescription || undefined,
-              description: updatedDescription || undefined,
-              detailed_description: updatedDescription || undefined,
-              suggested_filename:
-                prevEntry.analysis?.analysis?.suggested_filename ||
-                prevEntry.analysis?.saved_filename ||
-                prevEntry.file.name,
-              color:
-                typeof updatedMetadata.color === 'string'
-                  ? updatedMetadata.color
-                  : analysisMeta?.color || undefined,
-              style:
-                typeof updatedMetadata.style === 'string'
-                  ? updatedMetadata.style
-                  : analysisMeta?.style || undefined,
-              tags: normalizedTags,
-              metadata: { ...updatedMetadata },
-            },
-            file_url: prevEntry.analysis?.file_url,
-            saved_filename: prevEntry.analysis?.saved_filename,
-            storage_path: prevEntry.analysis?.storage_path,
-            status: 'success' as const,
-          };
-        }
-
-        // Create a completely new entry object to ensure React detects the change
-        next[index] = { 
-          file: nextFile, 
-          analysis: updatedAnalysis,
-          clothingItemId: prevEntry.clothingItemId
-        };
-        return next;
-      });
-
-      const clothingItemId = entry.clothingItemId || fileMeta.clothing_item_id;
-      let persistFailure: unknown = null;
-      if (clothingItemId) {
-        const resolvedTags = Array.isArray(updatedMetadata.tags)
-          ? updatedMetadata.tags.filter((tag): tag is string => typeof tag === 'string')
-          : analysisMeta?.tags || [];
-        const resolvedCategory =
-          typeof updatedMetadata.category === 'string'
-            ? updatedMetadata.category
-            : analysisMeta?.category || analysisMeta?.body_region || null;
-        const resolvedSubcategory =
-          typeof updatedMetadata.subcategory === 'string'
-            ? updatedMetadata.subcategory
-            : typeof updatedMetadata.item_type === 'string'
-            ? updatedMetadata.item_type
-            : analysisMeta?.item_type || null;
-        const resolvedColor =
-          typeof updatedMetadata.color === 'string' ? updatedMetadata.color : analysisMeta?.color || null;
-        const resolvedStyle =
-          typeof updatedMetadata.style === 'string' ? updatedMetadata.style : analysisMeta?.style || null;
-        const resolvedBrand =
-          typeof updatedMetadata.brand === 'string' ? updatedMetadata.brand : analysisMeta?.brand || null;
-
-        try {
-          await httpClient.patch(`/api/my/clothing-items/${clothingItemId}`, {
-            description: updatedDescription || baseDescription,
-            category: resolvedCategory,
-            subcategory: resolvedSubcategory,
-            color: resolvedColor,
-            style: resolvedStyle,
-            brand: resolvedBrand,
-            tags: resolvedTags,
-          });
-        } catch (persistError) {
-          console.warn("Failed to persist adjusted description", persistError);
-          persistFailure = persistError;
-        }
-      }
-
-      setBlockedWardrobeIndices(prev => {
-        if (prev.size === 0) return prev;
-        const next = new Set(prev);
-        next.delete(index);
-        return next;
-      });
-      setAdjustDescriptionFeedback(prev => {
-        const next = new Map(prev);
-        if (persistFailure) {
-          next.set(index, {
-            tone: 'warning',
-            message: 'Updated locally, but failed to save. Try again.',
-          });
-        } else {
-          next.set(index, {
-            tone: 'success',
-            message: 'Description updated.',
-          });
-        }
-        return next;
-      });
-    } catch (error) {
-      console.error("Failed to adjust description", error);
-      setError("Could not adjust the description. Please try again.");
-      setAdjustDescriptionFeedback(prev => {
-        const next = new Map(prev);
-        next.set(index, {
-          tone: 'error',
-          message: 'Adjustment failed. Please try again.',
-        });
-        return next;
-      });
-    } finally {
-      setAdjustingDescriptionIndices(prev => {
-        if (prev.size === 0) return prev;
-        const next = new Set(prev);
-        next.delete(index);
-        return next;
-      });
-    }
-  }, [getBackendApiUrl, getBackendAuthHeaders, isAuthenticated, lastSafetyBlockDetail, requireAuth, wardrobeItems]);
 
   // Handler for "Try On Any URL" feature - when a product is scraped from a URL
   const handleProductScraped = useCallback(async (
@@ -1666,9 +1219,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       // Clear existing items to make room
       setWardrobeItems([]);
       setBlockedWardrobeIndices(new Set());
-      setAdjustingDescriptionIndices(new Set());
-      setLastSafetyBlockDetail(null);
-      setAdjustDescriptionFeedback(new Map());
     }
 
     // Create analysis object from scraped product data
@@ -1781,29 +1331,60 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     return 'upper_body';
   }, []);
 
+  const prepareSelectedPhotos = useCallback(async (files: File[]) => {
+    if (photoPreparationRef.current || !photoPreparationMountedRef.current) return null;
+    photoPreparationRef.current = true;
+    const controller = new AbortController();
+    photoPreparationControllerRef.current = controller;
+    const isCurrent = () => photoPreparationMountedRef.current &&
+      photoPreparationControllerRef.current === controller && !controller.signal.aborted;
+    setError(null);
+    try {
+      const prepared = await prepareTryOnImageFiles(files, (current, total) => {
+        if (isCurrent()) setPhotoPreparationProgress(`Preparing photo ${current} of ${total} on this device…`);
+      }, controller.signal);
+      return isCurrent() ? prepared : null;
+    } catch {
+      if (isCurrent()) setError(PHOTO_PREPARATION_ERROR);
+      return null;
+    } finally {
+      if (photoPreparationControllerRef.current === controller) {
+        photoPreparationControllerRef.current = null;
+        photoPreparationRef.current = false;
+        if (photoPreparationMountedRef.current) setPhotoPreparationProgress(null);
+      }
+    }
+  }, []);
+
   const handleSelfFilesSelected = useCallback(
-    (fileList: FileList | null) => {
+    async (fileList: FileList | null) => {
       const files = Array.from(fileList || [])
-        .filter((file) => file.type.startsWith('image/'))
+        .filter((file) => file.type.startsWith('image/') || /\.(heic|heif)$/i.test(file.name))
         .slice(0, 5);
-      if (files.length === 0) return;
+      if (files.length === 0) { if (fileList?.length) setError('Choose a JPG, PNG, WebP or HEIC photo.'); return; }
+      if (files.some(f => f.size > 10 * 1024 * 1024)) { setError('Each photo must be 10 MB or smaller.'); return; }
       if (!requireAuth()) return;
-      updateUserImagesAndPreprocess(files);
+      const prepared = await prepareSelectedPhotos(files);
+      if (prepared && photoPreparationMountedRef.current) updateUserImagesAndPreprocess(prepared);
     },
-    [requireAuth, updateUserImagesAndPreprocess]
+    [prepareSelectedPhotos, requireAuth, updateUserImagesAndPreprocess]
   );
 
   const handleWardrobeFilesSelected = useCallback(
-    (fileList: FileList | null) => {
+    async (fileList: FileList | null) => {
       const remainingSlots = Math.max(0, 5 - wardrobeItems.length);
-      const shouldReplace = remainingSlots === 0;
-      const limit = shouldReplace ? 5 : remainingSlots;
+      const shouldReplace = false;
+      if (remainingSlots === 0) { setError('Remove an item before adding another. A look can contain up to five garments.'); return; }
+      const limit = remainingSlots;
       const files = Array.from(fileList || [])
-        .filter((file) => file.type.startsWith('image/'))
+        .filter((file) => file.type.startsWith('image/') || /\.(heic|heif)$/i.test(file.name))
         .slice(0, limit);
-      if (files.length === 0) return;
+      if (files.length === 0) { if (fileList?.length) setError('Choose a JPG, PNG, WebP or HEIC photo.'); return; }
+      if (files.some(f => f.size > 10 * 1024 * 1024)) { setError('Each photo must be 10 MB or smaller.'); return; }
       if (!requireAuth()) return;
-      const analyses = files.map((file, index) =>
+      const prepared = await prepareSelectedPhotos(files);
+      if (!prepared || !photoPreparationMountedRef.current) return;
+      const analyses = prepared.map((file, index) =>
         createPreviewAnalysis(
           file,
           shouldReplace ? index : wardrobeItems.length + index,
@@ -1812,13 +1393,14 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         )
       );
       setError(null);
-      handleBulkUpload(files, analyses, shouldReplace);
+      handleBulkUpload(prepared, analyses, shouldReplace);
     },
-    [createPreviewAnalysis, handleBulkUpload, inferPreviewCategory, requireAuth, wardrobeItems.length]
+    [createPreviewAnalysis, handleBulkUpload, inferPreviewCategory, prepareSelectedPhotos, requireAuth, wardrobeItems.length]
   );
 
   const handleSampleModelSelect = useCallback(
     async (sample: (typeof PREVIEW_SAMPLE_MODELS)[number]) => {
+      if (photoPreparationRef.current) return;
       if (!requireAuth()) return;
       try {
         const file = await loadPublicAssetAsFile(sample.src, sample.filename);
@@ -1833,6 +1415,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
   const handleWardrobePreviewSelect = useCallback(
     async (item: (typeof PREVIEW_WARDROBE_ITEMS)[number]) => {
+      if (photoPreparationRef.current) return;
       if (!requireAuth()) return;
       try {
         const file = await loadPublicAssetAsFile(item.src, item.filename);
@@ -1840,8 +1423,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         setError(null);
         setWardrobeItems([{ file, analysis }]);
         setBlockedWardrobeIndices(new Set());
-        setAdjustingDescriptionIndices(new Set());
-        setAdjustDescriptionFeedback(new Map());
       } catch (selectError) {
         console.error('Failed to select wardrobe preview item', selectError);
         setError('Could not load that wardrobe item. Please upload one instead.');
@@ -1961,9 +1542,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       const entry = await createWardrobeEntryFromSavedItem(item);
       if (replaceAll) {
         setBlockedWardrobeIndices(new Set());
-        setAdjustingDescriptionIndices(new Set());
-        setLastSafetyBlockDetail(null);
-        setAdjustDescriptionFeedback(new Map());
       }
       setWardrobeItems((prev) => (replaceAll ? [entry] : [...prev, entry]));
     },
@@ -2020,47 +1598,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     setShowWardrobeLimitModal(false);
   }, []);
 
-  // Save outfit to My Outfits (persistent storage via API)
-  const saveOutfitToMyOutfits = async (imageUrl: string, clothingFiles: File[], wardrobeItemsData: typeof wardrobeItems) => {
-    try {
-      const clothingItems = wardrobeItemsData.map((item, _idx) => ({
-        filename: item.file.name,
-        category: item.analysis?.analysis?.category || item.analysis?.analysis?.body_region || 'unknown',
-        itemType: item.analysis?.analysis?.item_type || '',
-        color: item.analysis?.analysis?.color || '',
-        style: item.analysis?.analysis?.style || '',
-        description: item.analysis?.analysis?.description || item.analysis?.analysis?.short_description || '',
-        tags: item.analysis?.analysis?.tags || [],
-        fileUrl: (item.file as FileWithMetadata)?.file_url || null,
-      }));
-
-      // Save to database via API
-      const response = await httpClient.post('/api/my/outfits', {
-        imageUrl,
-        clothingItems,
-      });
-
-      // Dispatch custom event to notify MyOutfits component to refresh
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('outfitSaved'));
-      }
-      
-      logger.info('outfit_saved', {
-        outfitId: response.data?.id,
-      });
-    } catch (error: unknown) {
-      const err =
-        typeof error === 'object' && error !== null
-          ? (error as { response?: { status?: number }; message?: string })
-          : { message: String(error) };
-      console.error('Error saving outfit to My Outfits:', err.message || err);
-      // Don't throw - this is non-critical, but log for debugging
-      if (err.response?.status === 401) {
-        console.warn('User not authenticated, outfit not saved');
-      }
-    }
-  };
-
   const applyPitchDemoResult = useCallback(
     async (requestId: string | null) => {
       await new Promise((resolve) => setTimeout(resolve, 900));
@@ -2071,8 +1608,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
       setModestyApplied(false);
       setBlockedWardrobeIndices(new Set());
-      setLastSafetyBlockDetail(null);
-      setAdjustDescriptionFeedback(new Map());
       setGeneratedImage(null);
       setProducts(getDemoTryOnProducts());
       setProductSearchAttempted(true);
@@ -2100,6 +1635,10 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   );
 
   const handleGenerate = async () => {
+    if (photoPreparationRef.current) {
+      setError('Please wait for your photos to finish preparing.');
+      return;
+    }
     logger.info("tryon_generate_requested", {
       userImagesCount: userImages.length,
       wardrobeItems: wardrobeItems.length,
@@ -2128,6 +1667,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       return;
     }
 
+    if (billing?.isFrozen) { router.push('/billing'); return; }
     if (lacksCredits) {
       redirectToPricing();
       return;
@@ -2181,7 +1721,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     // Reset state for new generation
     creditLoggedRef.current = false;
     trialConsumedRef.current = false;
-    creditHoldAppliedRef.current = false;
     if (resultImageLoadTimerRef.current) {
       clearTimeout(resultImageLoadTimerRef.current);
       resultImageLoadTimerRef.current = null;
@@ -2220,7 +1759,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     let preparedTryOnFiles: File[] = [];
 
     let requestId: string | null = null;
-    let usedFreeTrialForRequest = false;
 
     try {
       const ingestUrl = process.env.NEXT_PUBLIC_INGEST_URL;
@@ -2266,17 +1804,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       }
       logger.info("tryon_backend_selected", { apiUrl: API_URL });
       
-      // Wake up Render service first (health check)
-      logger.info("tryon_backend_wakeup_started");
-      try {
-        const healthCheck = await httpClient.get(`${API_URL}/`, { timeout: 180000 }); // 3 minutes
-        logger.info("tryon_backend_wakeup_succeeded", { status: healthCheck.status });
-      } catch (wakeError: unknown) {
-        const error = wakeError instanceof Error ? wakeError : new Error(String(wakeError));
-        console.warn("Health check failed (service may be waking up):", error.message);
-        // Continue anyway - service might still be waking up
-      }
-
       // Step 1: Call Try-On API (sequential execution - must succeed before product search)
       let tryOnRes;
       try {
@@ -2310,15 +1837,14 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           tryOnFormData.append('user_images', img);
         });
         
-        // Also append the first one as 'user_image' for backward compatibility
-        if (modelImagesForRequest.length > 0) {
-           tryOnFormData.append('user_image', modelImagesForRequest[0]);
-        }
-
-      // Send main reference index (current first image after any reordering)
-      tryOnFormData.append('main_index', '0');
-
         preparedTryOnFiles = activeWardrobeItems.map(item => item.file);
+        // Reject oversized photo sets before issuing a job or sending private images.
+        const setting = Number(process.env.NEXT_PUBLIC_TRYON_MAX_UPLOAD_MIB || 30);
+        const maxMiB = Number.isInteger(setting) && setting > 0 && setting <= 50 ? setting : 30;
+        const uploadBytes = [...modelImagesForRequest, ...preparedTryOnFiles].reduce((sum, photo) => sum + photo.size, 0);
+        if (uploadBytes > maxMiB * 1024 * 1024) {
+          throw new Error(`These photos exceed the ${maxMiB} MiB combined upload limit. Choose fewer or smaller photos. No credit was used.`);
+        }
 
         setLastRequestId(requestId);
         captureEvent(ANALYTICS_EVENTS.TRY_ON_ATTEMPT, {
@@ -2341,49 +1867,28 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         
         logger.info("tryon_uploads_prepared", { itemCount: preparedTryOnFiles.length });
 
-        tryOnFormData.append('requestId', requestId);
-        tryOnFormData.append('quality', 'standard');
-
-        // Step 1a: Place a credit hold (Next.js API) before the long-running Render request.
-        // This ensures credits decrement immediately and are recorded server-side.
+        // The web service issues a short-lived opaque intent. Render consumes it once
+        // using the authenticated subject and settles after a usable result is persisted.
         try {
-          const holdRes = await httpClient.post(
-            '/api/try-on/hold',
-            { requestId, quality: 'standard' },
-            { headers: { ...(requestId ? { 'X-Request-Id': requestId } : {}) } }
-          );
-          creditHoldAppliedRef.current = Boolean(holdRes?.data?.creditHoldApplied);
-          const creditsAvailable = holdRes?.data?.creditsAvailable;
-          const usedFreeTrial = Boolean(holdRes?.data?.usedFreeTrial);
-          const unlimitedCredits = Boolean(holdRes?.data?.unlimitedCredits);
-          usedFreeTrialForRequest = usedFreeTrial;
-          setIsPreviewResult(usedFreeTrial);
-          if (typeof creditsAvailable === 'number') {
-            setBilling((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    creditsAvailable,
-                    unlimitedCredits: prev.unlimitedCredits || unlimitedCredits,
-                    isPrivileged: prev.isPrivileged || unlimitedCredits,
-                  }
-                : prev
-            );
-          }
-          if (usedFreeTrial && billing && !isBypass) {
-            setBilling((prev) => (prev ? { ...prev, trialsRemaining: Math.max(0, prev.trialsRemaining - 1) } : prev));
-          }
+          const issued = await httpClient.post('/api/try-on/hold', { expectedFunding: isBypass ? 'included' : isOnTrial ? 'trial' : 'credits' });
+          requestId = issued.data?.requestId;
+          if (typeof requestId !== 'string') throw new Error('Could not authorize generation.');
+          setLastRequestId(requestId);
         } catch (holdErr: unknown) {
           // If user has no credits, this endpoint returns 402 + { error: 'no_credits' }
           const h = holdErr as {
             response?: { status?: number; data?: { error?: string; creditsAvailable?: number } };
           };
           if (h.response?.status === 402 || h.response?.data?.error === 'no_credits') {
-            redirectToPricing();
+            if (h.response?.data?.error === 'account_frozen') router.push('/billing'); else redirectToPricing();
             setIsTryOnLoading(false);
             setIsGenerating(false);
             console.error = originalError;
             return;
+          }
+          if (h.response?.data?.error === "quote_changed") {
+            void fetchBilling();
+            throw new Error("Your available trial or credits changed. Review your refreshed balance before trying again.");
           }
           throw holdErr;
         }
@@ -2549,20 +2054,15 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           timestamp: Date.now(),
         });
         const backendAuthHeaders = await getBackendAuthHeaders();
-        tryOnRes = await withRetry(
-          () =>
-            httpClient.post(`${API_URL}/api/try-on`, tryOnFormData, {
-              headers: {
-                'Content-Type': 'multipart/form-data',
-                ...(requestId ? { 'X-Request-Id': requestId } : {}),
-                ...backendAuthHeaders,
-              },
-              timeout: 600000, // 10 minutes for Render wake-up + VTON generation
-              signal: controller.signal,
-            }),
-          1,
-          2000
-        );
+        tryOnRes = await httpClient.post(`${API_URL}/api/try-on`, tryOnFormData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+            'X-Request-Id': requestId,
+            ...backendAuthHeaders,
+          },
+          timeout: 550000,
+          signal: controller.signal,
+        });
         logIngest({
           event: 'try_on_request_succeeded',
           data: {
@@ -2572,27 +2072,13 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           timestamp: Date.now(),
         });
 
-        // Render stack does not manage billing; keep preview state from the hold call above.
-        // (If Render happens to return usedFreeTrial, we still respect it.)
-        setIsPreviewResult(Boolean(tryOnRes?.data?.usedFreeTrial) || isPreviewResult);
+        setIsPreviewResult(Boolean(tryOnRes.data.usedFreeTrial));
         setModestyApplied(Boolean(tryOnRes?.data?.modesty_applied));
         setBlockedWardrobeIndices(new Set());
-        setLastSafetyBlockDetail(null);
 
         if (tryOnRes.data.image_url) {
-          // Reset content-block warning state after a successful generation
-          contentBlockWarnedRef.current = false;
-          const imageUrl = normalizeTryOnResultImageUrl(tryOnRes.data.image_url, API_URL);
-          if (!imageUrl) {
-            logger.error("tryon_invalid_image_url", {
-              requestId,
-              rawImageUrl: tryOnRes.data.image_url,
-            });
-            throw new Error(
-              "The try-on service returned an invalid image URL. Please try again."
-            );
-          }
-          
+          if (tryOnRes.data.job_id !== requestId) throw new Error('Unexpected generation result.');
+          const imageUrl = new URL(`/api/try-on/jobs/${requestId}/result`, window.location.origin).href;
           captureEvent(ANALYTICS_EVENTS.TRY_ON_SUCCESS, {
             request_id: requestId,
             used_free_trial: Boolean(tryOnRes?.data?.usedFreeTrial),
@@ -2612,12 +2098,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           const finalImageUrl = addImageCacheBust(imageUrl);
           
           // Force state update by setting to null first, then to new URL
-          // Finalize the hold for audit purposes (idempotent; does not change visible balance).
-          if (creditHoldAppliedRef.current && requestId) {
-            httpClient
-              .post('/api/try-on/finalize', { requestId })
-              .catch((e) => console.warn('Failed to finalize credit hold', e));
-          }
           if (resultImageLoadTimerRef.current) {
             clearTimeout(resultImageLoadTimerRef.current);
             resultImageLoadTimerRef.current = null;
@@ -2632,23 +2112,11 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             logger.info("tryon_completed", { requestId });
           });
           
-          if (myOutfitsEnabled) {
-            saveOutfitToMyOutfits(imageUrl, preparedTryOnFiles, wardrobeItems);
+          if (tryOnRes.data.usedFreeTrial) {
+            trialConsumedRef.current = true;
+            trackTrialConsumed(requestId || undefined);
           }
-          
-          // Mark trial as used if backend reported free trial consumption (idempotent)
-          if (!isBypass && (usedFreeTrialForRequest || Boolean(tryOnRes?.data?.usedFreeTrial))) {
-            try {
-              await httpClient.post('/api/my/trial/consume');
-          trialConsumedRef.current = true;
-          setBilling((prev) => (prev ? { ...prev, trialsRemaining: Math.max(0, prev.trialsRemaining - 1) } : prev));
-          // Track trial consumption for n8n automation
-          trackTrialConsumed(requestId || undefined);
-            } catch (consumeErr) {
-              console.warn('Failed to mark trial consumed client-side', consumeErr);
-            }
-          }
-
+          void loadRecentLooks();
           // Track outfit generation for n8n automation
           trackOutfitGenerated(requestId || '', preparedTryOnFiles.length);
 
@@ -2673,14 +2141,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           timestamp: Date.now(),
         });
         if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
-          try {
-            if (requestId) {
-              await httpClient.post('/api/try-on/cancel', { requestId });
-            }
-          } catch {
-            // ignore
-          }
-          setError('Operation cancelled');
+          setError('You stopped waiting. A completed look can be reopened below for 24 hours. Failed generations are refunded.');
           setIsTryOnLoading(false);
           setIsGenerating(false);
           console.error = originalError;
@@ -2689,105 +2150,29 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         
         // Handle no credits error
         if (error.response?.status === 402 || error.response?.data?.error === 'no_credits') {
-          redirectToPricing();
+          if ([error.response?.data?.detail, error.response?.data?.error].includes('account_frozen')) router.push('/billing'); else redirectToPricing();
           setIsTryOnLoading(false);
           setIsGenerating(false);
           console.error = originalError;
           return;
         }
 
-        // On non-cancel failure, release the hold so the user gets credits back.
-        if (creditHoldAppliedRef.current && requestId) {
-          try {
-            await httpClient.post('/api/try-on/cancel', { requestId });
-          } catch (releaseErr) {
-            console.warn('Failed to release credit hold after try-on failure', releaseErr);
-          }
-        }
-
+        void fetchBilling();
         const detail = error.response?.data?.detail || error.response?.data?.error || '';
         const detailText = typeof detail === 'string' ? detail : '';
         const status = error.response?.status;
         const looksLikeBlockedByPolicy =
           /blocked|safety filter|image_safety|content/i.test(detailText.toLowerCase());
-        const looksLikeNoImageAfterRetries =
-          /no image generated after\s*\d+\s*attempts/i.test(detailText) ||
-          /finish reason:\s*image_/i.test(detailText);
-
-        // Some backend failures currently surface as 500 with the "No image generated after 4 attempts..."
-        // string. Treat those as content blocks for the warning/penalty flow as well.
-        const isContentBlocked =
-          (status === 422 || status === 500) &&
-          (looksLikeBlockedByPolicy || looksLikeNoImageAfterRetries);
-
-        if (isContentBlocked) {
+        if (status === 422 && looksLikeBlockedByPolicy) {
           setBlockedWardrobeIndices(new Set(activeWardrobeItems.map((_, idx) => idx)));
-          setAdjustDescriptionFeedback(new Map());
-          if (detailText) {
-            setLastSafetyBlockDetail(detailText);
-          } else if (typeof error?.message === 'string') {
-            setLastSafetyBlockDetail(error.message);
-          }
-          // First content-block after backend automatic retries: warn user.
-          if (!contentBlockWarnedRef.current) {
-            contentBlockWarnedRef.current = true;
-            setError(
-              "Your try-on was blocked by content safety filters (after automatic retries). " +
-                "Please choose a more modest item or adjust the clothing description. " +
-                (isBypass
-                  ? "Your account will not be charged credits for retrying."
-                  : "Warning: if your next attempt is blocked again for the same reason, 1 credit will be deducted.")
-            );
-            setIsTryOnLoading(false);
-            setIsGenerating(false);
-            console.error = originalError;
-            return;
-          }
-
-          // Second (or later) blocked attempt after warning: apply 1-credit penalty (idempotent by requestId).
-          try {
-            let charged = false;
-            if (!isBypass && requestId) {
-              const penaltyRes = await httpClient.post('/api/my/credits/content-block-penalty', { requestId });
-              charged = Boolean(penaltyRes?.data?.charged);
-              const creditsAvailable = penaltyRes?.data?.creditsAvailable;
-              if (typeof creditsAvailable === 'number') {
-                setBilling((prev) => (prev ? { ...prev, creditsAvailable } : prev));
-              } else {
-                // Fallback to a refresh
-                if (isSignedInReady) fetchBilling();
-              }
-            }
-            setError(
-              "Your try-on was blocked again by content safety filters. " +
-                (charged
-                  ? "1 credit has been deducted. "
-                  : "No credits were deducted. ") +
-                "Please choose a different (more modest) item or adjust the description and try again."
-            );
-          } catch (penaltyErr: unknown) {
-            const pErr = penaltyErr as { response?: { status?: number; data?: { error?: string } } };
-            if (pErr.response?.status === 402 || pErr.response?.data?.error === 'no_credits') {
-              redirectToPricing();
-            } else {
-              setError(
-                "Your try-on was blocked again by content safety filters. " +
-                  "We could not apply the credit deduction automatically—please refresh and try again."
-              );
-            }
-          } finally {
-            setIsTryOnLoading(false);
-            setIsGenerating(false);
-            console.error = originalError;
-          }
+          setError('This image was blocked by safety filters. Your credit or free trial is restored. Choose another photo or garment.');
+          setIsTryOnLoading(false);
+          setIsGenerating(false);
+          console.error = originalError;
           return;
         }
-        
-        console.error("Error in try-on:", tryOnError);
-        // Log full error response for debugging
-        if (error.response?.data) {
-          console.error("Full error response:", JSON.stringify(error.response.data, null, 2));
-        }
+
+        logger.warn("tryon_failed", { requestId, status: error.response?.status });
         const errorMessage = error.code === 'ECONNABORTED' || error.message?.includes('timeout')
           ? `The try-on is taking longer than expected. This usually means our servers are busy. Please try again in a few moments.`
           : error.response?.data?.detail || error.response?.data?.error || error.message || "We couldn't generate your try-on. Please check your photos and try again.";
@@ -2798,6 +2183,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         return; // Stop execution if try-on fails
       }
 
+      // Identifying a garment shares its photo separately from the try-on.
+      if (!shoppingMatchesEnabled || !findShoppingMatches) return;
       // Step 2: Call Identify & Shop API (only if try-on succeeded)
       try {
         setIsProductSearchLoading(true);
@@ -2815,12 +2202,11 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         const analysisRes = await withRetry(
           () =>
             httpClient.post(`${API_URL}/api/identify-products`, identifyFormData, {
-              headers: { 'Content-Type': 'multipart/form-data', ...identifyAuthHeaders },
+              headers: { 'Content-Type': 'multipart/form-data', ...identifyAuthHeaders, 'X-Request-Id': requestId },
               timeout: 600000, // 10 minutes for Render wake-up + Gemini processing
               signal: controller.signal,
             }),
-          1,
-          2000
+          0
         );
         
         const searchQueryRaw =
@@ -2865,12 +2251,11 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           const shopRes = await withRetry(
             () =>
               httpClient.post(`${API_URL}/api/shop`, shopFormData, {
-                headers: { 'Content-Type': 'multipart/form-data', ...shopAuthHeaders },
+                headers: { 'Content-Type': 'multipart/form-data', ...shopAuthHeaders, 'X-Request-Id': requestId },
                 timeout: 60000, // 1 minute for product search
                 signal: controller.signal,
               }),
-            1,
-            1500
+            0
           );
           
           const results = Array.isArray(shopRes.data?.results)
@@ -2917,7 +2302,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     } catch (err: unknown) {
       const error = err as { name?: string; code?: string; response?: { status?: number; data?: { detail?: string } }; message?: string };
       if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
-        setError('Operation cancelled');
+        setError('Stopped waiting. Check your recent looks before trying again.');
         setIsTryOnLoading(false);
         setIsGenerating(false);
         console.error = originalError;
@@ -2926,7 +2311,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       console.error("Unexpected error:", err);
       
       if (error.response?.status === 429) {
-        setError("Wow, we're experiencing high demand right now! You've been placed in a brief queue. Please try again in a moment.");
+        setError("The fitting room is busy. Please try again in a moment.");
       } else if (error.response?.status === 500 || error.response?.status === 503 || error.response?.status === 502) {
         setError("Our AI servers are currently processing a high volume of requests. Please wait a few moments and try again.");
       } else if (error.response?.status === 0 || error.message?.includes('Network Error') || error.code === 'ERR_NETWORK') {
@@ -2981,7 +2366,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
               className="hidden items-center gap-2 text-sm font-semibold text-[#008b8b] sm:flex"
             >
               <Sparkles size={19} fill="#008b8b" strokeWidth={1.6} />
-              {isBypass ? 'Unlimited' : `${billing?.creditsAvailable ?? 120} Credits`}
+              {isBypass ? 'Unlimited' : billing ? `${billing.creditsAvailable} Credits` : (isAuthenticated ? 'Loading balance…' : 'Pricing')}
             </Link>
             <div className="hidden h-8 w-px bg-slate-200 sm:block" />
             {isAuthenticated ? (
@@ -3044,9 +2429,14 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
               Virtual Try-On Studio
             </h1>
             <p className="mt-4 text-lg leading-7 text-slate-600">
-              See it on you. Shop with confidence.
+              Try up to five garments on your photo. This is a visual preview, not a size or fit measurement.
             </p>
 
+            {backendAvailability === 'unavailable' && (
+              <p className="mt-3 text-sm text-amber-800" role="status">The try-on service is warming up or offline. <button type="button" className="underline" onClick={() => setHealthAttempt(n => n + 1)}>Retry connection</button></p>
+            )}
+            {error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>}
+            {photoPreparationProgress && <p role="status" className="mt-3 text-sm text-slate-600">{photoPreparationProgress}</p>}
             {actionFeedback && (
               <div
                 role="status"
@@ -3071,7 +2461,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#101720] text-sm font-bold text-white shadow-[0_10px_20px_rgba(15,23,42,0.18)]">
                       1
                     </span>
-                    Upload Yourself
+                    Choose your photo
                   </h2>
                 </div>
 
@@ -3079,10 +2469,11 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   ref={selfUploadInputRef}
                   className="sr-only"
                   type="file"
-                  accept="image/*"
+                  accept="image/*,.heic,.heif"
                   multiple
+                  disabled={Boolean(photoPreparationProgress) || isGenerating}
                   onChange={(event) => {
-                    handleSelfFilesSelected(event.currentTarget.files);
+                    void handleSelfFilesSelected(event.currentTarget.files);
                     event.currentTarget.value = '';
                   }}
                 />
@@ -3091,6 +2482,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   <button
                     type="button"
                     onClick={() => selfUploadInputRef.current?.click()}
+                    disabled={Boolean(photoPreparationProgress)}
                     className="group relative flex min-h-[158px] flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-white text-center transition-colors hover:border-[#6b35f4] hover:bg-[#f8f6ff]"
                   >
                     {userPreviewUrls[0] ? (
@@ -3129,6 +2521,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                           key={sample.filename}
                           type="button"
                           onClick={() => void handleSampleModelSelect(sample)}
+                          disabled={Boolean(photoPreparationProgress)}
                           className="relative aspect-[0.8] overflow-hidden rounded-lg border border-slate-200 bg-slate-50 transition-all hover:border-[#6b35f4] hover:shadow-[0_8px_20px_rgba(107,53,244,0.16)]"
                           aria-label={`Choose ${sample.label}`}
                         >
@@ -3149,11 +2542,12 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 <div className="mt-4 flex items-center justify-between gap-4 text-sm">
                   <span className="flex items-center gap-2 text-slate-500">
                     <CheckCircle2 size={17} className="text-[#12a7a2]" />
-                    <span>Photo looks good</span>
+                    <span>{userImages.length ? `${userImages.length} photo(s) selected` : 'Choose a photo to start'}</span>
                   </span>
                   <button
                     type="button"
                     onClick={() => selfUploadInputRef.current?.click()}
+                    disabled={Boolean(photoPreparationProgress)}
                     className="font-semibold text-[#6b35f4] transition-colors hover:text-[#4c24c8]"
                   >
                     Change
@@ -3166,10 +2560,11 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   ref={wardrobeUploadInputRef}
                   className="sr-only"
                   type="file"
-                  accept="image/*"
+                  accept="image/*,.heic,.heif"
                   multiple
+                  disabled={Boolean(photoPreparationProgress) || isGenerating}
                   onChange={(event) => {
-                    handleWardrobeFilesSelected(event.currentTarget.files);
+                    void handleWardrobeFilesSelected(event.currentTarget.files);
                     event.currentTarget.value = '';
                   }}
                 />
@@ -3179,13 +2574,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#101720] text-sm font-bold text-white shadow-[0_10px_20px_rgba(15,23,42,0.18)]">
                       2
                     </span>
-                    Choose Wardrobe
+                    Choose garments for this session
                   </h2>
                   <div className="flex items-center gap-3">
-                    <div className="hidden h-9 w-48 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-400 sm:flex">
-                      <Search size={16} />
-                      <span>Search clothing</span>
-                    </div>
                     <button
                       type="button"
                       onClick={() => {
@@ -3238,7 +2629,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                         <button
                           key={`${item.name}-${index}`}
                           type="button"
-                          onClick={() => handleItemRemove(index)}
+                          onClick={() => { if (!photoPreparationRef.current) handleItemRemove(index); }}
+                          disabled={Boolean(photoPreparationProgress)}
                           className={`relative h-[110px] w-[110px] flex-none overflow-hidden rounded-lg border bg-white transition-all ${
                             index === 0
                               ? 'border-[#6b35f4] shadow-[0_0_0_1px_#6b35f4]'
@@ -3259,6 +2651,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                           key={item.filename}
                           type="button"
                           onClick={() => void handleWardrobePreviewSelect(item)}
+                          disabled={Boolean(photoPreparationProgress)}
                           className={`relative h-[110px] w-[110px] flex-none overflow-hidden rounded-lg border bg-white transition-all ${
                             index === 0
                               ? 'border-[#6b35f4] shadow-[0_0_0_1px_#6b35f4]'
@@ -3284,6 +2677,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   <button
                     type="button"
                     onClick={() => wardrobeUploadInputRef.current?.click()}
+                    disabled={Boolean(photoPreparationProgress)}
                     className="flex h-[110px] w-[74px] flex-none items-center justify-center rounded-full border border-slate-200 bg-white text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.12)] transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
                     aria-label="Upload clothing"
                   >
@@ -3292,10 +2686,18 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 </div>
               </section>
 
+              {!isGuestPitchDemo && <div className="space-y-2 text-sm text-slate-700">
+                <p>OpenAI edits your photos for the try-on. If its service is unavailable, Google’s Nano Banana may process them instead. <Link href="/privacy-policy" className="underline">How we use photos</Link></p>
+                {shoppingMatchesEnabled && <label className="flex items-start gap-2">
+                  <input type="checkbox" checked={findShoppingMatches} disabled={isGenerating} onChange={e => setFindShoppingMatches(e.target.checked)} className="mt-1" />
+                  Find similar items after my try-on by sending the garment photo to Google.
+                </label>}
+              </div>}
               <button
                 type="button"
                 onClick={() => {
                   if (isGenerating) return;
+                  if (billing?.isFrozen) { router.push('/billing'); return; }
                   if (lacksCredits) {
                     redirectToPricing();
                     return;
@@ -3306,7 +2708,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                     setIsGenerating(false);
                   });
                 }}
-                disabled={isGenerating}
+                disabled={isGenerating || Boolean(photoPreparationProgress)}
                 className="flex min-h-[54px] w-full items-center justify-center gap-3 rounded-lg bg-[#6b35f4] px-5 text-base font-bold text-white shadow-[0_14px_28px_rgba(107,53,244,0.28)] transition-all hover:bg-[#5c2bdd] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-slate-300"
               >
                 {isGenerating ? (
@@ -3314,10 +2716,10 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 ) : (
                   <Sparkles size={21} fill="currentColor" strokeWidth={1.6} />
                 )}
-                <span>{isGenerating ? 'Generating your look...' : isGuestPitchDemo ? 'Launch demo preview' : 'Try it on'}</span>
+                <span>{photoPreparationProgress ? 'Preparing photos…' : isGenerating ? 'Generating your look...' : isGuestPitchDemo ? 'Launch demo preview' : 'Try it on'}</span>
                 {!isGenerating && (
                   <span className="ml-auto rounded-full bg-[#5528c8] px-4 py-1.5 text-sm font-semibold text-white/90">
-                    {isOnTrial ? 'Free' : '2 Credits'}
+                    {isBypass ? 'Included' : isOnTrial ? 'Free' : '1 credit'}
                   </span>
                 )}
               </button>
@@ -3327,7 +2729,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   onClick={() => abortController?.abort()}
                   className="w-full text-center text-sm font-medium text-slate-500 underline hover:text-[#6b35f4]"
                 >
-                  Cancel
+                  Stop waiting
                 </button>
               )}
             </div>
@@ -3345,7 +2747,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             <div className="flex min-h-[66px] items-center justify-between gap-3 border-b border-white/10 px-5">
               <h2 className="flex items-center gap-2 text-base font-semibold text-white">
                 <Sparkles size={20} className="text-white" fill="white" strokeWidth={1.4} />
-                Virtual Mirror
+                {generatedImage ? 'Your generated look' : 'Sample look'}
               </h2>
               <div className="flex items-center gap-2 text-sm">
                 <button
@@ -3433,28 +2835,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                       <Image src={thumb.src} alt={thumb.alt} fill sizes="84px" className="object-cover" />
                     </button>
                   ))}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (generatedImage && user) {
-                        setIsShopSaveOpen(true);
-                        reportUiAction('mirror_add_look', 'completed', { mode: 'shop_save_modal' });
-                        return;
-                      }
-                      showActionFeedback(
-                        isAuthenticated
-                          ? 'Generate a look first, then you can save it.'
-                          : 'Sign in and generate a look before saving.',
-                        'info',
-                        'mirror_add_look_blocked',
-                        { hasGeneratedImage: Boolean(generatedImage) }
-                      );
-                    }}
-                    className="flex aspect-[0.72] w-full flex-col items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
-                  >
-                    <Plus size={22} />
-                    <span className="text-sm">Add look</span>
-                  </button>
+                  <a href="#recent-looks" className="text-center text-xs font-semibold text-[#6b35f4] underline">Recent looks</a>
                 </div>
               </div>
             </div>
@@ -3462,8 +2843,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             <div className="flex min-h-[72px] items-center justify-between gap-4 px-6">
               <p className="flex items-center gap-2 text-[11px] font-semibold leading-tight text-[#2dd4cf] sm:gap-3 sm:text-base">
                 <Sparkles size={22} fill="#2dd4cf" strokeWidth={1.5} />
-                <span className="hidden sm:inline">Looks great! Ready to shop.</span>
-                <span className="sm:hidden">Ready to shop.</span>
+                <span>{generatedImage ? (isPreviewResult ? 'Watermarked AI-edited trial preview' : 'Your private AI-edited preview') : 'Example only — generate to see your own look.'}</span>
               </p>
               <div className="flex items-center gap-5 text-white/80">
                 <button
@@ -3498,17 +2878,21 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           </section>
         </div>
 
+        {isSignedInReady && (
+          <section id="recent-looks" aria-label="Recent private looks" className="mt-5 rounded-lg border border-slate-200 p-4">
+            <h2 className="font-semibold">Your recent looks</h2>
+            <p className="text-sm text-slate-600">Looks are private and available here for 24 hours. Download a copy to keep it.</p>
+            <button type="button" className="text-sm font-medium underline" onClick={() => void loadRecentLooks()}>Refresh recent looks</button>
+            {historyError && <p role="status">Could not load recent looks. Please refresh this list before generating again.</p>}
+            <ul>{recentLooks.map(look => <li key={look.id}><a className="text-sm underline" href={`/api/try-on/jobs/${look.id}/result`} target="_blank" rel="noreferrer">Open look from {new Date(look.updated_at).toLocaleString()}</a></li>)}</ul>
+          </section>
+        )}
+
         <section id="shop-the-look" className="mt-5 scroll-mt-28 border-t border-slate-200 pt-4">
           <div className="mb-4 flex items-center justify-between gap-4">
             <div className="flex items-baseline gap-4">
-              <h2 className="text-xl font-bold tracking-[-0.02em] text-black">Shop the Look</h2>
-              <button
-                type="button"
-                onClick={handleViewAllProducts}
-                className="text-sm font-semibold text-[#6b35f4] hover:text-[#4c24c8]"
-              >
-                View all
-              </button>
+              <h2 className="text-xl font-bold tracking-[-0.02em] text-black">{products.length ? 'Shop the Look' : 'Example shopping ideas'}</h2>
+
             </div>
             <div className="flex items-center gap-3">
               <button
@@ -3556,7 +2940,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   <h3 className="text-sm font-medium leading-5 text-black">{product.title}</h3>
                     <Heart size={18} className="flex-none text-slate-500" />
                   </div>
-                  <p className="text-sm font-semibold text-black">{product.price}</p>
+                  <p className="text-sm font-semibold text-black">{product.source === 'Preview' ? 'Shopping search idea' : product.price}</p>
                   <a
                     href={product.link}
                     onClick={() => handleProductClick(product)}
@@ -3564,7 +2948,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                     rel="noopener noreferrer"
                     className="mt-4 inline-flex h-9 items-center justify-center whitespace-nowrap rounded-md border border-slate-200 px-3 text-sm font-medium text-slate-600 transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
                   >
-                    View product
+                    {product.source === 'Preview' ? 'Search retailers' : 'View product'}
                   </a>
                 </div>
               </article>
@@ -3671,7 +3055,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
               <div className="min-w-0">
                 <p className="font-semibold text-black text-sm sm:text-base">Free Try-Ons Available!</p>
                 <p className="text-xs sm:text-sm text-slate-600 mt-0.5">
-                  You have {billing.trialsRemaining} free try-on{billing.trialsRemaining !== 1 ? 's' : ''}. Upgrade to get unlimited try-ons with a subscription.
+                  You have {billing.trialsRemaining} free try-on{billing.trialsRemaining !== 1 ? 's' : ''}. View pricing for one-time credit packs.
                 </p>
               </div>
             </div>
@@ -3895,10 +3279,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 onItemRemove={handleItemRemove}
                 onItemReplace={handleItemReplace}
                 blockedItemIndices={blockedWardrobeIndices}
-                adjustingItemIndices={adjustingDescriptionIndices}
-                adjustDescriptionFeedback={adjustDescriptionFeedback}
-                onAdjustDescription={handleAdjustDescription}
-                getBackendAuthHeaders={getBackendAuthHeaders}
                 isAuthenticated={isAuthenticated || pitchDemoEnabled}
                 enableGuestDemo={pitchDemoEnabled}
                 onAuthRequired={requireAuth}
@@ -3934,7 +3314,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                       logger.info("tryon_button_duplicate_ignored");
                       return;
                     }
-                    if (lacksCredits) {
+                    if (billing?.isFrozen) { router.push('/billing'); return; }
+                  if (lacksCredits) {
                       redirectToPricing();
                       return;
                     }
@@ -4021,9 +3402,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 <button
                   onClick={() => abortController?.abort()}
                   className="w-full text-center text-sm text-slate-600 underline hover:text-[#5b46f4]"
-                  aria-label="Cancel operation"
+                  aria-label="Stop waiting for the result"
                 >
-                  Cancel
+                  Stop waiting
                 </button>
               )}
             </div>
@@ -4066,9 +3447,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 <div className="mt-4 rounded-lg border border-white/15 bg-white/10 p-4">
                   <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
                     Share Your Look
-                    <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-medium text-slate-200">
-                      Get 2 free credits
-                    </span>
+
                   </h3>
                   <SocialShareButtons
                     imageUrl={generatedImage}
@@ -4305,6 +3684,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   return;
                 }
                 if (isGenerating) return;
+                if (billing?.isFrozen) { router.push('/billing'); return; }
                 if (lacksCredits) {
                   redirectToPricing();
                   return;

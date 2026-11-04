@@ -36,12 +36,7 @@ async def analyze_garment(image_bytes):
     # Get API key from environment (prefer GEMINI_API_KEY, fallback to GOOGLE_API_KEY)
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        logger.warning("GEMINI_API_KEY or GOOGLE_API_KEY not set. Returning mock data.")
-        return {
-            "search_query": "blue denim jacket",
-            "estimated_price": "50.00",
-            "description": "A classic blue denim jacket.",
-        }
+        return {"error": "Product identification is unavailable"}
 
     try:
         # Convert image to base64 for API request
@@ -116,11 +111,10 @@ async def analyze_garment(image_bytes):
                     if not response.is_success:
                         error_text = response.text
                         logger.warning(
-                            f"Gemini API error (model={model_name}) {response.status_code} - {error_text}"
+                            f"Gemini API error (model={model_name}) {response.status_code}"
                         )
                         last_error = {
                             "error": f"Gemini API error: {response.status_code}",
-                            "details": error_text,
                         }
                         response = None  # Reset response so we know it failed
                         continue
@@ -130,14 +124,14 @@ async def analyze_garment(image_bytes):
                     used_model = model_name
                     break
                 except Exception as e:
-                    logger.warning(f"Error calling Gemini API (model={model_name}): {e}")
-                    last_error = {"error": str(e)}
+                    logger.warning("Garment identification request failed")
+                    last_error = {"error": "Product identification unavailable"}
                     response = None  # Reset response so we know it failed
                     continue
 
             # If all endpoints failed, return error
             if not response:
-                logger.error(f"All Gemini API endpoints failed. Last error: {last_error}")
+                logger.warning("Product identification unavailable")
                 return last_error if last_error else {"error": "All Gemini API endpoints failed"}
             if used_model and preferred_model and used_model != preferred_model:
                 logger.info(
@@ -156,18 +150,18 @@ async def analyze_garment(image_bytes):
 
             if not text:
                 logger.warning(
-                    f"No text in Gemini response. Response: {json.dumps(data, indent=2)}"
+                    "No text in Gemini response"
                 )
-                return {"error": "No text returned from Gemini", "raw": data}
+                return {"error": "No text returned from Gemini"}
 
             # Parse JSON from response
             match = re.search(r"\{.*\}", text, re.DOTALL)
             if match:
                 return json.loads(match.group(0))
             else:
-                logger.warning(f"Could not parse Gemini response as JSON. Raw: {text}")
-                return {"error": "Could not parse Gemini response", "raw": text}
+                logger.warning("Invalid garment identification response")
+                return {"error": "Could not parse Gemini response"}
 
     except Exception as e:
-        logger.error(f"Error analyzing garment: {e}", exc_info=True)
-        return {"error": str(e)}
+        logger.warning("Garment identification failed")
+        return {"error": "Garment identification failed"}

@@ -22,7 +22,7 @@ export default async function FrontrunnerDemoPage({
   );
 
   if (!hasAccess) {
-    const showError = params?.error === "invalid_password";
+    const errorMessage = params?.error === "rate_limited" ? "Too many attempts. Please wait before trying again." : params?.error === "invalid_password" ? "Incorrect password. Try again." : null;
 
     return (
       <main className="min-h-screen bg-[#f4f1eb] text-black">
@@ -51,9 +51,9 @@ export default async function FrontrunnerDemoPage({
                   className="w-full rounded-2xl border border-black/15 bg-white px-4 py-3 text-base outline-none transition focus:border-black"
                 />
               </label>
-              {showError && (
+              {errorMessage && (
                 <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  Incorrect password. Try again.
+                  {errorMessage}
                 </p>
               )}
               <button

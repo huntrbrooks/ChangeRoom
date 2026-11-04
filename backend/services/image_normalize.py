@@ -6,6 +6,14 @@ from PIL import Image, ImageOps
 
 logger = logging.getLogger(__name__)
 
+# The browser prepares references at <=2200px per side. Bound decode memory even
+# when a caller bypasses that client: compressed byte size is not a pixel limit.
+MAX_DECODE_PIXELS = 6_000_000
+
+
+class ImagePixelLimitError(ValueError):
+    pass
+
 
 def _try_register_heif() -> bool:
     """
@@ -56,24 +64,23 @@ def normalize_image_bytes(
     ensure_heif_registered()
 
     with Image.open(io.BytesIO(image_bytes)) as im:
-        im = ImageOps.exif_transpose(im)
+        if im.width * im.height > MAX_DECODE_PIXELS:
+            raise ImagePixelLimitError("Image exceeds supported pixel dimensions")
+        # No full-size duplicate when orientation is already correct.
+        ImageOps.exif_transpose(im, in_place=True)
 
         width, height = im.size if im and hasattr(im, "size") else (None, None)
 
         # Downscale (keep aspect ratio) to reduce request payload size to Gemini/OpenAI.
-        try:
-            w = int(width) if width is not None else 0
-            h = int(height) if height is not None else 0
-            longest = max(w, h)
-            if longest and longest > max_dimension:
-                scale = max_dimension / float(longest)
-                new_w = max(1, int(round(w * scale)))
-                new_h = max(1, int(round(h * scale)))
-                im = im.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                width, height = im.size
-        except Exception:
-            # If resize fails for any reason, continue with original decoded image.
-            pass
+        w = int(width) if width is not None else 0
+        h = int(height) if height is not None else 0
+        longest = max(w, h)
+        if longest and longest > max_dimension:
+            scale = max_dimension / float(longest)
+            new_w = max(1, int(round(w * scale)))
+            new_h = max(1, int(round(h * scale)))
+            im = im.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            width, height = im.size
 
         # Decide output format
         has_alpha = False

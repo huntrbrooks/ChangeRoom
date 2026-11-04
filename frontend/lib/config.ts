@@ -1,3 +1,4 @@
+import { offers } from "./billing-catalog";
 /**
  * Centralized environment variable configuration with validation
  * All environment variables should be accessed through this module
@@ -76,16 +77,6 @@ export const stripeConfig = createLazyConfig(() => {
   };
 });
 
-// Client-safe config: exposes only public price IDs (no secrets)
-export const stripePublicConfig = createLazyConfig(() => ({
-  starterPriceId: process.env.NEXT_PUBLIC_STRIPE_STARTER_PRICE_ID || "",
-  starterXmasPriceId: process.env.NEXT_PUBLIC_STRIPE_STARTER_XMAS_PRICE_ID || "",
-  valuePriceId: process.env.NEXT_PUBLIC_STRIPE_VALUE_PRICE_ID || "",
-  proPriceId: process.env.NEXT_PUBLIC_STRIPE_PRO_PRICE_ID || "",
-  creatorPriceId: process.env.NEXT_PUBLIC_STRIPE_CREATOR_PRICE_ID || "",
-  powerPriceId: process.env.NEXT_PUBLIC_STRIPE_POWER_PRICE_ID || "",
-}));
-
 // Database Configuration - lazy access
 export const dbConfig = createLazyConfig(() => ({
   url: requireEnv("DATABASE_URL"),
@@ -101,9 +92,9 @@ export const appConfig = {
   appUrl: getEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3000"),
   // Free trial is a single free try-on, not a credit grant
   freeCredits: parseInt(getEnv("TRYON_FREE_CREDITS", "0"), 10),
-  standardMonthlyCredits: parseInt(getEnv("TRYON_STANDARD_MONTHLY_CREDITS", "50"), 10),
-  proMonthlyCredits: parseInt(getEnv("TRYON_PRO_MONTHLY_CREDITS", "250"), 10),
-  creditPackSmallAmount: 20, // Can be made configurable if needed
+  standardMonthlyCredits: offers[0].credits,
+  proMonthlyCredits: offers[1].credits,
+  creditPackSmallAmount: offers[2].credits, // Can be made configurable if needed
   creditPackLargeAmount: 100, // Can be made configurable if needed
 } as const;
 

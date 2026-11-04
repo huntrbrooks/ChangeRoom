@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import Stripe from "stripe";
-import { NEW_PURCHASES_ENABLED, pausedCheckoutResponse } from "@/lib/purchase-availability";
+import { canCreateCheckout, pausedCheckoutResponse } from "@/lib/purchase-availability";
 import { z } from "zod";
 import { stripeConfig, appConfig } from "@/lib/config";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { resolveCheckout } from "@/lib/billing-catalog";
+import { validPackPrice } from "@/lib/subscription-lifecycle";
 import { logger } from "@/lib/logger";
 
-const checkoutRequestSchema = z.object({
+const checkoutRequestSchema = z.union([z.object({sku:z.string().min(1).max(40)}).strict(), z.object({
   priceId: z.string().trim().regex(/^price_/, "Invalid price ID"),
   mode: z.enum(["subscription", "payment"]),
-  startTrial: z.boolean().optional(),
-});
+}).strict()]);
 
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
 function getStripe() {
@@ -22,12 +23,12 @@ function getStripe() {
 
 /**
  * POST /api/billing/create-checkout-session
- * Creates a Stripe Checkout Session for subscription or one-time payment
+ * Creates only one-time pack Checkout Sessions. Existing subscriptions are managed separately.
  * 
- * Body: { priceId: string, mode: "subscription" | "payment", startTrial?: boolean }
+ * Body: {sku: string} or a legacy allowlisted {priceId, mode: "payment"}.
  */
 export async function POST(req: NextRequest) {
-  if (!NEW_PURCHASES_ENABLED) return pausedCheckoutResponse();
+  if (!canCreateCheckout()) return pausedCheckoutResponse();
   try {
     let userId: string | null = null;
     try {
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { getOrCreateUserBilling, setStripeCustomerIdForUser, isUserOnFreeTrial } = await import(
+    const db = await import(
       "@/lib/db-access"
     );
     const ip =
@@ -79,7 +80,6 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    const { priceId, mode, startTrial } = parsed.data;
 
     // Validate Stripe configuration
     if (!stripeConfig.secretKey || !stripeConfig.secretKey.trim()) {
@@ -105,127 +105,32 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Determine allowed prices
-    const allowedPriceIds = [
-      stripeConfig.starterPriceId,
-      stripeConfig.starterXmasPriceId,
-      stripeConfig.valuePriceId,
-      stripeConfig.proPriceId,
-      stripeConfig.creatorPriceId,
-      stripeConfig.powerPriceId,
-    ].filter(Boolean);
-
-    if (!allowedPriceIds.includes(priceId)) {
-      return NextResponse.json(
-        { error: "Price is not available", details: "Unsupported priceId" },
-        { status: 400 }
-      );
+    const selection = resolveCheckout(stripeConfig, parsed.data);
+    if (!selection) {
+      return NextResponse.json({ error: 'This price is not available.' }, { status: 400 });
     }
-
-    // Map price to credit amounts (one-time)
-    const creditAmountMap: Record<string, number> = {
-      [stripeConfig.starterPriceId]: 10,
-      [stripeConfig.starterXmasPriceId]: 20,
-      [stripeConfig.valuePriceId]: 30,
-      [stripeConfig.proPriceId]: 100,
-    };
-
-    // Identify which prices are subscriptions (Creator/Power)
-    const subscriptionPriceIds = new Set(
-      [stripeConfig.creatorPriceId, stripeConfig.powerPriceId].filter(Boolean)
-    );
-
-    // Default mode if not aligned with price type
-    const inferredMode = subscriptionPriceIds.has(priceId) ? "subscription" : "payment";
-    if (mode !== inferredMode) {
-      return NextResponse.json(
-        { error: "Invalid mode for price", details: `Use '${inferredMode}' for this price.` },
-        { status: 400 }
-      );
-    }
-
-    // Get or create user billing
-    const billing = await getOrCreateUserBilling(userId);
-    
-    // Check if user has used their free trial try-on
-    const onTrial = await isUserOnFreeTrial(userId);
-    const shouldStartTrial = startTrial && !onTrial && mode === "subscription";
-
-    // Create or get Stripe customer
+    const {offer,priceId} = selection;
+    const mode = "payment" as const;
+    const stripe = getStripe();
+    if (!validPackPrice(await stripe.prices.retrieve(priceId, {expand:["product"]}), offer))
+      throw new Error('Stripe price disagrees with the published offer');
+    const billing = await db.getOrCreateUserBilling(userId);
     let customerId = billing.stripe_customer_id;
-
     if (!customerId) {
-      const customer = await getStripe().customers.create({
-        metadata: {
-          clerkUserId: userId,
-        },
-      });
+      const customer = await stripe.customers.create({metadata:{clerkUserId:userId}},
+        {idempotencyKey:'changeroom-customer:'+userId});
       customerId = customer.id;
-
-      // Persist the customer ID without changing plan or credits.
-      await setStripeCustomerIdForUser(userId, customerId);
+      await db.setStripeCustomerIdForUser(userId,customerId);
     }
-
-    // Determine credit amount for one-time payments
-    const creditAmount = mode === "payment" ? creditAmountMap[priceId] || 0 : 0;
-
-    const baseMetadata: Record<string, string> = {
-      clerkUserId: userId,
-      priceId,
-      mode,
-      ...(mode === "payment" && creditAmount > 0 && { creditAmount: creditAmount.toString() }),
-      ...(shouldStartTrial && { startTrial: "true" }),
-    };
-
-    // Build subscription data (metadata always, optional trial period)
-    const subscriptionData: {
-      subscription_data?: {
-        trial_period_days?: number;
-        metadata: Record<string, string>;
-      };
-    } = mode === "subscription"
-      ? {
-          subscription_data: {
-            ...(shouldStartTrial ? { trial_period_days: 7 } : {}),
-            metadata: {
-              ...baseMetadata,
-              ...(shouldStartTrial && { isTrial: "true" }),
-            },
-          },
-        }
-      : {};
-
-    // For one-time payments, also stamp metadata onto the PaymentIntent
-    // so payment_intent.succeeded can always resolve the user + credits.
-    const paymentIntentData: {
-      payment_intent_data?: { metadata: Record<string, string> };
-    } =
-      mode === "payment"
-        ? {
-            payment_intent_data: {
-              metadata: baseMetadata,
-            },
-          }
-        : {};
-
-    // Create checkout session
-    const session = await getStripe().checkout.sessions.create({
-      customer: customerId,
-      mode,
-      line_items: [
-        {
-          price: priceId,
-          quantity: 1,
-        },
-      ],
-      ...subscriptionData,
-      ...paymentIntentData,
-      success_url: `${appConfig.appUrl}/?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${appConfig.appUrl}/?canceled=true`,
-      metadata: baseMetadata,
-      client_reference_id: userId,
-    });
-
+    const metadata = {clerkUserId:userId,priceId,mode,creditAmount:String(offer.credits)};
+    // Never resume a stored subscription attempt or pass a caller-selected mode to Stripe.
+    const session = await stripe.checkout.sessions.create({
+        customer:customerId,mode,line_items:[{price:priceId,quantity:1}],metadata,
+        // Launch only the verified card flow; account-wide dynamic methods include untested alternatives.
+        payment_method_types:["card"],
+        payment_intent_data:{metadata},client_reference_id:userId,
+        success_url:appConfig.appUrl+'/billing?session_id={CHECKOUT_SESSION_ID}',cancel_url:appConfig.appUrl+'/pricing',
+      });
     if (!session.url) {
       logger.error("stripe_checkout_session_missing_url", { sessionId: session.id });
       return NextResponse.json(
@@ -240,29 +145,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ url: session.url });
   } catch (err: unknown) {
     logger.error("create_checkout_session_failed", { error: err });
-    const error = err instanceof Error ? err : new Error(String(err));
-    
-    // Provide more specific error messages for common Stripe errors
-    let errorMessage = "Failed to create checkout session";
-    let errorDetails = error.message;
-    
-    if (error.message.includes("No such price")) {
-      errorMessage = "Invalid price configuration. Please contact support.";
-      errorDetails = "The selected plan is not available";
-    } else if (error.message.includes("Invalid API Key")) {
-      errorMessage = "Payment system configuration error. Please contact support.";
-      errorDetails = "Stripe API key is invalid";
-    } else if (error.message.includes("rate_limit")) {
-      errorMessage = "Too many requests. Please try again in a moment.";
-      errorDetails = "Rate limit exceeded";
-    }
-    
     return NextResponse.json(
-      {
-        error: errorMessage,
-        details: errorDetails,
-      },
-      { status: 500 }
+      {error: "Unable to start checkout right now. Please retry or contact support."},
+      {status: 503}
     );
   }
 }

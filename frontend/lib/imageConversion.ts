@@ -66,8 +66,7 @@ async function convertHeicWithHeic2Any(file: File): Promise<File> {
  * Convert an image to an "optimal" format for the app (default: JPEG),
  * while also keeping it under size limits.
  * 
- * This function NEVER throws - it always returns a File, falling back to the
- * original file if all conversion attempts fail.
+ * A preparation failure must never silently return an unbounded original file.
  */
 export async function convertToOptimalImageFile(file: File): Promise<File> {
   const type = (file.type || "").toLowerCase();
@@ -82,21 +81,15 @@ export async function convertToOptimalImageFile(file: File): Promise<File> {
     // Try heic2any first (best for cross-browser HEIC support)
     try {
       const jpg = await convertHeicWithHeic2Any(file);
-      try {
-        const optimized = await optimizeImageFile(jpg, {
-          preferredMimeType: "image/jpeg",
-          maxSizeMB: 9.5,
-          maxDimension: 2200,
-          absoluteMinDimension: 900,
-        });
-        return optimized.file;
-      } catch (optErr) {
-        console.warn("[imageConversion] HEIC->JPEG conversion succeeded but optimization failed; using converted JPEG as-is.", optErr);
-        // Return the converted JPEG even if optimization failed
-        return jpg;
-      }
+      const optimized = await optimizeImageFile(jpg, {
+        preferredMimeType: "image/jpeg",
+        maxSizeMB: 9.5,
+        maxDimension: 2200,
+        absoluteMinDimension: 900,
+      });
+      return optimized.file;
     } catch (heicErr) {
-      console.warn("[imageConversion] heic2any conversion failed; trying canvas-based fallback.", heicErr);
+      console.warn("[imageConversion] HEIC preparation failed; trying canvas-based fallback.", heicErr);
       // Fallback: try canvas-based pipeline (works on Safari where HEIC decoding is supported)
       try {
         const optimized = await optimizeImageFile(file, {
@@ -111,9 +104,8 @@ export async function convertToOptimalImageFile(file: File): Promise<File> {
           lastModified: Date.now(),
         });
       } catch (canvasErr) {
-        console.error("[imageConversion] All HEIC conversion methods failed; returning original file.", canvasErr);
-        // Final fallback: return original file (user will see backend error if unsupported)
-        return file;
+        console.error("[imageConversion] Could not prepare HEIC image.", canvasErr);
+        throw new Error(PHOTO_PREPARATION_ERROR);
       }
     }
   }
@@ -132,10 +124,29 @@ export async function convertToOptimalImageFile(file: File): Promise<File> {
       lastModified: Date.now(),
     });
   } catch (optErr) {
-    console.error("[imageConversion] Optimization failed; returning original file.", optErr);
-    // If optimization fails, return original file
-    return file;
+    console.error("[imageConversion] Could not prepare image.", optErr);
+    throw new Error(PHOTO_PREPARATION_ERROR);
   }
+}
+
+export const PHOTO_PREPARATION_ERROR =
+  'We could not prepare this photo. Export a JPG or PNG at 2200 pixels or less on its longest side, then choose it again. No credit or free trial was used.';
+
+/** Process one photo at a time to avoid decoding a whole phone-photo batch at once. */
+export async function prepareTryOnImageFiles(
+  files: File[],
+  onProgress?: (current: number, total: number) => void,
+  signal?: AbortSignal,
+): Promise<File[]> {
+  const prepared: File[] = [];
+  for (const [index, file] of files.entries()) {
+    if (signal?.aborted) throw new DOMException('Photo preparation cancelled.', 'AbortError');
+    onProgress?.(index + 1, files.length);
+    const converted = await convertToOptimalImageFile(file);
+    if (signal?.aborted) throw new DOMException('Photo preparation cancelled.', 'AbortError');
+    prepared.push(converted);
+  }
+  return prepared;
 }
 
 

@@ -259,12 +259,6 @@ export const SocialShareButtons: React.FC<SocialShareButtonsProps> = ({
               </button>
             </div>
             
-            {/* Referral CTA */}
-            <div className="p-3 bg-gradient-to-r from-violet-50 to-purple-50 border-t border-black/10">
-              <p className="text-xs text-center text-black/70">
-                🎁 <span className="font-medium">Share & earn!</span> Get 2 free credits when your friend signs up
-              </p>
-            </div>
           </div>
         </>
       )}

@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS users_billing (
   plan TEXT NOT NULL DEFAULT 'free',           -- free, standard, pro
   credits_available INTEGER NOT NULL DEFAULT 0,
   credits_refresh_at TIMESTAMPTZ,              -- When to refresh monthly credits
-  trials_remaining INTEGER NOT NULL DEFAULT 2,  -- Number of free trial try-ons remaining (default 2)
+  trials_remaining INTEGER NOT NULL DEFAULT 1,  -- Existing accounts retain their remaining trials
   is_frozen BOOLEAN NOT NULL DEFAULT false,    -- Freeze generating when payments fail
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

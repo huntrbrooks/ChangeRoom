@@ -1,4 +1,5 @@
 {
+  "git": { "deploymentEnabled": { "codex/changeroom-launch-candidate": false } },
   "crons": [
     {
       "path": "/api/metrics-email",

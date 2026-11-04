@@ -1,6 +1,12 @@
 import { CANONICAL_ORIGIN } from "@/lib/domainRouting";
 
-export function getAllowedRedirectOrigins(): string[] {
+import { stagingAppOrigin } from "@/lib/preview-isolation";
+
+export function getAllowedRedirectOrigins(env: Record<string,string | undefined> = process.env): string[] {
+  if (env.VERCEL_ENV === 'preview') {
+    const origin = stagingAppOrigin(env);
+    return origin ? [origin] : [];
+  }
   const origins = [
     CANONICAL_ORIGIN,
     "https://www.igetdressed.online",

@@ -86,7 +86,6 @@ export async function POST(req: NextRequest) {
   try {
     const {
       getOrCreateUserBilling,
-      markUserProfileDeleted,
       upsertUserProfileFromClerk,
     } = await import("@/lib/db-access");
 
@@ -121,7 +120,8 @@ export async function POST(req: NextRequest) {
 
       case "user.deleted": {
         const deleted = z.object({ id: z.string() }).parse(event.data);
-        await markUserProfileDeleted(deleted.id);
+        const { closeDeletedAccount } = await import('@/lib/account-closure');
+        await closeDeletedAccount(deleted.id);
         await captureServerEvent(
           ANALYTICS_EVENTS.USER_DELETED,
           {
@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
           },
           deleted.id
         );
-        logger.info("clerk_user_marked_deleted", { user_id: deleted.id });
+        logger.info("clerk_account_closure_processed", { user_id: deleted.id });
         break;
       }
 

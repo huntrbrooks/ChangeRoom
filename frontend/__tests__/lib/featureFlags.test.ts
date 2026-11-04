@@ -1,6 +1,7 @@
 import {
   isMyOutfitsEnabled,
   isPitchDemoEnabled,
+  isShoppingMatchesEnabled,
   isTryOnFromUrlEnabled,
   parseBooleanEnvFlag,
 } from "@/lib/featureFlags";
@@ -64,6 +65,26 @@ describe("isMyOutfitsEnabled", () => {
   it("enables the feature only for explicit truthy values", () => {
     process.env.NEXT_PUBLIC_ENABLE_MY_OUTFITS = "true";
     expect(isMyOutfitsEnabled()).toBe(true);
+  });
+});
+
+describe("isShoppingMatchesEnabled", () => {
+  const originalValue = process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES;
+
+  afterEach(() => {
+    if (originalValue === undefined) delete process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES;
+    else process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES = originalValue;
+  });
+
+  it.each([undefined, "", "false", "1", "TRUE", " true "])("stays disabled for %s", value => {
+    if (value === undefined) delete process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES;
+    else process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES = value;
+    expect(isShoppingMatchesEnabled()).toBe(false);
+  });
+
+  it("enables only with the exact true value", () => {
+    process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES = "true";
+    expect(isShoppingMatchesEnabled()).toBe(true);
   });
 });
 

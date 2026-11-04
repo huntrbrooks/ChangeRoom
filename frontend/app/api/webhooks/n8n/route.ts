@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
+import { optionalAnalyticsEnabled } from '@/lib/optional-analytics';
 
 /**
  * POST /api/webhooks/n8n
@@ -27,6 +28,10 @@ export async function POST(request: NextRequest) {
     const providedSecret = authHeader?.replace('Bearer ', '');
     if (providedSecret !== expectedSecret) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    if (!optionalAnalyticsEnabled()) {
+      return NextResponse.json({ ok: true, tracking: false });
     }
 
     const body = await request.json();
@@ -88,6 +93,9 @@ export async function POST(request: NextRequest) {
 
 // Also support GET for webhook verification during setup
 export async function GET() {
+  if (!optionalAnalyticsEnabled()) {
+    return NextResponse.json({ status: 'Optional event tracking disabled' });
+  }
   return NextResponse.json({
     status: 'n8n webhook endpoint active',
     supportedEvents: [

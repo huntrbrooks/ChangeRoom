@@ -19,9 +19,9 @@
 ## Canonical user flows (verify before changing)
 - Homepage (`frontend/app/page.tsx`) currently uses **Render backend directly**:
   - `POST ${NEXT_PUBLIC_API_URL}/api/try-on` (multipart/form-data)
-  - `POST ${NEXT_PUBLIC_API_URL}/api/preprocess-clothing` (multipart/form-data)
-- There is also a **Next.js API route** `POST /api/try-on` (JSON) that uses DB/R2 and billing holds.
-  - Do not assume it’s wired into the homepage unless you confirm call sites.
+  - The older baseline posts multipart clothing to `/api/preprocess-clothing`. The subscriber candidate prepares photos locally; verify component props as well as remaining legacy function definitions.
+- The Next.js stack handles billing and subscriber job issuance; check the built manifest and call sites. There is no root Next.js `POST /api/try-on` handler in the reviewed baseline.
+  - The candidate requires matching worker and DB releases. Read `docs/operations/subscriber-launch.md` before changing deployment or accepting payment.
 
 ## Key “gotchas”
 - **Two try-on implementations exist** (FastAPI vs Next API). Confirm which is used before editing.
@@ -31,7 +31,7 @@
 ## Debugging: identify stack + correlate logs
 
 - In browser Network tab, check response headers:
-  - `X-ChangeRoom-Stack`: `fastapi-render` or `nextjs-vercel`
+  - `X-ChangeRoom-Stack`: `fastapi-worker` (older releases: `fastapi-render`) or `nextjs-vercel`
   - `X-Request-Id`: use this to find the exact matching Render/Vercel log lines
 
 ## Quick local defaults

@@ -1,10 +1,55 @@
 import asyncio
+import base64
+import hashlib
+import hmac
+import json
+import time
 
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
 from services import auth
+
+
+@pytest.fixture
+def signing_key(monkeypatch):
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives import serialization
+    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    numbers = private.public_key().public_numbers()
+    def number(value):
+        return base64.urlsafe_b64encode(value.to_bytes((value.bit_length()+7)//8, 'big')).rstrip(b'=').decode()
+    key = {'kty':'RSA','alg':'RS256','use':'sig','kid':'test-key','n':number(numbers.n),'e':number(numbers.e)}
+    async def jwks(): return [key]
+    monkeypatch.setattr(auth, '_fetch_jwks', jwks)
+    monkeypatch.setenv('CLERK_ISSUER', 'https://test.clerk.accounts.dev')
+    monkeypatch.delenv('CLERK_AUDIENCE', raising=False)
+    return private.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()), private.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+
+
+@pytest.mark.parametrize('invalid', [None, 'expired', 'issuer'])
+def test_real_rs256_signature_and_claims(signing_key, invalid):
+    claims = {'sub':'test-user', 'iss':'https://test.clerk.accounts.dev', 'exp':int(time.time())+60}
+    if invalid == 'expired': claims['exp'] = int(time.time())-60
+    if invalid == 'issuer': claims['iss'] = 'https://other.clerk.accounts.dev'
+    token = auth.jwt.encode(claims, signing_key[0], algorithm='RS256', headers={'kid':'test-key'})
+    if invalid:
+        with pytest.raises(HTTPException) as error: asyncio.run(auth._verify_clerk_token(token))
+        assert error.value.status_code == 401
+    else:
+        assert asyncio.run(auth._verify_clerk_token(token))['sub'] == 'test-user'
+
+
+def test_rejects_hs256_forgery_using_public_rsa_key(signing_key):
+    # Regression for python-jose GHSA-3qf3-8w2g-rqmx: the DER public key is
+    # attacker-known. The application must always pin RS256 rather than trust alg.
+    def part(value): return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b'=')
+    message = part({'alg':'HS256','kid':'test-key'}) + b'.' + part({'sub':'forged','iss':'https://test.clerk.accounts.dev','exp':int(time.time())+60})
+    signature = base64.urlsafe_b64encode(hmac.new(signing_key[1], message, hashlib.sha256).digest()).rstrip(b'=')
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(auth._verify_clerk_token((message+b'.'+signature).decode()))
+    assert error.value.status_code == 401
 
 
 def _request_with_bearer(token: str | None = None) -> Request:

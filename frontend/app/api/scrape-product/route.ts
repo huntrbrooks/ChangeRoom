@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { scrapeProductPage, extractProductImages } from '@/lib/firecrawl';
+import { isTryOnFromUrlEnabled } from '@/lib/featureFlags';
 import { auth } from '@clerk/nextjs/server';
 
 /**
@@ -14,7 +15,7 @@ import { auth } from '@clerk/nextjs/server';
  */
 export async function POST(request: NextRequest) {
   try {
-    if (process.env.NEXT_PUBLIC_ENABLE_TRYON_FROM_URL !== 'true') {
+    if (!isTryOnFromUrlEnabled()) {
       return NextResponse.json({ error: 'unavailable' }, { status: 404 });
     }
     // Check authentication

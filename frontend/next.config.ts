@@ -4,6 +4,11 @@ const nextConfig: NextConfig = {
   /* config options here */
   // Skip static generation for pages that use Clerk
   output: 'standalone',
+  // Derive this marker at build time so client code cannot mistake Preview for production.
+  env: {
+    NEXT_PUBLIC_OPTIONAL_ANALYTICS_DEPLOYMENT:
+      process.env.VERCEL_ENV === 'production' ? 'production' : 'disabled',
+  },
   allowedDevOrigins: ['127.0.0.1'],
   async headers() {
     const connectSrc = [
@@ -20,12 +25,14 @@ const nextConfig: NextConfig = {
       "base-uri 'self'",
       "frame-ancestors 'none'",
       "form-action 'self' https://*.clerk.com https://*.clerk.accounts.dev https://clerk.igetdressed.online",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.google-analytics.com https://js.stripe.com https://*.posthog.com https://us.i.posthog.com https://*.clerk.com https://*.clerk.accounts.dev https://clerk.igetdressed.online",
+      // Clerk signup can require Turnstile; both the loader and its frame must load.
+      // https://developers.cloudflare.com/turnstile/reference/content-security-policy/
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.google-analytics.com https://js.stripe.com https://*.posthog.com https://us.i.posthog.com https://*.clerk.com https://*.clerk.accounts.dev https://clerk.igetdressed.online https://challenges.cloudflare.com",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self' data:",
       `connect-src ${connectSrc}`,
-      "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://*.clerk.com https://*.clerk.accounts.dev https://clerk.igetdressed.online",
+      "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://*.clerk.com https://*.clerk.accounts.dev https://clerk.igetdressed.online https://challenges.cloudflare.com",
       "worker-src 'self' blob:",
       "manifest-src 'self'",
       "object-src 'none'",
