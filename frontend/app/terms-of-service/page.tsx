@@ -20,12 +20,16 @@ export default function TermsOfService() {
         </div>
 
         <p className="text-gray-600 mb-8 text-sm">
-          Last updated: {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+          Last updated: 4 November 2026
         </p>
 
         <div className="prose prose-invert max-w-none space-y-8 text-gray-700">
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">1. Acceptance of Terms</h2>
+            <p className="leading-relaxed mb-4">
+              These terms are between you and FRESH&apos;N UP AU PTY LTD (ABN 11 678 658 823),
+              the operator of IGetDressed.Online (&quot;we&quot;, &quot;us&quot; or &quot;our&quot;).
+            </p>
             <p className="leading-relaxed">
               By accessing and using IGetDressed.Online (&quot;the Service&quot;), you accept and agree to be bound by the terms and provision of this agreement. 
               If you do not agree to abide by the above, please do not use this service.
@@ -159,15 +163,15 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">12. Governing Law</h2>
             <p className="leading-relaxed">
-              These Terms shall be governed and construed in accordance with the laws of the jurisdiction in which IGetDressed.Online operates, 
-              without regard to its conflict of law provisions.
+              These Terms are governed by the laws of Victoria, Australia. This does not limit any rights or remedies
+              that cannot be excluded under applicable law, including the Australian Consumer Law.
             </p>
           </section>
 
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">13. Contact Information</h2>
             <p className="leading-relaxed">
-              If you have any questions about these Terms of Service, please contact us through the contact information provided on our website.
+              If you have questions about these terms, email <a className="underline" href="mailto:gerard@aihuntrconsulting.com">gerard@aihuntrconsulting.com</a>.
             </p>
           </section>
         </div>
