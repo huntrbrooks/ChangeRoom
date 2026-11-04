@@ -42,6 +42,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockGetToken.mockReset().mockResolvedValue('test');
   (httpClient.get as jest.Mock).mockResolvedValue({ data: { looks: [], plan: 'free', creditsAvailable: 0, trialsRemaining: 1 } });
   URL.createObjectURL = jest.fn().mockReturnValue('blob:prepared-photo');
   URL.revokeObjectURL = jest.fn();
@@ -262,5 +263,129 @@ describe('optional shopping matches', () => {
     await uploadPhotos(container);
     await generate();
     expect((httpClient.post as jest.Mock).mock.calls.map(([url]) => url)).toEqual(['/api/try-on/hold', 'http://localhost:8000/api/try-on']);
+  });
+});
+
+
+describe('fresh session authorization for a paid try-on', () => {
+  let confirm: jest.SpyInstance;
+  const sessionGuidance = "Please sign out and sign in again, then try again. No credit was used.";
+
+  beforeEach(() => {
+    confirm = jest.spyOn(window, 'confirm').mockReturnValue(true);
+    window.scrollTo = jest.fn();
+    (prepareTryOnImageFiles as jest.Mock).mockImplementation(async files => files);
+    (httpClient.get as jest.Mock).mockResolvedValue({
+      data: { looks: [], plan: 'free', creditsAvailable: 1, trialsRemaining: 0, hasPurchase: true },
+    });
+    (httpClient.post as jest.Mock).mockImplementation(async (url: string) => {
+      if (url === '/api/try-on/hold') return { data: { requestId: 'paid-session-job' } };
+      if (url === 'http://localhost:8000/api/try-on') {
+        return { data: { image_url: '/private-result.jpg', job_id: 'paid-session-job' } };
+      }
+      throw new Error(`Unexpected POST ${url}`);
+    });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  async function preparePaidLook() {
+    render(<Home />);
+    await screen.findByRole('heading', { name: 'Virtual Try-On Studio' });
+    const person = new File(['person'], 'person.jpg', { type: 'image/jpeg' });
+    const garment = new File(['garment'], 'garment.jpg', { type: 'image/jpeg' });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('Choose your photo files'), { target: { files: [person] } });
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('Choose garment photo files'), { target: { files: [garment] } });
+    });
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Try it on/ })).toBeEnabled());
+  }
+
+  test('waits for a fresh default token after a delayed confirmation and scopes it to the hold', async () => {
+    const openedAt = Date.now();
+    const now = jest.spyOn(Date, 'now').mockReturnValue(openedAt);
+    let finishRefresh!: (token: string) => void;
+    const refresh = new Promise<string>(resolve => { finishRefresh = resolve; });
+    confirm.mockImplementation(() => {
+      expect(mockGetToken).not.toHaveBeenCalled();
+      expect(httpClient.post).not.toHaveBeenCalled();
+      // The blocking native dialog may be left open for minutes.
+      now.mockReturnValue(openedAt + 5 * 60_000);
+      return true;
+    });
+    mockGetToken.mockImplementation(options => {
+      if (options?.skipCache) {
+        expect(confirm).toHaveBeenCalledWith('You have 1 credit remaining. Continue?');
+        expect(Date.now()).toBe(openedAt + 5 * 60_000);
+        return refresh;
+      }
+      if (options?.template === 'backend') return Promise.resolve('worker-token');
+      throw new Error('Unexpected token request');
+    });
+    await preparePaidLook();
+    fireEvent.click(screen.getByRole('button', { name: /^Try it on/ }));
+    await waitFor(() => expect(mockGetToken).toHaveBeenCalledWith({ skipCache: true }));
+    expect(mockGetToken).toHaveBeenCalledTimes(1);
+    expect(httpClient.post).not.toHaveBeenCalled();
+
+    await act(async () => { finishRefresh('fresh-session-token'); });
+    await waitFor(() => expect(httpClient.post).toHaveBeenCalledTimes(2));
+    expect(httpClient.post).toHaveBeenNthCalledWith(
+      1, '/api/try-on/hold', { expectedFunding: 'credits' },
+      { headers: { Authorization: 'Bearer fresh-session-token' } }
+    );
+    expect(httpClient.post).toHaveBeenNthCalledWith(
+      2, 'http://localhost:8000/api/try-on', expect.any(FormData),
+      expect.objectContaining({ headers: {
+        'Content-Type': 'multipart/form-data',
+        'X-Request-Id': 'paid-session-job',
+        Authorization: 'Bearer worker-token',
+      } })
+    );
+    expect(mockGetToken.mock.calls).toEqual([[{ skipCache: true }], [{ template: 'backend' }]]);
+  });
+
+  test.each(['missing', 'empty', 'rejected'])('a %s session refresh fails closed before any POST', async outcome => {
+    if (outcome === 'rejected') mockGetToken.mockRejectedValue(new Error('token refresh failed'));
+    else mockGetToken.mockResolvedValue(outcome === 'missing' ? null : '   ');
+    await preparePaidLook();
+    fireEvent.click(screen.getByRole('button', { name: /^Try it on/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(sessionGuidance);
+    expect(mockGetToken.mock.calls).toEqual([[{ skipCache: true }]]);
+    expect(httpClient.post).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /^Try it on/ })).toBeEnabled();
+  });
+
+  test('cancelling the confirmation requests neither a token nor a hold', async () => {
+    confirm.mockReturnValue(false);
+    await preparePaidLook();
+    fireEvent.click(screen.getByRole('button', { name: /^Try it on/ }));
+    expect(confirm).toHaveBeenCalledWith('You have 1 credit remaining. Continue?');
+    expect(mockGetToken).not.toHaveBeenCalled();
+    expect(httpClient.post).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    { status: 401, data: { error: 'unauthorized' } },
+    { status: 403, data: { error: 'invalid_token' } },
+    { status: 403, data: { detail: 'invalid_token' } },
+  ])('a rejected hold ($status, $data) gives sign-in guidance without retrying or calling Render', async response => {
+    mockGetToken.mockResolvedValue('fresh-session-token');
+    (httpClient.post as jest.Mock).mockRejectedValue({ response });
+    await preparePaidLook();
+    fireEvent.click(screen.getByRole('button', { name: /^Try it on/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(sessionGuidance);
+    expect(screen.getByRole('alert')).not.toHaveTextContent('invalid_token');
+    expect(mockGetToken.mock.calls).toEqual([[{ skipCache: true }]]);
+    expect(httpClient.post).toHaveBeenCalledTimes(1);
+    expect(httpClient.post).toHaveBeenCalledWith(
+      '/api/try-on/hold', { expectedFunding: 'credits' },
+      { headers: { Authorization: 'Bearer fresh-session-token' } }
+    );
+    expect(screen.getByRole('button', { name: /^Try it on/ })).toBeEnabled();
   });
 });
