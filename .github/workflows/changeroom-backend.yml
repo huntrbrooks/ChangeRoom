@@ -37,6 +37,7 @@ jobs:
         run: python scripts/ops/offline_backend_tests.py
       - name: Verify operator refund reconciliation and protected health probes
         env:
+          CHANGEROOM_CI_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
           PGHOST: '127.0.0.1'
           PGUSER: crtest
           PGPASSWORD: ci-only

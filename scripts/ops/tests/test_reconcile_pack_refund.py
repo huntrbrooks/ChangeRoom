@@ -6,8 +6,11 @@ The suite creates and drops a uniquely named database, never reuses app data.
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import importlib.util
+import ipaddress
+import json
 import os
 from pathlib import Path
+import subprocess
 import uuid
 
 import pytest
@@ -16,6 +19,53 @@ ROOT = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location('reconcile_pack_refund', ROOT / 'scripts/ops/reconcile_pack_refund.py')
 refund = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(refund)
+
+
+def expected_test_server_address():
+    """Loopback locally; the exact Actions service container behind port forwarding."""
+    service_id = os.environ.get('CHANGEROOM_CI_POSTGRES_CONTAINER')
+    if not service_id:
+        return '127.0.0.1'
+    assert os.environ.get('GITHUB_ACTIONS') == 'true', 'Container target allowed only inside GitHub CI'
+    inspected = subprocess.run(
+        ['docker', 'inspect', '--type=container', service_id],
+        check=True, capture_output=True, text=True,
+    )
+    containers = json.loads(inspected.stdout)
+    assert len(containers) == 1, 'Expected the single disposable service container'
+    addresses = [str(ipaddress.IPv4Address(n['IPAddress']))
+                 for n in containers[0]['NetworkSettings']['Networks'].values() if n.get('IPAddress')]
+    assert len(addresses) == 1, 'Expected one address on the disposable service container'
+    return addresses[0]
+
+
+def test_local_target_does_not_accept_a_ci_address(monkeypatch):
+    monkeypatch.delenv('CHANGEROOM_CI_POSTGRES_CONTAINER', raising=False)
+    assert expected_test_server_address() == '127.0.0.1'
+    monkeypatch.setenv('CHANGEROOM_CI_POSTGRES_CONTAINER', 'postgres-service-fixture')
+    monkeypatch.delenv('GITHUB_ACTIONS', raising=False)
+    with pytest.raises(AssertionError, match='only inside GitHub CI'):
+        expected_test_server_address()
+
+
+@pytest.mark.parametrize('addresses', [['172.18.0.2'], [], ['172.18.0.2', '172.19.0.2']])
+def test_ci_target_must_match_one_inspected_service_address(monkeypatch, addresses):
+    monkeypatch.setenv('GITHUB_ACTIONS', 'true')
+    monkeypatch.setenv('CHANGEROOM_CI_POSTGRES_CONTAINER', 'postgres-service-fixture')
+
+    def inspect(command, **kwargs):
+        assert command == ['docker', 'inspect', '--type=container', 'postgres-service-fixture']
+        assert kwargs == {'check': True, 'capture_output': True, 'text': True}
+        return subprocess.CompletedProcess(command, 0, json.dumps([{'NetworkSettings': {'Networks': {
+            str(i): {'IPAddress': address} for i, address in enumerate(addresses)
+        }}}]))
+
+    monkeypatch.setattr(subprocess, 'run', inspect)
+    if len(addresses) == 1:
+        assert expected_test_server_address() == addresses[0]
+    else:
+        with pytest.raises(AssertionError, match='Expected one address'):
+            expected_test_server_address()
 
 
 @pytest.fixture
@@ -89,9 +139,10 @@ def local_database():
     params = conninfo_to_dict(dsn)
     assert params.get('host') == '127.0.0.1' and params.get('hostaddr', '127.0.0.1') == '127.0.0.1'
     assert params.get('dbname') == 'refund_test' and params.get('user') == 'crtest'
+    server_ip = expected_test_server_address()
     database = 'refund_fixture_' + uuid.uuid4().hex
     with psycopg.connect(dsn, autocommit=True, connect_timeout=3) as admin:
-        assert admin.execute("SELECT current_database()='refund_test' AND current_user='crtest' AND inet_server_addr()='127.0.0.1'::inet").fetchone()[0]
+        assert admin.execute("SELECT current_database()='refund_test' AND current_user='crtest' AND inet_server_addr()=%s::inet", (server_ip,)).fetchone()[0]
         admin.execute(sql.SQL("CREATE DATABASE {} ENCODING 'UTF8' TEMPLATE template0").format(sql.Identifier(database)))
         fixture_dsn = make_conninfo(dsn, dbname=database)
         try:
