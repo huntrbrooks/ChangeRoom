@@ -71,7 +71,7 @@ function PricingPageContent() {
         <div className="bg-white border border-[#8B5CF6]/30 rounded-2xl p-4 md:p-6 shadow-sm">
            {NEW_PURCHASES_ENABLED ? <PricingTable showCreditPacks /> : (
             <p className="text-center text-sm text-slate-700">
-              Existing customers can still access invoices, update payment details, and manage their subscription through the billing portal. For help, email <a className="underline" href="mailto:info@igetdressed.online">info@igetdressed.online</a>.
+              Existing customers can still access invoices, update payment details, and manage their subscription through the billing portal. For help, email <a className="underline" href="mailto:gerard@aihuntrconsulting.com">gerard@aihuntrconsulting.com</a>.
             </p>
           )}
         </div>
