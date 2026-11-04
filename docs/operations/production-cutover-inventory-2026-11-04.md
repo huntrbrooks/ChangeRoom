@@ -1,6 +1,16 @@
 # Production cutover inventory — 2026-11-04
 
-**Decision: keep purchases closed.** This is evidence from source inspection and read-only provider checks, plus a migration rehearsal on a distinct database clone. It is not a production release or proof of a live customer journey. New acquisition is one-time packs only; recurring checkout remains closed. Review costs before adding a paid hosting plan.
+**Decision: keep purchases closed.** This records the initial inspection and the dated production preparation update below. It is not a production application release or proof of a live customer journey. New acquisition is one-time packs only; recurring checkout remains closed.
+
+## Production preparation update — 4 November 2026
+
+The user approved the US$7/month production worker and reduced production database capacity. Endpoint `ep-proud-bonus-a778rjt6` remains mapped to `br-snowy-brook-a7slxiau`; its minimum/maximum compute is now 0.25–1 CU with 300-second auto-suspend. The original recovery branch was not modified. Scheduled five-minute operations can keep minimum compute awake; see the private cost review before assuming idle savings.
+
+After a fresh endpoint assertion and snapshot **creation only**, the exact five migrations listed below were applied to production from reviewed commit `75abce1e2fce3840ea120cebd279eca67db26391`, as 41 statements in one transaction. Snapshot `snap-autumn-math-a7hxpx0y` was created at 05:25:17 UTC and expires 11 November 2026. All ten preexisting tables retained identical row counts and whole-table fingerprints after migration and after role verification; no historical bulk migration, customer-row update/delete, or restore ran. The free-trial default changed from two to one for future rows only. Production now has the six new checkout/job/closure/prerequisite tables and their reviewed functions.
+
+New SQL-created logins `tryon_production_worker` and `tryon_production_ops` authenticated independently over verified TLS. Both have no elevated role attributes, memberships, owned objects, or public-table/sequence privileges. Worker has only the three job-function grants; ops only the sweep and two aggregate-function grants. Direct table probes were denied, nonexistent-job calls had no effects, and operations counters were zero. No service received these credentials during preparation and the cleanup function was not executed. Private mode-0600 files `production-credentials.env`, `production-role-proof.json`, and `production-launch-migration-evidence.json` record the handoff without placing secrets in this repository. Provider installation, scheduled operations and application verification remain release-operator tasks.
+
+The following initial inspection and rehearsal sections are historical evidence; their statements that production schema/roles were absent are superseded by this update. The P0 schema/least-privilege preparation item is satisfied; deployment, monitoring and customer-journey gates remain independent.
 
 Inspection window: 2026-11-04, approximately 15:25–15:55 Australia/Melbourne. Candidate baseline was `ec4e63e2bdc57df5b4b515c8def23ac082663a8b`; the shared candidate has additional uncommitted launch changes. Re-pin and test the final commit before deployment.
 

@@ -1,6 +1,6 @@
 # Staging edge verification — 4 November 2026
 
-Sales remain paused. These checks add evidence for the candidate; they do not establish full production readiness. No additional real model request, Stripe write, production deployment or production database write was made by this verification harness.
+Sales remain paused. These checks add evidence for the candidate; they do not establish full production readiness. No additional real model request, live Stripe write, production deployment or production database write was made by this verification harness. The later checkout section includes expressly authorized **Stripe sandbox** purchases; these do not move real funds.
 
 ## Targets and evidence boundaries
 
@@ -72,3 +72,36 @@ LOCAL_FAULT_JOURNAL=local-safety-journal.json python -m pytest -q --tb=line \
 Preserve the existing journals rather than re-running an issued scenario blindly. Before future mutations, refresh the endpoint/branch receipt and read the current buyer balance: later sandbox pack tests may intentionally increase it. The original interrupted pytest result remains recorded; it was not erased or relabelled as a clean full-suite pass.
 
 Previously completed hosted browser evidence remains separate: one real OpenAI result, owner recovery, visible 9 → 8 credit balance, cross-owner empty 404 after owner cache warm and anonymous 401. These edge tests do not replace UI recovery, real-device upload, availability/load, monitoring, backups/recovery, billing, support or legal launch gates.
+
+## Actual sandbox checkout journey
+
+The protected storefront and hosted Stripe Checkout were exercised in Chrome using the existing paid synthetic customer. This used the then-current preview `dpl_TSCthekbTsTq87ycJpx5EEtkCghP`; the subsequent support/account-closure preview was not yet aliased. Every session and price was checked against the isolated Stripe account and `livemode=false` before payment. No live key, real card, new subscription, or refund was used.
+
+1. The actual Value **Buy pack** button created one A$34.99 / 30-credit Checkout Session. The hosted **Back** link returned to pricing while the session remained unpaid and Billing still showed 8 credits.
+2. Resuming that same session and submitting Stripe's documented insufficient-funds fixture displayed the hosted decline message. Stripe independently reported `card_declined` / `insufficient_funds`, `requires_payment_method`, and unpaid Checkout. No credit grant occurred.
+3. The single successful retry of that same PaymentIntent completed Value. Billing showed **38**, then remained **38** after re-entering the same success URL and exercising the real settlement endpoint again.
+4. The actual Pro **Buy pack** button created one A$89.99 / 100-credit Session. One successful sandbox payment raised Billing to **138**, unchanged after repeating its success return.
+5. The final read-only audit found exactly **one +30 grant** for Value and **one +100 grant** for Pro, each keyed by its paid PaymentIntent. Value had one failed charge and one successful charge on the same intent. Pro had one successful charge. Customer subscriptions: **zero**. Wallet/ledger at audit: **138 credits, 15 entries, net 138**.
+
+Private evidence is in `checkout-browser/pack-journal.json`, `pack-ledger-proof.json`, `value-declined.png`, `balance-38.png` and `balance-138.png`. The journal includes the private test IDs needed for the separate refund drill; the original Starter payment must not be refunded as part of that drill. Commands:
+
+```sh
+node packs.cjs run
+# PASS: actual Value decline/retry, Pro purchase, repeated returns, zero subscriptions.
+python audit-packs.py
+# PASS: read-only Stripe/ledger reconciliation; no refund issued.
+```
+
+Early harness runs corrected a navigation/body-capture race, the Stripe card selector's overlay hit area, and the exact decline wording. Each uncertain payment/session outcome was reconciled read-only before continuing. These were harness failures; no duplicate Checkout Session or duplicate payment was created to work around them. The proof is card-only: displayed Klarna/Zip, wallets, 3DS and asynchronous payment success were not exercised here. Email receipt inbox delivery remains outside this synthetic-address proof.
+
+Stripe documents the [sandbox test card behavior](https://docs.stripe.com/testing?testing-method=card-numbers) and cautions that its [frontend automation may encounter protection measures](https://docs.stripe.com/automated-testing). No CAPTCHA was solved or protection bypass installed.
+
+## Synthetic signup
+
+The actual protected storefront sign-up form created a distinct synthetic development account using Clerk's documented `+clerk_test` address and test OTP. The signed-in Billing UI and application API showed **0 credits, exactly 1 trial, nonprivileged**. The fixture was marked synthetic in Clerk private metadata. No image request was submitted and no inbox delivery was claimed; this does not replace the ordinary-email verification test being run separately.
+
+Evidence: `signup-browser/signup-proof.json`, `verified-new-account.png`; command `node onboarding.cjs signup` passed. Clerk's [documented test email/OTP rules](https://clerk.com/docs/guides/development/testing/test-emails-and-phones) explicitly say these test addresses receive no email.
+
+After aliasing the patched preview `dpl_Dh6tTGFXwMtqL2vSTyr1N8RepuRj`, `node onboarding.cjs recover` also **passed**: actual signed-out login → **Forgot password?** → **Reset your password** → documented test OTP → new password → the same signed-in account. Billing and API remained 0 credits / 1 trial. The harness waits for Clerk's reset-preparation response before entering the test code; an earlier immediate-code attempt had raced that preparation and was not counted as a pass. Evidence: `signup-browser/recovery-proof.json`, `recovered-account.png`.
+
+All these browser contexts are closed. No free-trial generation was submitted: this proves signup entitlement and account recovery, not a new hosted free-trial image or email inbox delivery. The separate ordinary-address flow and production auth configuration still need their own evidence.
