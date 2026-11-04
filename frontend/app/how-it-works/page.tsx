@@ -52,8 +52,8 @@ export default function HowItWorks() {
         <h1 className="text-4xl font-bold mb-4">How to try on a look</h1>
         <p className="text-lg text-gray-600 mb-10">Start with a clear photo and up to five garments. The result illustrates styling; it cannot tell you which size fits.</p>
         <ol className="space-y-8 text-gray-700">
-          <li><h2 className="font-bold text-xl">1. Sign in and choose your photo</h2><p>Use a sample or a photo of yourself that you have permission to use. Full-body photos in even light work best. Keep each file under 10 MB. If your phone cannot select a HEIC photo, export a JPEG and choose it instead.</p></li>
-          <li><h2 className="font-bold text-xl">2. Add garments for this session</h2><p>Choose garment photos or a sample. These selections stay in this browser tab. Remove a selected garment to make room for another.</p></li>
+          <li><h2 className="font-bold text-xl">1. Sign in and choose your photo</h2><p>Upload a photo of yourself that you have permission to use. Use at least 400 × 400 pixels; full-body photos in even light work best. Keep each file under 10 MB. If your phone cannot select a HEIC photo, export a JPEG and choose it instead.</p></li>
+          <li><h2 className="font-bold text-xl">2. Add garments for this session</h2><p>Upload clear garment photos. These selections stay in this browser tab. Remove a selected garment to make room for another.</p></li>
           <li><h2 className="font-bold text-xl">3. Generate the look</h2><p>Press Try it on to send the selected photos for AI processing. A verified account uses an available free trial first, then one credit per standard look. Trial images have a watermark. We restore your trial or credit if generation fails.</p></li>
           <li><h2 className="font-bold text-xl">4. Download or reopen your result</h2><p>Completed images are available under Your recent looks for 24 hours. Download the JPEG to keep it longer. If you close the page, sign in and refresh that list before starting again. Shopping suggestions, when available, link to retailers; prices and sizing are confirmed on the retailer’s site.</p></li>
         </ol>

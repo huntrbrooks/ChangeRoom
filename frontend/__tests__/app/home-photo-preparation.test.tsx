@@ -1,6 +1,8 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import Home from '@/app/page';
+import { UploadZone } from '@/app/components/UploadZone';
+import { BulkUploadZone } from '@/app/components/BulkUploadZone';
 import { PHOTO_PREPARATION_ERROR, prepareTryOnImageFiles } from '@/lib/imageConversion';
 import { httpClient } from '@/lib/httpClient';
 
@@ -22,8 +24,8 @@ jest.mock('@/lib/logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), e
 jest.mock('@/lib/imageConversion', () => ({
   ...jest.requireActual('@/lib/imageConversion'), prepareTryOnImageFiles: jest.fn(),
 }));
-jest.mock('@/app/components/UploadZone', () => ({ UploadZone: () => null }));
-jest.mock('@/app/components/BulkUploadZone', () => ({ BulkUploadZone: () => null }));
+jest.mock('@/app/components/UploadZone', () => ({ UploadZone: jest.fn(() => null) }));
+jest.mock('@/app/components/BulkUploadZone', () => ({ BulkUploadZone: jest.fn(() => null) }));
 jest.mock('@/app/components/TryOnFromUrl', () => ({ TryOnFromUrl: () => null }));
 jest.mock('@/app/components/VirtualMirror', () => ({ VirtualMirror: () => null }));
 jest.mock('@/app/components/SocialShareButtons', () => ({ SocialShareButtons: () => null }));
@@ -32,7 +34,7 @@ jest.mock('@/app/components/PaywallModal', () => ({ PaywallModal: () => null }))
 jest.mock('@/app/components/ShopSaveModal', () => ({ ShopSaveModal: () => null }));
 
 beforeAll(() => {
-  // Jest does not compile Tailwind; reflect the real hidden legacy studio.
+  // Jest does not compile Tailwind; respect controls hidden by the UI.
   const style = document.createElement('style');
   style.textContent = '.hidden { display: none; }';
   document.head.append(style);
@@ -43,6 +45,21 @@ beforeEach(() => {
   (httpClient.get as jest.Mock).mockResolvedValue({ data: { looks: [], plan: 'free', creditsAvailable: 0, trialsRemaining: 1 } });
   URL.createObjectURL = jest.fn().mockReturnValue('blob:prepared-photo');
   URL.revokeObjectURL = jest.fn();
+});
+
+test('studio offers uploads instead of low-resolution sample inputs while retaining labelled examples', async () => {
+  render(<Home />);
+  await screen.findByRole('heading', { name: 'Virtual Try-On Studio' });
+  expect(screen.getByRole('button', { name: /Upload full-body photo/ })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Upload clothing' })).toBeVisible();
+  expect(screen.getByText('Use a clear full-body photo, at least 400 × 400 pixels.')).toBeVisible();
+  expect(screen.queryByText('Choose a sample')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /^Choose (Studio front|Menswear fit|Denim casual|Classic Trench Coat|Black Blazer|Ribbed Tank Top|High Rise Straight Jeans|Leather Shoulder Bag|Slingback Heels)$/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Filters' })).not.toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Sample look' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Example shopping ideas' })).toBeVisible();
+  expect(screen.getAllByRole('link', { name: 'Search retailers' }).length).toBeGreaterThan(0);
+  expect(httpClient.post).not.toHaveBeenCalled();
 });
 
 test.each([0, 1])('visible upload input %s waits for prepared files and cannot generate during preparation', async inputIndex => {
@@ -108,7 +125,7 @@ test('garment removal is disabled during a pending preparation, then works after
   expect(httpClient.post).not.toHaveBeenCalled();
 });
 
-test('sample replacement and change controls cannot race a pending photo preparation', async () => {
+test('upload and change controls cannot race a pending photo preparation', async () => {
   let finish!: (files: File[]) => void;
   (prepareTryOnImageFiles as jest.Mock).mockImplementation((files, progress) => {
     progress(1, files.length);
@@ -119,7 +136,7 @@ test('sample replacement and change controls cannot race a pending photo prepara
   const file = new File(['photo'], 'photo.jpg', { type: 'image/jpeg' });
   fireEvent.change(container.querySelectorAll('input[type="file"]')[0], { target: { files: [file] } });
   await screen.findByText('Preparing photo 1 of 1 on this device…');
-  for (const button of screen.getAllByRole('button', { name: /^Choose / })) expect(button).toBeDisabled();
+  expect(screen.getByRole('button', { name: /Upload full-body photo/ })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Change' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Upload clothing' })).toBeDisabled();
   await act(async () => { finish([file]); });
@@ -182,6 +199,7 @@ describe('optional shopping matches', () => {
     await act(async () => { fireEvent.change(inputs[0], { target: { files: [person] } }); });
     await act(async () => { fireEvent.change(inputs[1], { target: { files: [garment] } }); });
     await waitFor(() => expect(screen.getByRole('button', { name: /^Try it on/ })).toBeEnabled());
+    return { person, garment };
   }
 
   async function generate() {
@@ -190,14 +208,30 @@ describe('optional shopping matches', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /^Try it on/ })).toBeEnabled());
   }
 
+  test('retired upload components stay unmounted through visible uploads and generation', async () => {
+    const { container } = render(<Home />);
+    await screen.findByRole('heading', { name: 'Virtual Try-On Studio' });
+    expect(UploadZone).not.toHaveBeenCalled();
+    expect(BulkUploadZone).not.toHaveBeenCalled();
+    await uploadPhotos(container);
+    await generate();
+    expect(screen.getByRole('button', { name: 'Upload clothing' })).toBeVisible();
+    expect(UploadZone).not.toHaveBeenCalled();
+    expect(BulkUploadZone).not.toHaveBeenCalled();
+  });
+
   test.each([false, true])('successful try-on makes no shopping requests without opt-in (feature enabled: %s)', async enabled => {
     if (enabled) process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES = 'true';
     const { container } = render(<Home />);
     await screen.findByRole('heading', { name: 'Virtual Try-On Studio' });
     if (enabled) expect(screen.getByRole('checkbox', { name: shoppingLabel })).not.toBeChecked();
     else expect(screen.queryByRole('checkbox', { name: shoppingLabel })).not.toBeInTheDocument();
-    await uploadPhotos(container);
+    const uploaded = await uploadPhotos(container);
     await generate();
+    const generation = (httpClient.post as jest.Mock).mock.calls.find(([url]) => url === 'http://localhost:8000/api/try-on');
+    const submitted = generation![1] as FormData;
+    expect(submitted.getAll('user_images')).toEqual([uploaded.person]);
+    expect(submitted.getAll('clothing_images')).toEqual([uploaded.garment]);
     expect((httpClient.post as jest.Mock).mock.calls.map(([url]) => url)).toEqual(['/api/try-on/hold', 'http://localhost:8000/api/try-on']);
     expect(screen.getByRole('heading', { name: 'Example shopping ideas' })).toBeVisible();
     expect(screen.getAllByRole('link', { name: 'Search retailers' }).length).toBeGreaterThan(0);

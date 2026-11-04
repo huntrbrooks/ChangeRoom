@@ -29,7 +29,6 @@ import {
   RefreshCw,
   Search,
   Shirt,
-  SlidersHorizontal,
   Sparkles,
   ThumbsDown,
   ThumbsUp,
@@ -66,7 +65,6 @@ interface Product {
   source: string;
 }
 
-type WardrobeAudience = 'Women' | 'Men' | 'Unisex';
 type MirrorMode = 'fit' | 'zoom';
 type LookFeedback = 'liked' | 'disliked' | null;
 type ActionFeedbackTone = 'info' | 'success' | 'warning' | 'error';
@@ -132,69 +130,6 @@ const addImageCacheBust = (url: string): string =>
   DATA_IMAGE_URL_PATTERN.test(url) || BLOB_URL_PATTERN.test(url)
     ? url
     : `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
-
-const PREVIEW_SAMPLE_MODELS = [
-  {
-    label: 'Studio front',
-    src: '/preview-assets/sample-woman-1.png',
-    filename: 'studio-front-sample.png',
-  },
-  {
-    label: 'Menswear fit',
-    src: '/preview-assets/sample-man.png',
-    filename: 'menswear-sample.png',
-  },
-  {
-    label: 'Denim casual',
-    src: '/preview-assets/sample-woman-2.png',
-    filename: 'denim-casual-sample.png',
-  },
-];
-
-const PREVIEW_WARDROBE_ITEMS = [
-  {
-    label: 'Classic Trench Coat',
-    src: '/preview-assets/wardrobe-coat.png',
-    filename: 'classic-trench-coat.png',
-    category: 'upper_body',
-    audience: ['Women', 'Unisex'] as WardrobeAudience[],
-  },
-  {
-    label: 'Black Blazer',
-    src: '/preview-assets/wardrobe-blazer.png',
-    filename: 'black-blazer.png',
-    category: 'upper_body',
-    audience: ['Women', 'Men', 'Unisex'] as WardrobeAudience[],
-  },
-  {
-    label: 'Ribbed Tank Top',
-    src: '/preview-assets/wardrobe-tank.png',
-    filename: 'ribbed-tank-top.png',
-    category: 'upper_body',
-    audience: ['Women', 'Unisex'] as WardrobeAudience[],
-  },
-  {
-    label: 'High Rise Straight Jeans',
-    src: '/preview-assets/wardrobe-jeans.png',
-    filename: 'high-rise-straight-jeans.png',
-    category: 'lower_body',
-    audience: ['Women', 'Men', 'Unisex'] as WardrobeAudience[],
-  },
-  {
-    label: 'Leather Shoulder Bag',
-    src: '/preview-assets/wardrobe-bag.png',
-    filename: 'leather-shoulder-bag.png',
-    category: 'accessories',
-    audience: ['Women', 'Unisex'] as WardrobeAudience[],
-  },
-  {
-    label: 'Slingback Heels',
-    src: '/preview-assets/wardrobe-heels.png',
-    filename: 'slingback-heels.png',
-    category: 'shoes',
-    audience: ['Women'] as WardrobeAudience[],
-  },
-];
 
 const PREVIEW_MIRROR_THUMBNAILS = [
   { src: '/preview-assets/mirror-look.png', alt: 'Front look' },
@@ -336,8 +271,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const [showWardrobeLimitModal, setShowWardrobeLimitModal] = useState(false);
   const [isAddingSavedItem, setIsAddingSavedItem] = useState(false);
   const [blockedWardrobeIndices, setBlockedWardrobeIndices] = useState<Set<number>>(new Set());
-  const [activeWardrobeAudience, setActiveWardrobeAudience] = useState<WardrobeAudience>('Women');
-  const [showWardrobeFilters, setShowWardrobeFilters] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
   const [lookFeedback, setLookFeedback] = useState<LookFeedback>(null);
   const [mirrorMode, setMirrorMode] = useState<MirrorMode>('fit');
@@ -793,14 +726,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     [reportUiAction]
   );
 
-  const filteredPreviewWardrobeItems = useMemo(
-    () =>
-      PREVIEW_WARDROBE_ITEMS.filter((item) =>
-        item.audience.includes(activeWardrobeAudience)
-      ),
-    [activeWardrobeAudience]
-  );
-
   const shopProductsForDisplay = useMemo(
     () => (products.length > 0 ? products : PREVIEW_SHOP_PRODUCTS),
     [products]
@@ -826,19 +751,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   useEffect(() => {
     setShopProductOffset(0);
   }, [products]);
-
-  const handleWardrobeAudienceChange = useCallback(
-    (audience: WardrobeAudience) => {
-      setActiveWardrobeAudience(audience);
-      showActionFeedback(
-        `Showing ${audience.toLowerCase()} wardrobe samples.`,
-        'success',
-        'wardrobe_audience_filter',
-        { audience }
-      );
-    },
-    [showActionFeedback]
-  );
 
   const handleProductStep = useCallback(
     (direction: 1 | -1) => {
@@ -1314,15 +1226,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     };
   }, [wardrobePreviewUrls]);
 
-  const loadPublicAssetAsFile = useCallback(async (src: string, filename: string) => {
-    const response = await fetch(src);
-    if (!response.ok) {
-      throw new Error(`Could not load ${filename}`);
-    }
-    const blob = await response.blob();
-    return new File([blob], filename, { type: blob.type || 'image/png' });
-  }, []);
-
   const inferPreviewCategory = useCallback((name: string) => {
     const normalized = name.toLowerCase();
     if (/jean|pant|trouser|skirt|short/.test(normalized)) return 'lower_body';
@@ -1396,39 +1299,6 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       handleBulkUpload(prepared, analyses, shouldReplace);
     },
     [createPreviewAnalysis, handleBulkUpload, inferPreviewCategory, prepareSelectedPhotos, requireAuth, wardrobeItems.length]
-  );
-
-  const handleSampleModelSelect = useCallback(
-    async (sample: (typeof PREVIEW_SAMPLE_MODELS)[number]) => {
-      if (photoPreparationRef.current) return;
-      if (!requireAuth()) return;
-      try {
-        const file = await loadPublicAssetAsFile(sample.src, sample.filename);
-        updateUserImagesAndPreprocess([file]);
-      } catch (selectError) {
-        console.error('Failed to select sample model', selectError);
-        setError('Could not load that sample. Please upload a photo instead.');
-      }
-    },
-    [loadPublicAssetAsFile, requireAuth, updateUserImagesAndPreprocess]
-  );
-
-  const handleWardrobePreviewSelect = useCallback(
-    async (item: (typeof PREVIEW_WARDROBE_ITEMS)[number]) => {
-      if (photoPreparationRef.current) return;
-      if (!requireAuth()) return;
-      try {
-        const file = await loadPublicAssetAsFile(item.src, item.filename);
-        const analysis = createPreviewAnalysis(file, 0, item.label, item.category);
-        setError(null);
-        setWardrobeItems([{ file, analysis }]);
-        setBlockedWardrobeIndices(new Set());
-      } catch (selectError) {
-        console.error('Failed to select wardrobe preview item', selectError);
-        setError('Could not load that wardrobe item. Please upload one instead.');
-      }
-    },
-    [createPreviewAnalysis, loadPublicAssetAsFile, requireAuth]
   );
 
   const shopSaveReadyItems = useMemo<ShopSaveClothingItem[]>(() => {
@@ -2467,6 +2337,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
                 <input
                   ref={selfUploadInputRef}
+                  aria-label="Choose your photo files"
                   className="sr-only"
                   type="file"
                   accept="image/*,.heic,.heif"
@@ -2478,12 +2349,12 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   }}
                 />
 
-                <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_44px_minmax(250px,1.25fr)] md:items-center">
+                <div>
                   <button
                     type="button"
                     onClick={() => selfUploadInputRef.current?.click()}
                     disabled={Boolean(photoPreparationProgress)}
-                    className="group relative flex min-h-[158px] flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-white text-center transition-colors hover:border-[#6b35f4] hover:bg-[#f8f6ff]"
+                    className="group relative flex min-h-[158px] w-full flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-white text-center transition-colors hover:border-[#6b35f4] hover:bg-[#f8f6ff]"
                   >
                     {userPreviewUrls[0] ? (
                       <img
@@ -2505,38 +2376,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                     )}
                   </button>
 
-                  <div className="hidden items-center justify-center md:flex">
-                    <div className="relative h-[158px] w-px bg-slate-200">
-                      <span className="absolute left-1/2 top-1/2 flex h-10 w-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-sm text-slate-500 shadow-sm">
-                        or
-                      </span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <p className="mb-3 text-sm font-medium text-slate-700">Choose a sample</p>
-                    <div className="grid grid-cols-3 gap-3">
-                      {PREVIEW_SAMPLE_MODELS.map((sample) => (
-                        <button
-                          key={sample.filename}
-                          type="button"
-                          onClick={() => void handleSampleModelSelect(sample)}
-                          disabled={Boolean(photoPreparationProgress)}
-                          className="relative aspect-[0.8] overflow-hidden rounded-lg border border-slate-200 bg-slate-50 transition-all hover:border-[#6b35f4] hover:shadow-[0_8px_20px_rgba(107,53,244,0.16)]"
-                          aria-label={`Choose ${sample.label}`}
-                        >
-                          <Image
-                            src={sample.src}
-                            alt={sample.label}
-                            fill
-                            sizes="110px"
-                            loading={sample.filename === PREVIEW_SAMPLE_MODELS[0].filename ? 'eager' : 'lazy'}
-                            className="object-cover"
-                          />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  <p className="mt-3 text-sm text-slate-500">
+                    Use a clear full-body photo, at least 400 × 400 pixels.
+                  </p>
                 </div>
 
                 <div className="mt-4 flex items-center justify-between gap-4 text-sm">
@@ -2558,6 +2400,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
               <section className="rounded-xl border border-[#dfe3ea] bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.08)]">
                 <input
                   ref={wardrobeUploadInputRef}
+                  aria-label="Choose garment photo files"
                   className="sr-only"
                   type="file"
                   accept="image/*,.heic,.heif"
@@ -2576,112 +2419,43 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                     </span>
                     Choose garments for this session
                   </h2>
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowWardrobeFilters((current) => !current);
-                        reportUiAction('wardrobe_filters_toggle', 'completed', {
-                          nextOpen: !showWardrobeFilters,
-                        });
-                      }}
-                      className="flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
-                      aria-expanded={showWardrobeFilters}
-                      aria-controls="wardrobe-filter-panel"
-                    >
-                      <SlidersHorizontal size={15} />
-                      Filters
-                    </button>
-                  </div>
                 </div>
 
-                {showWardrobeFilters && (
-                  <div
-                    id="wardrobe-filter-panel"
-                    className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700"
-                  >
-                    Showing {filteredPreviewWardrobeItems.length} sample item
-                    {filteredPreviewWardrobeItems.length === 1 ? '' : 's'} for{' '}
-                    {activeWardrobeAudience.toLowerCase()}.
-                  </div>
-                )}
+                <p className="text-sm text-slate-500">
+                  Upload clear photos of up to five garments. These selections stay in this browser tab.
+                </p>
 
-                <div className="flex items-center gap-7 border-b border-slate-200 text-sm font-medium text-slate-500">
-                  {(['Women', 'Men', 'Unisex'] as WardrobeAudience[]).map((tab) => (
+                <div className="mt-3 flex items-stretch gap-3 overflow-x-auto pb-1">
+                  {wardrobePreviewUrls.map((item, index) => (
                     <button
-                      key={tab}
+                      key={`${item.name}-${index}`}
                       type="button"
-                      onClick={() => handleWardrobeAudienceChange(tab)}
-                      aria-pressed={activeWardrobeAudience === tab}
-                      className={`relative pb-3 ${activeWardrobeAudience === tab ? 'text-[#6b35f4]' : 'hover:text-slate-900'}`}
+                      onClick={() => { if (!photoPreparationRef.current) handleItemRemove(index); }}
+                      disabled={Boolean(photoPreparationProgress)}
+                      className={`relative h-[110px] w-[110px] flex-none overflow-hidden rounded-lg border bg-white transition-all ${
+                        index === 0
+                          ? 'border-[#6b35f4] shadow-[0_0_0_1px_#6b35f4]'
+                          : 'border-slate-200 hover:border-[#6b35f4]'
+                      }`}
+                      aria-label={`Remove ${item.name}`}
                     >
-                      {tab}
-                      {activeWardrobeAudience === tab && (
-                        <span className="absolute inset-x-0 bottom-[-1px] h-0.5 rounded-full bg-[#6b35f4]" />
+                      <img src={item.url} alt={item.name} className="h-full w-full object-cover" />
+                      {index === 0 && (
+                        <span className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#6b35f4] text-white">
+                          <CheckCircle2 size={15} />
+                        </span>
                       )}
                     </button>
                   ))}
-                </div>
-
-                <div className="mt-3 flex items-stretch gap-3 overflow-x-auto pb-1">
-                  {wardrobePreviewUrls.length > 0
-                    ? wardrobePreviewUrls.map((item, index) => (
-                        <button
-                          key={`${item.name}-${index}`}
-                          type="button"
-                          onClick={() => { if (!photoPreparationRef.current) handleItemRemove(index); }}
-                          disabled={Boolean(photoPreparationProgress)}
-                          className={`relative h-[110px] w-[110px] flex-none overflow-hidden rounded-lg border bg-white transition-all ${
-                            index === 0
-                              ? 'border-[#6b35f4] shadow-[0_0_0_1px_#6b35f4]'
-                              : 'border-slate-200 hover:border-[#6b35f4]'
-                          }`}
-                          aria-label={`Remove ${item.name}`}
-                        >
-                          <img src={item.url} alt={item.name} className="h-full w-full object-cover" />
-                          {index === 0 && (
-                            <span className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#6b35f4] text-white">
-                              <CheckCircle2 size={15} />
-                            </span>
-                          )}
-                        </button>
-                      ))
-                    : filteredPreviewWardrobeItems.map((item, index) => (
-                        <button
-                          key={item.filename}
-                          type="button"
-                          onClick={() => void handleWardrobePreviewSelect(item)}
-                          disabled={Boolean(photoPreparationProgress)}
-                          className={`relative h-[110px] w-[110px] flex-none overflow-hidden rounded-lg border bg-white transition-all ${
-                            index === 0
-                              ? 'border-[#6b35f4] shadow-[0_0_0_1px_#6b35f4]'
-                              : 'border-slate-200 hover:border-[#6b35f4]'
-                          }`}
-                          aria-label={`Choose ${item.label}`}
-                        >
-                          <Image
-                            src={item.src}
-                            alt={item.label}
-                            fill
-                            sizes="110px"
-                            loading={index === 0 ? 'eager' : 'lazy'}
-                            className="object-cover"
-                          />
-                          {index === 0 && (
-                            <span className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-[#6b35f4] text-white">
-                              <CheckCircle2 size={15} />
-                            </span>
-                          )}
-                        </button>
-                      ))}
                   <button
                     type="button"
                     onClick={() => wardrobeUploadInputRef.current?.click()}
                     disabled={Boolean(photoPreparationProgress)}
-                    className="flex h-[110px] w-[74px] flex-none items-center justify-center rounded-full border border-slate-200 bg-white text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.12)] transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
+                    className="flex min-h-[110px] min-w-[140px] flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition-colors hover:border-[#6b35f4] hover:bg-[#f8f6ff] hover:text-[#6b35f4]"
                     aria-label="Upload clothing"
                   >
-                    <ChevronRight size={22} />
+                    <Shirt size={28} aria-hidden="true" />
+                    <span>Upload clothing</span>
                   </button>
                 </div>
               </section>
@@ -2961,6 +2735,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         </section>
       </div>
 
+      {/* Keep the retired studio unmounted: CSS hiding still runs its upload effects. */}
+      {Boolean(false) && (
       <div className="hidden">
         <section className="mb-6 grid gap-5 lg:mb-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-end">
           <div>
@@ -3624,6 +3400,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
           </div>
         </div>
       </div>
+      )}
 
       <ShopSaveModal
         isOpen={isShopSaveOpen}
