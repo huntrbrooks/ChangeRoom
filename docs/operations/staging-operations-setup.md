@@ -58,3 +58,9 @@ Fresh provider metadata confirmed staging endpoint `ep-billowing-bar-bb2324fe` â
 - Environment policy must precede secret installation; actual-login SQL tests must precede DSN installation.
 - Manual staging success plus deliberately received failure/dead-man alert is required before calling operations ready.
 - Production activation is a later explicit step after its schema, restricted roles, costs and customer journey pass.
+
+## Manual hosted workflow evidence â€” 4 November 2026
+
+After PR17 merged at `8650138`, root configured the GitHub `staging` environment to accept only the `main` branch, installed the independently verified restricted operations DSN and rotated storefront bypass, and set exact staging origins. No repository-wide or production secret was used. Run [41780421507](https://github.com/huntrbrooks/ChangeRoom/actions/runs/41780421507) passed both availability and cleanup, with all stale/closure counters zero.
+
+For one deliberate failure rehearsal, only the staging `API_ORIGIN` variable temporarily pointed at the protected staging storefront. The worker probe sends no storefront bypass and refuses redirects; [41780755147](https://github.com/huntrbrooks/ChangeRoom/actions/runs/41780755147) correctly failed availability on HTTP302 while cleanup passed. The correct worker origin was restored in a finally block. Recovery run [41780784285](https://github.com/huntrbrooks/ChangeRoom/actions/runs/41780784285) passed both jobs. No purchase, model request, production configuration or data was changed. This proves scheduler execution and failure detection; it does not by itself prove operator notification receipt or an independent missing-heartbeat alert. Production scheduling remains disabled.
