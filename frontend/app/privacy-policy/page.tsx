@@ -20,14 +20,18 @@ export default function PrivacyPolicy() {
         </div>
 
         <p className="text-gray-600 mb-8 text-sm">
-          Last updated: {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+          Last updated: 4 November 2026
         </p>
 
         <div className="prose prose-invert max-w-none space-y-8 text-gray-700">
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">1. Introduction</h2>
+            <p className="leading-relaxed mb-4">
+              IGetDressed.Online is operated by FRESH&apos;N UP AU PTY LTD (ABN 11 678 658 823), based in Victoria, Australia.
+              In this notice, &quot;we&quot;, &quot;us&quot; and &quot;our&quot; refer to that company.
+            </p>
             <p className="leading-relaxed">
-              IGetDressed.Online (&quot;we,&quot; &quot;our,&quot; or &quot;us&quot;) is committed to protecting your privacy. This Privacy Policy explains 
+              We are committed to protecting your privacy. This Privacy Policy explains
               how we collect, use, disclose, and safeguard your information when you use our virtual try-on service and website.
             </p>
           </section>
@@ -190,8 +194,7 @@ export default function PrivacyPolicy() {
           <section>
             <h2 className="text-2xl font-bold mb-4 text-[#8B5CF6]-300">13. Contact Us</h2>
             <p className="leading-relaxed">
-              If you have any questions about this Privacy Policy or our privacy practices, please contact us through the contact information 
-              provided on our website.
+              For privacy questions or requests, email <a className="underline" href="mailto:gerard@aihuntrconsulting.com">gerard@aihuntrconsulting.com</a>.
             </p>
           </section>
         </div>
