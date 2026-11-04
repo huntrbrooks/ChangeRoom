@@ -7,7 +7,7 @@ def test_normalize_with_budget_shrinks_under_limit():
     from services.image_normalize import normalize_image_bytes_with_budget
 
     # Create a large, noisy-ish image (harder to compress than a solid color).
-    img = PILImage.new("RGB", (5000, 3500), color=(120, 130, 140))
+    img = PILImage.new("RGB", (2800, 2000), color=(120, 130, 140))
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     raw = buf.getvalue()

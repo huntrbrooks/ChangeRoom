@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from services import subscriber_image, gemini, shop
 from services import tryon_jobs
-from services.image_normalize import normalize_image_bytes, ensure_heif_registered
+from services.image_normalize import normalize_image_bytes, ensure_heif_registered, ImagePixelLimitError
 from services.auth import require_backend_auth
 
 load_dotenv()
@@ -51,7 +51,6 @@ async def worker_lifespan(_app):
 app = FastAPI(title="IGetDressed.Online API", lifespan=worker_lifespan)
 
 # Add a small “which stack served this response?” marker + request correlation id to all responses.
-@app.middleware("http")
 async def add_stack_header(request: Request, call_next):
     # Prefer client-provided request id; otherwise generate one.
     rid = (
@@ -131,6 +130,31 @@ class RequestBodyLimit:
 
 app.add_middleware(RequestBodyLimit)
 
+
+class GenerationAdmission:
+    """Authenticate and reserve capacity before multipart parsing or image decode."""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") != "POST" or scope.get("path") not in {"/api/try-on", "/api/identify-products"}:
+            return await self.app(scope, receive, send)
+        try:
+            await require_backend_auth(Request(scope, receive))
+        except HTTPException as exc:
+            return await JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)(scope, receive, send)
+        try:
+            await asyncio.wait_for(_generation_slots.acquire(), timeout=0.25)
+        except asyncio.TimeoutError:
+            return await JSONResponse({"detail": "The fitting room is busy. No credit was used; try again shortly."}, status_code=429)(scope, receive, send)
+        try:
+            return await self.app(scope, receive, send)
+        finally:
+            _generation_slots.release()
+
+
+app.add_middleware(GenerationAdmission)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,  # Specific origins for production
@@ -142,6 +166,10 @@ app.add_middleware(
     # Expose debugging/correlation headers to the browser.
     expose_headers=["X-ChangeRoom-Stack", "X-Request-Id", "X-ChangeRoom-Request-Id"],
 )
+
+# Register last so authentication, busy and body-limit responses retain the same
+# correlation headers as successful requests, including early admission rejects.
+app.middleware("http")(add_stack_header)
 
 
 
@@ -249,7 +277,9 @@ async def read_and_normalize_upload(
             normalize_image_bytes, contents, max_dimension=max_dimension, prefer_mime="image/jpeg"
         )
         return normalized, mime_type, w, h
-    except Exception as e:
+    except ImagePixelLimitError:
+        raise HTTPException(413, "This photo is too large to process. Export a JPG or PNG at 2200 pixels or less on its longest side, then try again. No credit or free trial was used.")
+    except Exception:
         # Special-case HEIC/HEIF without pillow-heif
         ct = (file.content_type or "").lower()
         ext = Path(file.filename or "").suffix.lower()
@@ -282,18 +312,7 @@ async def retired_media_endpoint():
 
 _generation_slots = asyncio.Semaphore(max(1,min(8,int(os.getenv("TRYON_CONCURRENCY","1")))))
 
-async def reserve_worker_slot():
-    try:
-        await asyncio.wait_for(_generation_slots.acquire(), timeout=0.25)
-    except asyncio.TimeoutError:
-        raise HTTPException(429, "The fitting room is busy. No credit was used; try again shortly.")
-    try:
-        yield
-    finally:
-        _generation_slots.release()
-
-
-@app.post("/api/try-on", dependencies=[Depends(require_backend_auth), Depends(reserve_worker_slot)])
+@app.post("/api/try-on")
 async def try_on(
     request: Request,
     user_image: Optional[UploadFile] = File(None),  # Backward compatibility
@@ -343,6 +362,7 @@ async def try_on(
     metadata = parse_meta(garment_metadata)
     # Do not infer or store age, gender, skin tone or body measurements.
     person_inputs, garment_inputs = [], []
+    reference_budget = subscriber_image.MAX_INPUT_BYTES // (len(people) + len(clothes))
     if main_index is not None and not 0 <= main_index < len(people):
         raise HTTPException(400, "Invalid primary person reference")
     for is_person, files in ((True, people), (False, clothes)):
@@ -353,10 +373,17 @@ async def try_on(
             contents, mime, w, h = await read_and_normalize_upload(f, label="Photo")
             if is_person and min(w or 0, h or 0) < 400:
                 raise HTTPException(422, "User image resolution too low")
+            try:
+                reference = await asyncio.to_thread(subscriber_image.bound_reference,
+                    subscriber_image.Reference(contents, mime), reference_budget)
+            except ValueError:
+                raise HTTPException(413, "This photo is too large to process. Export a smaller JPG or PNG, then try again. No credit or free trial was used.")
+            # Release the potentially much larger normalized PNG before the next decode.
+            del contents
             if is_person:
-                person_inputs.append(subscriber_image.Reference(contents,mime))
+                person_inputs.append(reference)
             else:
-                garment_inputs.append(subscriber_image.Reference(contents,mime))
+                garment_inputs.append(reference)
 
     funding = await tryon_jobs.claim(rid, subject)
     try:
@@ -388,7 +415,7 @@ async def retired_rewrite():
     raise HTTPException(410, "Description rewriting is not available.")
 
 
-@app.post("/api/identify-products", dependencies=[Depends(require_backend_auth)])
+@app.post("/api/identify-products")
 async def identify_products(
     request: Request,
     clothing_image: UploadFile = File(...),

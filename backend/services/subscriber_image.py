@@ -58,6 +58,25 @@ class Reference:
     mime: str
 
 
+def compact_reference(reference):
+    with Image.open(io.BytesIO(reference.data)) as src:
+        src.thumbnail((1250,1250))
+        rgba = src.convert("RGBA")
+        image = Image.new("RGB", rgba.size, "white")
+        image.paste(rgba, mask=rgba.getchannel("A"))
+        out = io.BytesIO(); image.save(out, "JPEG", quality=78)
+        return Reference(out.getvalue(), "image/jpeg")
+
+
+def bound_reference(reference, max_bytes):
+    """Discard expanded PNG bytes before decoding the next upload."""
+    if len(reference.data) > max_bytes:
+        reference = compact_reference(reference)
+    if len(reference.data) > max_bytes:
+        raise ValueError("Image reference exceeds allowed size")
+    return reference
+
+
 def prepare_references(people, garments, main_index, metadata):
     if not 1 <= len(people) <= 5 or not 1 <= len(garments) <= 5:
         raise ValueError("Invalid reference count")
@@ -67,15 +86,7 @@ def prepare_references(people, garments, main_index, metadata):
     refs = list(ordered)
     if sum(len(r.data) for r in refs) > MAX_INPUT_BYTES:
         # Preserve the same references for both providers without using a file host.
-        def compact(r):
-            with Image.open(io.BytesIO(r.data)) as src:
-                src.thumbnail((1250,1250))
-                rgba = src.convert("RGBA")
-                image = Image.new("RGB", rgba.size, "white")
-                image.paste(rgba, mask=rgba.getchannel("A"))
-                out = io.BytesIO(); image.save(out, "JPEG", quality=78)
-                return Reference(out.getvalue(), "image/jpeg")
-        refs = [compact(r) for r in refs]
+        refs = [compact_reference(r) for r in refs]
     if sum(len(r.data) for r in refs) > MAX_INPUT_BYTES:
         raise ValueError("Image references exceed allowed size")
     prompt = (

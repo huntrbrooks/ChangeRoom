@@ -52,6 +52,7 @@ import { getBillingBannerState } from '@/lib/billingBanner';
 import { getDemoTryOnImageUrl, getDemoTryOnProducts } from '@/lib/pitchDemo';
 import { logger } from '@/lib/logger';
 import { recordClientDiagnostic } from '@/lib/clientDiagnostics';
+import { PHOTO_PREPARATION_ERROR, prepareTryOnImageFiles } from '@/lib/imageConversion';
 
 // Force dynamic rendering to prevent static generation issues with Clerk
 export const dynamic = 'force-dynamic';
@@ -308,6 +309,10 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isTryOnLoading, setIsTryOnLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [photoPreparationProgress, setPhotoPreparationProgress] = useState<string | null>(null);
+  const photoPreparationRef = useRef(false);
+  const photoPreparationControllerRef = useRef<AbortController | null>(null);
+  const photoPreparationMountedRef = useRef(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [isPreviewResult, setIsPreviewResult] = useState(false);
   const [guestPreviewConsumed, setGuestPreviewConsumed] = useState(false);
@@ -351,6 +356,14 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const wardrobeUploadInputRef = useRef<HTMLInputElement | null>(null);
   const actionFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const modelPhotoAutoRunKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    photoPreparationMountedRef.current = true;
+    return () => {
+      photoPreparationMountedRef.current = false;
+      photoPreparationControllerRef.current?.abort();
+    };
+  }, []);
 
   const withRetry = useCallback(
     async function withRetryFn<T>(fn: () => Promise<T>, retries = 2, delayMs = 1500): Promise<T> {
@@ -722,6 +735,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const canAttemptTryOn =
     (isAuthenticated || pitchDemoEnabled) &&
     !isGenerating &&
+    !photoPreparationProgress &&
     modelPhotoStatus !== 'processing' &&
     modelPhotoStatus !== 'error' &&
     modelPhotoReadyForTryOn &&
@@ -1316,21 +1330,47 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
     return 'upper_body';
   }, []);
 
+  const prepareSelectedPhotos = useCallback(async (files: File[]) => {
+    if (photoPreparationRef.current || !photoPreparationMountedRef.current) return null;
+    photoPreparationRef.current = true;
+    const controller = new AbortController();
+    photoPreparationControllerRef.current = controller;
+    const isCurrent = () => photoPreparationMountedRef.current &&
+      photoPreparationControllerRef.current === controller && !controller.signal.aborted;
+    setError(null);
+    try {
+      const prepared = await prepareTryOnImageFiles(files, (current, total) => {
+        if (isCurrent()) setPhotoPreparationProgress(`Preparing photo ${current} of ${total} on this device…`);
+      }, controller.signal);
+      return isCurrent() ? prepared : null;
+    } catch {
+      if (isCurrent()) setError(PHOTO_PREPARATION_ERROR);
+      return null;
+    } finally {
+      if (photoPreparationControllerRef.current === controller) {
+        photoPreparationControllerRef.current = null;
+        photoPreparationRef.current = false;
+        if (photoPreparationMountedRef.current) setPhotoPreparationProgress(null);
+      }
+    }
+  }, []);
+
   const handleSelfFilesSelected = useCallback(
-    (fileList: FileList | null) => {
+    async (fileList: FileList | null) => {
       const files = Array.from(fileList || [])
         .filter((file) => file.type.startsWith('image/') || /\.(heic|heif)$/i.test(file.name))
         .slice(0, 5);
       if (files.length === 0) { if (fileList?.length) setError('Choose a JPG, PNG, WebP or HEIC photo.'); return; }
       if (files.some(f => f.size > 10 * 1024 * 1024)) { setError('Each photo must be 10 MB or smaller.'); return; }
       if (!requireAuth()) return;
-      updateUserImagesAndPreprocess(files);
+      const prepared = await prepareSelectedPhotos(files);
+      if (prepared && photoPreparationMountedRef.current) updateUserImagesAndPreprocess(prepared);
     },
-    [requireAuth, updateUserImagesAndPreprocess]
+    [prepareSelectedPhotos, requireAuth, updateUserImagesAndPreprocess]
   );
 
   const handleWardrobeFilesSelected = useCallback(
-    (fileList: FileList | null) => {
+    async (fileList: FileList | null) => {
       const remainingSlots = Math.max(0, 5 - wardrobeItems.length);
       const shouldReplace = false;
       if (remainingSlots === 0) { setError('Remove an item before adding another. A look can contain up to five garments.'); return; }
@@ -1341,7 +1381,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       if (files.length === 0) { if (fileList?.length) setError('Choose a JPG, PNG, WebP or HEIC photo.'); return; }
       if (files.some(f => f.size > 10 * 1024 * 1024)) { setError('Each photo must be 10 MB or smaller.'); return; }
       if (!requireAuth()) return;
-      const analyses = files.map((file, index) =>
+      const prepared = await prepareSelectedPhotos(files);
+      if (!prepared || !photoPreparationMountedRef.current) return;
+      const analyses = prepared.map((file, index) =>
         createPreviewAnalysis(
           file,
           shouldReplace ? index : wardrobeItems.length + index,
@@ -1350,13 +1392,14 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         )
       );
       setError(null);
-      handleBulkUpload(files, analyses, shouldReplace);
+      handleBulkUpload(prepared, analyses, shouldReplace);
     },
-    [createPreviewAnalysis, handleBulkUpload, inferPreviewCategory, requireAuth, wardrobeItems.length]
+    [createPreviewAnalysis, handleBulkUpload, inferPreviewCategory, prepareSelectedPhotos, requireAuth, wardrobeItems.length]
   );
 
   const handleSampleModelSelect = useCallback(
     async (sample: (typeof PREVIEW_SAMPLE_MODELS)[number]) => {
+      if (photoPreparationRef.current) return;
       if (!requireAuth()) return;
       try {
         const file = await loadPublicAssetAsFile(sample.src, sample.filename);
@@ -1371,6 +1414,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
   const handleWardrobePreviewSelect = useCallback(
     async (item: (typeof PREVIEW_WARDROBE_ITEMS)[number]) => {
+      if (photoPreparationRef.current) return;
       if (!requireAuth()) return;
       try {
         const file = await loadPublicAssetAsFile(item.src, item.filename);
@@ -1590,6 +1634,10 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   );
 
   const handleGenerate = async () => {
+    if (photoPreparationRef.current) {
+      setError('Please wait for your photos to finish preparing.');
+      return;
+    }
     logger.info("tryon_generate_requested", {
       userImagesCount: userImages.length,
       wardrobeItems: wardrobeItems.length,
@@ -2387,6 +2435,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
               <p className="mt-3 text-sm text-amber-800" role="status">The try-on service is warming up or offline. <button type="button" className="underline" onClick={() => setHealthAttempt(n => n + 1)}>Retry connection</button></p>
             )}
             {error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>}
+            {photoPreparationProgress && <p role="status" className="mt-3 text-sm text-slate-600">{photoPreparationProgress}</p>}
             {actionFeedback && (
               <div
                 role="status"
@@ -2421,8 +2470,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   type="file"
                   accept="image/*,.heic,.heif"
                   multiple
+                  disabled={Boolean(photoPreparationProgress) || isGenerating}
                   onChange={(event) => {
-                    handleSelfFilesSelected(event.currentTarget.files);
+                    void handleSelfFilesSelected(event.currentTarget.files);
                     event.currentTarget.value = '';
                   }}
                 />
@@ -2431,6 +2481,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   <button
                     type="button"
                     onClick={() => selfUploadInputRef.current?.click()}
+                    disabled={Boolean(photoPreparationProgress)}
                     className="group relative flex min-h-[158px] flex-col items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-white text-center transition-colors hover:border-[#6b35f4] hover:bg-[#f8f6ff]"
                   >
                     {userPreviewUrls[0] ? (
@@ -2469,6 +2520,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                           key={sample.filename}
                           type="button"
                           onClick={() => void handleSampleModelSelect(sample)}
+                          disabled={Boolean(photoPreparationProgress)}
                           className="relative aspect-[0.8] overflow-hidden rounded-lg border border-slate-200 bg-slate-50 transition-all hover:border-[#6b35f4] hover:shadow-[0_8px_20px_rgba(107,53,244,0.16)]"
                           aria-label={`Choose ${sample.label}`}
                         >
@@ -2494,6 +2546,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   <button
                     type="button"
                     onClick={() => selfUploadInputRef.current?.click()}
+                    disabled={Boolean(photoPreparationProgress)}
                     className="font-semibold text-[#6b35f4] transition-colors hover:text-[#4c24c8]"
                   >
                     Change
@@ -2508,8 +2561,9 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   type="file"
                   accept="image/*,.heic,.heif"
                   multiple
+                  disabled={Boolean(photoPreparationProgress) || isGenerating}
                   onChange={(event) => {
-                    handleWardrobeFilesSelected(event.currentTarget.files);
+                    void handleWardrobeFilesSelected(event.currentTarget.files);
                     event.currentTarget.value = '';
                   }}
                 />
@@ -2574,7 +2628,8 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                         <button
                           key={`${item.name}-${index}`}
                           type="button"
-                          onClick={() => handleItemRemove(index)}
+                          onClick={() => { if (!photoPreparationRef.current) handleItemRemove(index); }}
+                          disabled={Boolean(photoPreparationProgress)}
                           className={`relative h-[110px] w-[110px] flex-none overflow-hidden rounded-lg border bg-white transition-all ${
                             index === 0
                               ? 'border-[#6b35f4] shadow-[0_0_0_1px_#6b35f4]'
@@ -2595,6 +2650,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                           key={item.filename}
                           type="button"
                           onClick={() => void handleWardrobePreviewSelect(item)}
+                          disabled={Boolean(photoPreparationProgress)}
                           className={`relative h-[110px] w-[110px] flex-none overflow-hidden rounded-lg border bg-white transition-all ${
                             index === 0
                               ? 'border-[#6b35f4] shadow-[0_0_0_1px_#6b35f4]'
@@ -2620,6 +2676,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                   <button
                     type="button"
                     onClick={() => wardrobeUploadInputRef.current?.click()}
+                    disabled={Boolean(photoPreparationProgress)}
                     className="flex h-[110px] w-[74px] flex-none items-center justify-center rounded-full border border-slate-200 bg-white text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.12)] transition-colors hover:border-[#6b35f4] hover:text-[#6b35f4]"
                     aria-label="Upload clothing"
                   >
@@ -2650,7 +2707,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                     setIsGenerating(false);
                   });
                 }}
-                disabled={isGenerating}
+                disabled={isGenerating || Boolean(photoPreparationProgress)}
                 className="flex min-h-[54px] w-full items-center justify-center gap-3 rounded-lg bg-[#6b35f4] px-5 text-base font-bold text-white shadow-[0_14px_28px_rgba(107,53,244,0.28)] transition-all hover:bg-[#5c2bdd] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-slate-300"
               >
                 {isGenerating ? (
@@ -2658,7 +2715,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
                 ) : (
                   <Sparkles size={21} fill="currentColor" strokeWidth={1.6} />
                 )}
-                <span>{isGenerating ? 'Generating your look...' : isGuestPitchDemo ? 'Launch demo preview' : 'Try it on'}</span>
+                <span>{photoPreparationProgress ? 'Preparing photos…' : isGenerating ? 'Generating your look...' : isGuestPitchDemo ? 'Launch demo preview' : 'Try it on'}</span>
                 {!isGenerating && (
                   <span className="ml-auto rounded-full bg-[#5528c8] px-4 py-1.5 text-sm font-semibold text-white/90">
                     {isBypass ? 'Included' : isOnTrial ? 'Free' : '1 credit'}

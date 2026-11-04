@@ -89,7 +89,9 @@ def private_jpeg(value: str, trial: bool) -> bytes:
         raise ValueError("unsupported image response")
     raw = base64.b64decode(payload, validate=True)
     with Image.open(io.BytesIO(raw)) as src:
-        if src.width * src.height > 25_000_000:
+        # Requested providers return ~1K images. Refuse unexpectedly large decoded
+        # results before EXIF/colour copies on the 512 MiB worker.
+        if src.width * src.height > 4_000_000:
             raise ValueError("image exceeds size limit")
         image = ImageOps.exif_transpose(src).convert("RGB")
     image.thumbnail((1800, 1800))
