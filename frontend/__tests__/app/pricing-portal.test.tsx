@@ -14,7 +14,7 @@ test.each(['preview', 'development', undefined])('target %s has no path to the l
   render(<PricingPage />);
   expect(screen.queryByRole('link', { name: /portal by email/i })).toBeNull();
   expect(screen.getByRole('link', { name: /manage billing or cancel/i })).toHaveAttribute('href', '/billing');
-  expect(screen.getByRole('link', { name: 'info@igetdressed.online' })).toHaveAttribute('href', 'mailto:info@igetdressed.online');
+  expect(screen.getByRole('link', { name: 'gerard@aihuntrconsulting.com' })).toHaveAttribute('href', 'mailto:gerard@aihuntrconsulting.com');
 });
 
 test('production retains the email fallback during the sales pause', () => {

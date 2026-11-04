@@ -25,6 +25,7 @@ jobs:
         env:
           APP_ORIGIN: ${{ vars.CHANGEROOM_APP_ORIGIN }}
           API_ORIGIN: ${{ vars.CHANGEROOM_API_ORIGIN }}
+          CHANGEROOM_APP_PROTECTION_BYPASS: ${{ secrets.CHANGEROOM_APP_PROTECTION_BYPASS }}
         run: python3 scripts/ops/monitor_http.py
   sweep:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'workflow_dispatch' || vars.SUBSCRIBER_OPS_ENABLED == 'true')

@@ -1,0 +1,33 @@
+# Prepared for cost review. Applying this blueprint starts paid Render compute.
+# Deploy only after the live database migrations/roles and image key are ready.
+# Does not configure or reactivate the legacy or YOLO services.
+services:
+  - type: web
+    name: changeroom-production-worker
+    runtime: docker
+    repo: https://github.com/huntrbrooks/ChangeRoom
+    branch: main
+    region: singapore
+    plan: starter
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /
+    autoDeploy: false
+    numInstances: 1
+    envVars:
+      - key: BACKEND_AUTH_MODE
+        value: clerk
+      - key: CLERK_ISSUER
+        value: https://clerk.igetdressed.online
+      - key: ALLOWED_ORIGINS
+        value: https://igetdressed.online,https://www.igetdressed.online
+      - key: MAX_TOTAL_SIZE
+        value: '31457280'
+      - key: TRYON_CONCURRENCY
+        value: '1'
+      - key: TRYON_DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+# Optional GEMINI_API_KEY must be a separate, restricted fallback credential.
+# Do not put Stripe, Clerk secret, database-owner or staging credentials here.

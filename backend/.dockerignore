@@ -2,6 +2,7 @@
 **
 !Dockerfile
 !requirements.txt
+!requirements.lock
 !main.py
 !container_entrypoint.py
 !services/

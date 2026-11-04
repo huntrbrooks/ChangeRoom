@@ -1,4 +1,5 @@
--- Apply after base schema, user_outfits, affiliate_clicks, tryon_jobs and subscriber_billing_v2.
+-- Apply after base schema, user_outfits, migration_account_closure_prerequisites.sql,
+-- tryon_jobs and subscriber_billing_v2. Do not rely on lazy affiliate_clicks creation.
 -- No existing account is closed by this migration.
 BEGIN;
 CREATE TABLE IF NOT EXISTS public.account_closures (

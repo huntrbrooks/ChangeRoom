@@ -10,10 +10,20 @@ settings=(--env PORT=9876 --env K_SERVICE=rehearsal
   --env ALLOWED_ORIGINS=https://studio.example.invalid
   --env TRYON_DATABASE_URL=postgresql://worker@db.example.invalid/jobs)
 restrictions=(--pull=never --network=none --read-only --tmpfs /tmp:rw,nosuid,nodev)
+run_with_deadline() {
+  # Python is already required by the checks; avoid a GNU timeout dependency on macOS.
+  python3 - "$@" <<'PY'
+import subprocess,sys
+try:
+    sys.exit(subprocess.run(sys.argv[1:], timeout=15).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+PY
+}
 # All other required settings exist, but no Clerk issuer is supplied. A secure
 # worker must exit deliberately, rather than merely failing the build or timing out.
 status=0
-timeout 15s docker run --name "$name" "${restrictions[@]}" "${settings[@]}" "$image" || status=$?
+run_with_deadline docker run --name "$name" "${restrictions[@]}" "${settings[@]}" "$image" || status=$?
 if [[ "$status" != 1 ]]; then
   echo "Expected an immediate configuration error without a Clerk issuer; got $status" >&2
   exit 1
@@ -24,7 +34,7 @@ cleanup
 # Uvicorn must fail its FastAPI lifespan even when only a fallback is configured.
 # The fake keys are literal fixtures; --network=none is still in force.
 status=0
-timeout 15s docker run --name "$name" "${restrictions[@]}" "${settings[@]}" \
+run_with_deadline docker run --name "$name" "${restrictions[@]}" "${settings[@]}" \
   --env CLERK_ISSUER=https://identity.example.invalid \
   --env GEMINI_API_KEY=ci-fake-fallback-not-a-provider-key "$image" || status=$?
 if [[ "$status" != 3 ]]; then

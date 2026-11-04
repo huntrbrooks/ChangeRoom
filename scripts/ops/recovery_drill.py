@@ -59,12 +59,13 @@ require(sql(f"SELECT current_database()='recovery_test' AND current_user='crtest
 for t in TABLES:
     if sql(f"SELECT to_regclass('public.{t}') IS NOT NULL")=='t':
         require(sql(f'SELECT count(*) FROM public.{t}')=='0','Disposable drill tables must be empty: '+t)
-for name in ('schema.sql','migration_add_clothing_item_offers.sql','migration_add_user_outfits.sql','migration_subscriber_billing_v2.sql','migration_tryon_jobs.sql','migration_account_closure.sql'):
+for name in ('schema.sql','migration_add_clothing_item_offers.sql','migration_add_user_outfits.sql','migration_subscriber_billing_v2.sql','migration_tryon_jobs.sql','migration_account_closure_prerequisites.sql','migration_account_closure.sql'):
     cmd(['psql','-Xq','-v','ON_ERROR_STOP=1','-f',str(args.migrations / name)])
 cmd(['psql','-Xq','-v','ON_ERROR_STOP=1','-f',str(ROOT/'database/migration_tryon_ops.sql')])
 require(sql(COUNT_SQL)=='0','Nonempty fixture tables')
 # Only on the synthetic DB: verify closure data isolation/duplicate handling, then prove the
 # operator sees actionable aggregate counts when an external cleanup or payment closure stalls.
+cmd(['psql','-Xq','-v','ON_ERROR_STOP=1','-f',str(ROOT/'database/tests/launch-migration-prerequisites.sql')])
 cmd(['psql','-Xq','-v','ON_ERROR_STOP=1','-f',str(ROOT/'database/tests/account-closure.sql')])
 require(sql('SELECT * FROM public.closure_ops_counts()')=='0|0|0','Disposable closure queue must be empty')
 observed=sql("""BEGIN;

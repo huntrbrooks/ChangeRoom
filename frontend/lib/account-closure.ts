@@ -25,27 +25,35 @@ export async function closeDeletedAccount(userId: string) {
     if (record?.stripe_customer_id) {
       const key = process.env.STRIPE_SECRET_KEY;
       const listed = [process.env.STRIPE_CREATOR_PRICE_ID, process.env.STRIPE_POWER_PRICE_ID].filter(Boolean) as string[];
-      if (!key || listed.length !== 2) throw new Error('billing_configuration_unavailable');
+      if (!key) throw new Error('billing_configuration_unavailable');
       const recurring = new Set(listed);
+      const recurringCatalogComplete = recurring.size === 2;
       const appPrices = new Set([...listed, ...[process.env.STRIPE_STARTER_PRICE_ID, process.env.STRIPE_STARTER_XMAS_PRICE_ID,
         process.env.STRIPE_VALUE_PRICE_ID, process.env.STRIPE_PRO_PRICE_ID].filter(Boolean) as string[]]);
       const stripe = new Stripe(key);
       const customer = await stripe.customers.retrieve(record.stripe_customer_id);
       const customerUser = customer.deleted ? null : customer.metadata?.clerkUserId;
+      // A packs-only deployment might not map historical recurring prices. Still
+      // expire proven pack checkouts, but do not silently ignore a subscription
+      // belonging to this customer when its price cannot be identified.
+      const unmappedOwnedRecurring = (owner: string | undefined) =>
+        !recurringCatalogComplete && (customerUser === userId || owner === userId);
       // An open Checkout could otherwise create a subscription after this check.
       for await (const session of stripe.checkout.sessions.list({customer: record.stripe_customer_id, status: 'open', limit: 100})) {
         const items = await stripe.checkout.sessions.listLineItems(session.id, {limit: 100});
         const priceIds = items.data.map(i => i.price?.id || '');
         const decision = cancellationDecision(userId, customerUser, session.metadata?.clerkUserId,
           priceIds, appPrices, false);
-        if (decision === 'review' || (items.has_more && decision !== 'ignore')) needsReview = true;
+        if (decision === 'review' || (items.has_more && decision !== 'ignore') ||
+            (session.mode === 'subscription' && unmappedOwnedRecurring(session.metadata?.clerkUserId))) needsReview = true;
         else if (decision === 'cancel') await stripe.checkout.sessions.expire(session.id);
       }
       for await (const sub of stripe.subscriptions.list({ customer: record.stripe_customer_id, status: 'all', limit: 100 })) {
         if (sub.status === 'canceled' || sub.status === 'incomplete_expired') continue;
         const decision = cancellationDecision(userId, customerUser, sub.metadata?.clerkUserId,
           sub.items.data.map(i=>i.price.id), recurring, sub.id === record.stripe_subscription_id);
-        if (decision === 'review' || (sub.items.has_more && decision !== 'ignore')) needsReview = true;
+        if (decision === 'review' || (sub.items.has_more && decision !== 'ignore') ||
+            unmappedOwnedRecurring(sub.metadata?.clerkUserId)) needsReview = true;
         else if (decision === 'cancel') await stripe.subscriptions.cancel(sub.id, {invoice_now: false, prorate: false});
       }
     } else if (record?.stripe_subscription_id) {

@@ -18,7 +18,13 @@ def probe(name, path, expected):
         raise ValueError(f'{name} must be an HTTPS origin without credentials')
     try:
         opener = urllib.request.build_opener(NoRedirect)
-        with opener.open(urllib.request.Request(base + path, headers={'User-Agent': 'ChangeRoom-Availability/1.0'}), timeout=15) as res:
+        headers = {'User-Agent': 'ChangeRoom-Availability/1.0'}
+        # Only the protected staging storefront needs this. Never forward this
+        # credential to the separate worker, and never follow a redirect.
+        bypass = os.environ.get('CHANGEROOM_APP_PROTECTION_BYPASS', '')
+        if name == 'APP_ORIGIN' and bypass:
+            headers['x-vercel-protection-bypass'] = bypass
+        with opener.open(urllib.request.Request(base + path, headers=headers), timeout=15) as res:
             if res.status != 200 or res.url != base + path:
                 raise ValueError('unexpected redirect')
             body = res.read(256_000)

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
-export const SUPPORT_EMAIL = 'info@igetdressed.online';
+export const SUPPORT_EMAIL = 'gerard@aihuntrconsulting.com';
 
 export function SupportEmail() {
   return <a className="underline" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>;

@@ -2,7 +2,7 @@
 
 This image runs only the ChangeRoom FastAPI worker. Next.js, Clerk, Postgres, Stripe, the cleanup schedule and the model provider remain separate. Use a new, isolated staging environment before changing the frontend or any production DNS. This does not deploy the separate YOLO service.
 
-From the repository root, build for the Linux architecture your host supports, for example `docker build --platform=linux/amd64 -t changeroom-worker:rehearsal backend`. Build with the **backend** context: only the selected Python modules and dependency manifest enter the build. Record the resulting image digest and use that immutable image for rehearsal and promotion. Release-gate an image rebuild: the Python base tag and existing application requirements can resolve newer packages.
+From the repository root, build for the Linux architecture your host supports, for example `docker build --platform=linux/amd64 -t changeroom-worker:rehearsal backend`. Build with the **backend** context: only the selected Python modules and dependency manifest enter the build. The Dockerfile pins the Python base digest and installs the exact versions in `requirements.lock`. Record the resulting image digest and use that immutable image for rehearsal and promotion. Dependency upgrades require updating the lock, auditing it, rebuilding and rerunning the container checks; `requirements.txt` describes the direct requirements but is not the container install input.
 
 Set configuration and secrets **at runtime** through the host or a private local env file outside the repo:
 

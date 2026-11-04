@@ -1,11 +1,11 @@
 # Build from the backend directory (not the monorepo root).
-FROM python:3.11-slim-bookworm
+FROM python:3.11-slim-bookworm@sha256:94a8fee35252d06ab75856f15f12c7bae67b10e8a6da93c7fded82b2610926cd
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 ENVIRONMENT=production PORT=8080
 WORKDIR /app
-COPY requirements.txt /tmp/requirements.txt
+COPY requirements.lock /tmp/requirements.lock
 # The manylinux pillow-heif wheel carries its native HEIF decoder. Refuse a
 # quiet fallback to a source build without its native libraries.
-RUN python -m pip install --no-cache-dir --only-binary=Pillow,pillow-heif,psycopg-binary -r /tmp/requirements.txt \
+RUN python -m pip install --no-cache-dir --only-binary=Pillow,pillow-heif,psycopg-binary -r /tmp/requirements.lock \
     && groupadd --gid 10001 worker && useradd --uid 10001 --gid worker --no-create-home worker
 COPY main.py container_entrypoint.py /app/backend/
 COPY services/*.py /app/backend/services/
