@@ -107,6 +107,7 @@ interface HomeAuthState {
 }
 
 const hasUsableClerkKey = hasUsableClerkPublishableKey;
+const SESSION_VERIFICATION_ERROR = "We couldn't verify your session. Please sign out and sign in again, then try again. No credit was used.";
 
 const formatCurrency = (value?: number | null, currency?: string | null) => {
   if (typeof value !== 'number' || Number.isNaN(value)) {
@@ -1737,18 +1738,35 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
         
         logger.info("tryon_uploads_prepared", { itemCount: preparedTryOnFiles.length });
 
+        // A native confirmation can remain open past the session token's lifetime.
+        // Refresh the default session token immediately before authorizing the web hold.
+        let sessionToken: string | null;
+        try {
+          sessionToken = await getToken({ skipCache: true });
+        } catch {
+          throw new Error(SESSION_VERIFICATION_ERROR);
+        }
+        if (!sessionToken?.trim()) throw new Error(SESSION_VERIFICATION_ERROR);
+
         // The web service issues a short-lived opaque intent. Render consumes it once
         // using the authenticated subject and settles after a usable result is persisted.
         try {
-          const issued = await httpClient.post('/api/try-on/hold', { expectedFunding: isBypass ? 'included' : isOnTrial ? 'trial' : 'credits' });
+          const issued = await httpClient.post(
+            '/api/try-on/hold',
+            { expectedFunding: isBypass ? 'included' : isOnTrial ? 'trial' : 'credits' },
+            { headers: { Authorization: `Bearer ${sessionToken}` } }
+          );
           requestId = issued.data?.requestId;
           if (typeof requestId !== 'string') throw new Error('Could not authorize generation.');
           setLastRequestId(requestId);
         } catch (holdErr: unknown) {
           // If user has no credits, this endpoint returns 402 + { error: 'no_credits' }
           const h = holdErr as {
-            response?: { status?: number; data?: { error?: string; creditsAvailable?: number } };
+            response?: { status?: number; data?: { error?: string; detail?: string; creditsAvailable?: number } };
           };
+          if (h.response?.status === 401 || h.response?.data?.error === 'invalid_token' || h.response?.data?.detail === 'invalid_token') {
+            throw new Error(SESSION_VERIFICATION_ERROR);
+          }
           if (h.response?.status === 402 || h.response?.data?.error === 'no_credits') {
             if (h.response?.data?.error === 'account_frozen') router.push('/billing'); else redirectToPricing();
             setIsTryOnLoading(false);
