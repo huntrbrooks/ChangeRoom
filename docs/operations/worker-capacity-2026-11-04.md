@@ -37,6 +37,8 @@ Timing is from a Linux amd64 image under Docker Desktop emulation on an arm64 Ma
 
 ## Verification and remaining gate
 
+**Follow-up:** the committed source `efb86f03` subsequently passed full CI and disposable-database checks and was deployed to both staging services. Actual browser JPEG/HEIC preparation and a real credit-funded try-on passed; see [the staged release evidence](staging-capacity-release-2026-11-04.md). The offline results below retain their original scope and do not describe that later hosted run.
+
 - Backend offline suite: **84 passed, 9 PostgreSQL integration tests skipped** because this run supplied no test database. The final source still requires its normal CI PostgreSQL/recovery checks.
 - New meaningful tests cover header rejection before decode, inclusive pixel/orientation handling, per-reference byte bounding, actionable rejection without a claim, and overlapping requests. The busy try-on/auxiliary requests and an unauthenticated request read zero multipart bytes; only the admitted request reaches one claim and settlement.
 - Frontend: **17 focused tests**, TypeScript and targeted ESLint passed. Active remove/sample/change controls cannot replace state during preparation; cancellation/unmount stops further decoding and ignores late progress/results/errors. Canvas/HEIC behavior in those tests is mocked, so they do not substitute for an actual phone/browser check.
