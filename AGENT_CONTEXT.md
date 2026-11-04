@@ -9,19 +9,22 @@
 - Do not drop tables, delete production data, rotate production credentials, or disable auth/billing without explicit user approval.
 
 ## Deployment
-- **Backend**: Render (FastAPI) — service: `change-room-backend`
-- **Frontend**: Vercel (Next.js) — app in `frontend/`
+- **Backend**: Render (FastAPI) — production service `changeroom-production-worker`, reference config `render.production.yaml`, Docker context `backend/`
+- **Frontend**: Vercel (Next.js) — production project `changeroom`, app in `frontend/`; protected staging project `changeroom-rehearsal` is separate
+- **Legacy worker**: `changeroom.onrender.com` / `render.yaml` remains suspended; do not resume or route production to it as a health-check fix
+- Current artifact pins and unresolved launch gates: `docs/operations/launch-readiness-2026-11-04.md`
+- Automatic production cleanup runs on Render Cron `changeroom-production-operations`. GitHub `SUBSCRIBER_OPS_ENABLED=false` preserves its manual recovery workflow without a second automatic schedule; do not reenable it during routine verification.
 
 ## Production linkage
-- Frontend → Backend base URL comes from: `NEXT_PUBLIC_API_URL` (Vercel env var)
-- Backend must allow Vercel domains via: `ALLOWED_ORIGINS` (Render env var)
+- Frontend → Backend base URL comes from `NEXT_PUBLIC_API_URL`; production is `https://changeroom-production-worker.onrender.com`
+- Production `ALLOWED_ORIGINS` allows only the canonical and www production origins. Staging has its own worker/origin; do not broaden production CORS for Preview.
 
 ## Canonical user flows (verify before changing)
 - Homepage (`frontend/app/page.tsx`) currently uses **Render backend directly**:
   - `POST ${NEXT_PUBLIC_API_URL}/api/try-on` (multipart/form-data)
-  - The older baseline posts multipart clothing to `/api/preprocess-clothing`. The subscriber candidate prepares photos locally; verify component props as well as remaining legacy function definitions.
+  - The older baseline posts multipart clothing to `/api/preprocess-clothing`. The deployed subscriber flow prepares photos locally; verify component props as well as remaining legacy function definitions.
 - The Next.js stack handles billing and subscriber job issuance; check the built manifest and call sites. There is no root Next.js `POST /api/try-on` handler in the reviewed baseline.
-  - The candidate requires matching worker and DB releases. Read `docs/operations/subscriber-launch.md` before changing deployment or accepting payment.
+  - The deployed flow requires matching worker and DB releases. Read `docs/operations/subscriber-launch.md` before changing deployment or accepting payment.
 
 ## Key “gotchas”
 - **Two try-on implementations exist** (FastAPI vs Next API). Confirm which is used before editing.
