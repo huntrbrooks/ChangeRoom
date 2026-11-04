@@ -43,3 +43,10 @@ jobs:
         env:
           CHANGEROOM_SWEEP_DSN: ${{ secrets.CHANGEROOM_SWEEP_DSN }}
         run: python3 scripts/ops/sweep.py
+      - name: Report successful cleanup to the independent missing-run monitor
+        if: success()
+        env:
+          CHANGEROOM_SWEEP_HEARTBEAT_URL: ${{ secrets.CHANGEROOM_SWEEP_HEARTBEAT_URL }}
+          CHANGEROOM_HEARTBEAT_TARGET: ${{ inputs.target || 'production' }}
+          CHANGEROOM_HEARTBEAT_EVENT: ${{ github.event_name }}
+        run: python3 scripts/ops/heartbeat.py
