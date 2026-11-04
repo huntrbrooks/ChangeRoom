@@ -5,6 +5,8 @@
  * for automated email sequences and conversion flows.
  */
 
+import { optionalAnalyticsEnabled } from './optional-analytics';
+
 export type UserEvent = 
   | 'signup_complete'
   | 'trial_consumed'
@@ -23,6 +25,7 @@ interface EventData {
  * Non-blocking - fires and forgets
  */
 export function emitUserEvent(event: UserEvent, data?: EventData): void {
+  if (!optionalAnalyticsEnabled()) return;
   // Fire and forget - don't block UI
   fetch('/api/events/user', {
     method: 'POST',

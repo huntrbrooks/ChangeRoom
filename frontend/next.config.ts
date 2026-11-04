@@ -4,6 +4,11 @@ const nextConfig: NextConfig = {
   /* config options here */
   // Skip static generation for pages that use Clerk
   output: 'standalone',
+  // Derive this marker at build time so client code cannot mistake Preview for production.
+  env: {
+    NEXT_PUBLIC_OPTIONAL_ANALYTICS_DEPLOYMENT:
+      process.env.VERCEL_ENV === 'production' ? 'production' : 'disabled',
+  },
   allowedDevOrigins: ['127.0.0.1'],
   async headers() {
     const connectSrc = [

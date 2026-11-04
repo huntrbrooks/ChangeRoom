@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { logger } from '@/lib/logger';
+import { optionalAnalyticsEnabled } from '@/lib/optional-analytics';
 
 /**
  * POST /api/events/user
@@ -46,6 +47,10 @@ export async function POST(request: NextRequest) {
     
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    if (!optionalAnalyticsEnabled()) {
+      return NextResponse.json({ ok: true, tracking: false });
     }
 
     const body = await request.json();

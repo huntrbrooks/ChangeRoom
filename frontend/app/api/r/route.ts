@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { isAllowedRedirectUrl } from "@/lib/affiliateLinks";
+import { optionalAnalyticsEnabled } from "@/lib/optional-analytics";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -50,18 +51,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Missing or unknown offerId/url" }, { status: 400 });
     }
 
-    // Get user ID if authenticated (optional)
-    const { userId } = await auth();
-
-    // Log the click (fire and forget - don't block redirect)
-    db.logAffiliateClick({
-      offerId,
-      userId: userId || null,
-      clickedUrl: destination,
-    }).catch((err) => {
-      console.error("Error logging affiliate click:", err);
-      // Don't fail the redirect if logging fails
-    });
+    if (optionalAnalyticsEnabled()) {
+      const { userId } = await auth();
+      // Optional measurement must not block the requested retailer redirect.
+      db.logAffiliateClick({
+        offerId,
+        userId: userId || null,
+        clickedUrl: destination,
+      }).catch((err) => {
+        console.error("Error logging affiliate click:", err);
+      });
+    }
 
     return NextResponse.redirect(destination, { status: 302 });
   } catch (err: unknown) {

@@ -1,25 +1,15 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import posthog from 'posthog-js';
-import { PostHogProvider as PHProvider } from 'posthog-js/react';
 import { initAnalytics } from '@/lib/analytics';
+import { optionalAnalyticsEnabled } from '@/lib/optional-analytics';
 
-export function PostHogClientProvider({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export function PostHogClientProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
-    initAnalytics();
-    return () => {
-      if (typeof window !== 'undefined') {
-        // Cast to allow optional cleanup without type errors
-        (posthog as unknown as { shutdown?: () => void }).shutdown?.();
-      }
-    };
+    if (optionalAnalyticsEnabled()) void initAnalytics();
   }, []);
 
-  return <PHProvider client={posthog}>{children}</PHProvider>;
+  // All consumers use our gated helpers; importing the SDK's React provider would
+  // evaluate its storage-reading SDK module even when measurement is disabled.
+  return <>{children}</>;
 }
-

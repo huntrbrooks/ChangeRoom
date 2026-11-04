@@ -123,6 +123,8 @@ Upload signing and clothing preprocessing now run through the Render backend. Th
 
 ### Optional (feature flags + analytics + affiliate)
 
+Optional analytics is **off by default**, even when existing provider keys remain configured. The explicit flag must be `true` and the build must be Vercel Production; Preview/staging and local builds stay off. Disabled behavior omits GTM script/iframe, PostHog initialization/identity/events and analytics session storage, optional n8n event forwarding, and PostHog metrics queries/email. Existing route authentication and essential sign-in, billing, security logs and customer-requested product operations remain active. Enabling requires a new reviewed build, updated privacy disclosures and any required consent; this flag is not a consent mechanism or a claim of international compliance.
+
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
 | `NEXT_PUBLIC_APP_URL` | Frontend application URL | `http://localhost:3000` | `https://changeroom.vercel.app` |
@@ -140,6 +142,9 @@ Upload signing and clothing preprocessing now run through the Render backend. Th
 | `METRICS_EMAIL_SECRET` | Secret token to call `/api/metrics-email` | (none) | `your-long-random-token` |
 | `METRICS_EMAIL_TO` | Metrics email recipient | (none) | `ops@example.com` |
 | `METRICS_EMAIL_FROM` | Metrics email sender | `metrics@igetdressed.online` | `metrics@example.com` |
+| `NEXT_PUBLIC_ENABLE_OPTIONAL_ANALYTICS` | Explicitly enable optional GTM, PostHog, user-event automation and metrics email on production only; leave unset/false for launch | `false` | `false` |
+| `NEXT_PUBLIC_OPTIONAL_ANALYTICS_DEPLOYMENT` | Build-derived by `next.config.ts` from `VERCEL_ENV`; do not set manually. Preview and local builds always use `disabled` | `disabled` | (generated) |
+| `NEXT_PUBLIC_GOOGLE_TAG_MANAGER_ID` | Explicit GTM container; no fallback container. Ignored unless optional analytics is enabled | (none) | `GTM-EXAMPLE` |
 | `POSTHOG_PROJECT_ID` | PostHog project ID (server) | (none) | `12345` |
 | `POSTHOG_KEY` | PostHog API key (server) | (none) | `phc_...` |
 | `POSTHOG_HOST` | PostHog host URL (server) | `https://us.i.posthog.com` | `https://app.posthog.com` |

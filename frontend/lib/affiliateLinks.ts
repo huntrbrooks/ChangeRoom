@@ -10,6 +10,8 @@
  * 3. Links are automatically converted when products are displayed
  */
 
+import { optionalAnalyticsEnabled } from './optional-analytics';
+
 interface AffiliateConfig {
   // Amazon Associates
   amazonTag?: string;
@@ -190,6 +192,7 @@ export function trackAffiliateClick(
   productTitle: string,
   source: string
 ): void {
+  if (!optionalAnalyticsEnabled()) return;
   // Fire and forget analytics
   fetch('/api/events/user', {
     method: 'POST',

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { optionalAnalyticsEnabled } from "@/lib/optional-analytics";
 
 const POSTHOG_PROJECT_ID = process.env.POSTHOG_PROJECT_ID;
 const POSTHOG_KEY = process.env.POSTHOG_KEY;
@@ -162,6 +163,10 @@ async function handleRequest(_req: NextRequest) {
     const token = getToken(_req);
     if (!token || token !== METRICS_EMAIL_SECRET) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+
+    if (!optionalAnalyticsEnabled()) {
+      return NextResponse.json({ ok: true, skipped: "optional_analytics_disabled" });
     }
 
     // Best-effort per-instance rate limit

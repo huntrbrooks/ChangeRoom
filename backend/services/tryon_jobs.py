@@ -11,6 +11,16 @@ from PIL import Image, ImageDraw, ImageOps
 
 logger = logging.getLogger(__name__)
 
+# A constant IPTC label for the reference-photo editing flow. This is deliberately
+# unsigned metadata, not a preserved provider provenance record or a C2PA claim.
+_AI_EDIT_XMP = b'''<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/">
+<Iptc4xmpExt:DigitalSourceType>http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia</Iptc4xmpExt:DigitalSourceType>
+</rdf:Description>
+</rdf:RDF>
+</x:xmpmeta>'''
+
 
 async def _call(statement: str, params: tuple):
     # Kept lazy so offline validation/health never needs a database or a credential.
@@ -80,7 +90,8 @@ async def settle(job_id: str, subject: str, image: bytes | None):
 
 def private_jpeg(value: str, trial: bool) -> bytes:
     # Never download an arbitrary provider-returned URL on our network. Fail/refund if
-    # a provider stops returning inline results. Re-encoding also strips EXIF and other metadata.
+    # a provider stops returning inline results. Replace source metadata with our
+    # constant AI-edit label; do not retain prompts, locations or provider identifiers.
     if not isinstance(value, str) or len(value) > 20_000_000:
         raise ValueError("invalid image response")
     head, sep, payload = value.partition(",")
@@ -94,6 +105,9 @@ def private_jpeg(value: str, trial: bool) -> bytes:
         if src.width * src.height > 4_000_000:
             raise ValueError("image exceeds size limit")
         image = ImageOps.exif_transpose(src).convert("RGB")
+    # Pillow can carry metadata through conversion and inherit JPEG COM comments
+    # during save. Clear it explicitly rather than relying on re-encoding alone.
+    image.info.clear()
     image.thumbnail((1800, 1800))
     if trial:
         draw = ImageDraw.Draw(image)
@@ -102,7 +116,7 @@ def private_jpeg(value: str, trial: bool) -> bytes:
         draw.text((8, image.height-height+4), "IGetDressed.Online | Trial preview", fill="white")
     for quality in (88, 75, 60):
         out = io.BytesIO()
-        image.save(out, 'JPEG', quality=quality, optimize=True)
+        image.save(out, 'JPEG', quality=quality, optimize=True, xmp=_AI_EDIT_XMP)
         if out.tell() <= 2500000:
             return out.getvalue()
     raise ValueError("image exceeds delivery limit")

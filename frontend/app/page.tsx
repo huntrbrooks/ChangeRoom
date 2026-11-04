@@ -2842,7 +2842,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
             <div className="flex min-h-[72px] items-center justify-between gap-4 px-6">
               <p className="flex items-center gap-2 text-[11px] font-semibold leading-tight text-[#2dd4cf] sm:gap-3 sm:text-base">
                 <Sparkles size={22} fill="#2dd4cf" strokeWidth={1.5} />
-                <span>{generatedImage ? (isPreviewResult ? 'Watermarked trial preview' : 'Your private result') : 'Example only — generate to see your own look.'}</span>
+                <span>{generatedImage ? (isPreviewResult ? 'Watermarked AI-edited trial preview' : 'Your private AI-edited preview') : 'Example only — generate to see your own look.'}</span>
               </p>
               <div className="flex items-center gap-5 text-white/80">
                 <button
