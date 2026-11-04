@@ -1,6 +1,6 @@
 # Staging operations workflow setup
 
-Prepared 2026-11-04 from candidate `75abce1e2fce3840ea120cebd279eca67db26391`. [Draft PR #17](https://github.com/huntrbrooks/ChangeRoom/pull/17), commit `a7952ae146c70730b1a114ef2f2ab6eb65fdf3fe`, contains exactly the four operations files below on fresh remote main. No merge, GitHub credential installation or production schedule activation was performed by this preparation.
+Initially prepared 2026-11-04 from candidate `75abce1e2fce3840ea120cebd279eca67db26391`. [PR #17](https://github.com/huntrbrooks/ChangeRoom/pull/17), commit `a7952ae146c70730b1a114ef2f2ab6eb65fdf3fe`, contained exactly the four operations files below. It was subsequently merged, staging credentials were installed after environment/role verification, and manual staging success/failure/recovery runs passed as recorded at the end of this document. Production scheduling remains disabled. The initial inventory and preparation procedure below are historical; they are not a request to recreate the environment or reinstall older credentials.
 
 ## Read-only GitHub inventory
 
@@ -51,13 +51,12 @@ GitHub documents that an implicitly created environment has no protections by de
 
 Fresh provider metadata confirmed staging endpoint `ep-billowing-bar-bb2324fe` → `br-icy-bread-bbzngw6q` in `empty-bird-73072158`. Production endpoint `ep-proud-bonus-a778rjt6` must not appear in the staging DSN. The workflow forwards the web protection bypass only to the configured app origin, never worker, and refuses redirects.
 
-## Remaining gates
+## Remaining gates after the hosted rehearsal
 
-- Main/workflow protection and any unused repository-level Neon administration key need owner review; no compromise or secret disclosure is established by this inventory.
-- The exact four-file PR must be reviewed/merged without accidentally importing an old app release or reopening acquisition.
-- Environment policy must precede secret installation; actual-login SQL tests must precede DSN installation.
-- Manual staging success plus deliberately received failure/dead-man alert is required before calling operations ready.
-- Production activation is a later explicit step after its schema, restricted roles, costs and customer journey pass.
+- `main` now requires a PR, blocks force pushes/deletion and enforces conversation resolution, including for administrators; see [verified branch protection](github-protection-2026-11-04.md). Exact canonical CI contexts are not yet mandatory. Inspect the intended release's CI results before merging; do not require unrelated YOLO checks as proof of subscriber correctness.
+- PR17 merge, staging environment restriction to `main`, restricted credential installation, and manual success/failure/recovery are complete. Preserve these verified boundaries and use the current credential revision for any future installation. The unused repository-level Neon administration key still needs ownership/dependency review; no compromise is established by its presence.
+- A detected deliberate failure is proven, but operator notification receipt and an independent missing-heartbeat alarm are not. Finish those checks before calling operations ready.
+- Production migrations, restricted-role verification and infrastructure budget approval are complete. Production credential installation, environment protection, authorized manual cleanup, schedule activation and observed scheduled success remain separate release tasks. Finish the operator's pending role-credential reset before installing production credentials; do not use earlier private credential files.
 
 ## Manual hosted workflow evidence — 4 November 2026
 
