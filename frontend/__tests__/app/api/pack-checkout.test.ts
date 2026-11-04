@@ -46,7 +46,33 @@ it.each(purchasablePacks)('sells only a verified single-payment $sku even to an 
   expect(mockCreate).toHaveBeenCalledTimes(1);
   const options=mockCreate.mock.calls[0][0];
   expect(options.mode).toBe('payment');expect(options.subscription_data).toBeUndefined();
+  expect(options.payment_method_types).toEqual(['card']);
   expect(options.payment_intent_data.metadata.creditAmount).toBe(String(pack.credits));
+});
+it.each([
+  {priceId:'price_starter',cents:1499,credits:10},
+  {priceId:'price_value',cents:3499,credits:30},
+  {priceId:'price_pro',cents:8999,credits:100},
+])('also restricts the legacy owned $priceId request to card',async pack=>{
+  mockLookup.mockResolvedValue({type:'one_time',active:true,unit_amount:pack.cents,currency:'aud',
+    metadata:{credits:String(pack.credits)},product:{active:true}});
+  expect((await post({priceId:pack.priceId,mode:'payment'})).status).toBe(200);
+  expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({
+    mode:'payment',payment_method_types:['card'],line_items:[{price:pack.priceId,quantity:1}],
+  }));
+});
+it.each([
+  {payment_method_types:['klarna']},
+  {payment_method_configuration:'pmc_other'},
+  {automatic_payment_methods:{enabled:true}},
+  {payment_intent_data:{payment_method_types:['au_becs_debit']}},
+].flatMap(override=>[
+  {sku:'starter-pack',...override},
+  {priceId:'price_starter',mode:'payment',...override},
+]))('rejects caller payment-method overrides before contacting Stripe: %j',async body=>{
+  expect((await post(body)).status).toBe(400);
+  expect(mockLookup).not.toHaveBeenCalled();expect(mockBilling).not.toHaveBeenCalled();
+  expect(mockCreate).not.toHaveBeenCalled();
 });
 it.each([{type:'recurring'},{currency:'usd'},{unit_amount:1999},{active:false},
   {product:{active:false}}, {product:'prod_unexpanded'},{metadata:{}},{metadata:{credits:'5'}}])(

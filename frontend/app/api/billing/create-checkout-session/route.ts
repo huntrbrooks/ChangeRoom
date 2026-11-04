@@ -126,6 +126,8 @@ export async function POST(req: NextRequest) {
     // Never resume a stored subscription attempt or pass a caller-selected mode to Stripe.
     const session = await stripe.checkout.sessions.create({
         customer:customerId,mode,line_items:[{price:priceId,quantity:1}],metadata,
+        // Launch only the verified card flow; account-wide dynamic methods include untested alternatives.
+        payment_method_types:["card"],
         payment_intent_data:{metadata},client_reference_id:userId,
         success_url:appConfig.appUrl+'/billing?session_id={CHECKOUT_SESSION_ID}',cancel_url:appConfig.appUrl+'/pricing',
       });
