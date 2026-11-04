@@ -6,6 +6,8 @@ COPY requirements.lock /tmp/requirements.lock
 # The manylinux pillow-heif wheel carries its native HEIF decoder. Refuse a
 # quiet fallback to a source build without its native libraries.
 RUN python -m pip install --no-cache-dir --only-binary=Pillow,pillow-heif,psycopg-binary -r /tmp/requirements.lock \
+    && python -m pip check \
+    && python -m pip uninstall --yes pip setuptools wheel \
     && groupadd --gid 10001 worker && useradd --uid 10001 --gid worker --no-create-home worker
 COPY main.py container_entrypoint.py /app/backend/
 COPY services/*.py /app/backend/services/

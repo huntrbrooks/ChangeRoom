@@ -4,6 +4,8 @@ This image runs only the ChangeRoom FastAPI worker. Next.js, Clerk, Postgres, St
 
 From the repository root, build for the Linux architecture your host supports, for example `docker build --platform=linux/amd64 -t changeroom-worker:rehearsal backend`. Build with the **backend** context: only the selected Python modules and dependency manifest enter the build. The Dockerfile pins the Python base digest and installs the exact versions in `requirements.lock`. Record the resulting image digest and use that immutable image for rehearsal and promotion. Dependency upgrades require updating the lock, auditing it, rebuilding and rerunning the container checks; `requirements.txt` describes the direct requirements but is not the container install input.
 
+After installation and `pip check`, the image removes the base's `pip`, `setuptools` and `wheel` tools. They are not runtime requirements; leaving them installed also leaves their separate vendored dependencies outside the application lock. Rebuild the image to change dependencies rather than installing packages in a running worker. The container smoke check verifies these tools are absent and the binary Postgres driver, application startup and HEIF decoder still work. This reduces installer exposure; it does not clear unrelated OS or application advisories.
+
 Set configuration and secrets **at runtime** through the host or a private local env file outside the repo:
 
 - `BACKEND_AUTH_MODE=clerk`, `CLERK_ISSUER`: exact HTTPS issuer origin for the isolated frontend's Clerk instance; if set, `CLERK_JWKS_URL` must be that issuer's `/.well-known/jwks.json`. Configure `CLERK_AUDIENCE` if that instance issues audience-bound session tokens.

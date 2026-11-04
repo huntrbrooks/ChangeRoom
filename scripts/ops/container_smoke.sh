@@ -51,15 +51,20 @@ docker run --name "$name" --detach "${restrictions[@]}" "${settings[@]}" \
 # model, Clerk, Postgres, Stripe, or any other remote provider.
 docker exec -i "$name" python - <<'PY'
 import http.client
+import importlib.util
 import io
 import json
 import os
 import time
 from pathlib import Path
 from PIL import Image
+import psycopg
 from backend.main import ensure_heif_registered, normalize_image_bytes
 
 assert os.geteuid() == 10001
+for installer in ("pip", "setuptools", "pkg_resources", "wheel"):
+    assert importlib.util.find_spec(installer) is None, installer
+assert psycopg.pq.__impl__ == "binary"
 uid_line = next(line for line in Path("/proc/1/status").read_text().splitlines() if line.startswith("Uid:"))
 assert set(uid_line.split()[1:]) == {"10001"}, uid_line
 
@@ -95,5 +100,5 @@ assert mime == "image/jpeg" and (width, height) == (64, 48)
 with Image.open(io.BytesIO(data)) as result:
     result.load()
     assert result.format == "JPEG" and result.size == (64, 48)
-print("Passed: UID, config, port, liveness, auth, CORS and HEIF decoding.")
+print("Passed: UID, installer removal, binary DB driver, config, port, liveness, auth, CORS and HEIF decoding.")
 PY
