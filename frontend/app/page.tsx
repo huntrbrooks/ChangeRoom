@@ -45,7 +45,7 @@ import { hasUsableClerkPublishableKey } from '@/lib/clerk-public-config';
 import { ensureAbsoluteUrl } from '@/lib/url';
 import { resolveBackendApiUrl } from '@/lib/backend-url';
 import { probeBackendHealth } from '@/lib/backendHealth';
-import { isTryOnFromUrlEnabled } from '@/lib/featureFlags';
+import { isShoppingMatchesEnabled, isTryOnFromUrlEnabled } from '@/lib/featureFlags';
 import { ANALYTICS_EVENTS, captureEvent } from '@/lib/analytics';
 import { trackTrialConsumed, trackOutfitGenerated } from '@/lib/userEvents';
 import { getBillingBannerState } from '@/lib/billingBanner';
@@ -284,6 +284,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
   const backendApi = useMemo(() => resolveBackendApiUrl(), []);
   const pitchDemoEnabled = false;
   const tryOnFromUrlEnabled = useMemo(() => isTryOnFromUrlEnabled(), []);
+  const shoppingMatchesEnabled = isShoppingMatchesEnabled();
   const [userImages, setUserImages] = useState<File[]>([]);
   const [processedModelPhoto, setProcessedModelPhoto] = useState<ProcessedModelPhoto | null>(null);
   const [modelPhotoStatus, setModelPhotoStatus] = useState<'idle' | 'processing' | 'ready' | 'error'>('idle');
@@ -2183,7 +2184,7 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
       }
 
       // Identifying a garment shares its photo separately from the try-on.
-      if (!findShoppingMatches) return;
+      if (!shoppingMatchesEnabled || !findShoppingMatches) return;
       // Step 2: Call Identify & Shop API (only if try-on succeeded)
       try {
         setIsProductSearchLoading(true);
@@ -2687,10 +2688,10 @@ function HomeContent({ auth }: { auth: HomeAuthState }) {
 
               {!isGuestPitchDemo && <div className="space-y-2 text-sm text-slate-700">
                 <p>OpenAI edits your photos for the try-on. If its service is unavailable, Google’s Nano Banana may process them instead. <Link href="/privacy-policy" className="underline">How we use photos</Link></p>
-                <label className="flex items-start gap-2">
+                {shoppingMatchesEnabled && <label className="flex items-start gap-2">
                   <input type="checkbox" checked={findShoppingMatches} disabled={isGenerating} onChange={e => setFindShoppingMatches(e.target.checked)} className="mt-1" />
                   Find similar items after my try-on by sending the garment photo to Google.
-                </label>
+                </label>}
               </div>}
               <button
                 type="button"

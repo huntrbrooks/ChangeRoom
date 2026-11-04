@@ -12,6 +12,10 @@ export function isMyOutfitsEnabled(): boolean {
   return parseBooleanEnvFlag(process.env.NEXT_PUBLIC_ENABLE_MY_OUTFITS);
 }
 
+export function isShoppingMatchesEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES === "true";
+}
+
 export function isPitchDemoEnabled(): boolean {
   const raw = process.env.NEXT_PUBLIC_ENABLE_PITCH_DEMO;
   if (typeof raw !== "string" || raw.trim() === "") {

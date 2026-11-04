@@ -152,3 +152,81 @@ test.each(['resolve', 'reject'])('unmount cancels preparation and ignores late p
   expect(URL.createObjectURL).not.toHaveBeenCalled();
   expect(httpClient.post).not.toHaveBeenCalled();
 });
+
+describe('optional shopping matches', () => {
+  const originalFlag = process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES;
+  const shoppingLabel = 'Find similar items after my try-on by sending the garment photo to Google.';
+
+  beforeEach(() => {
+    delete process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES;
+    (prepareTryOnImageFiles as jest.Mock).mockImplementation(async files => files);
+    (httpClient.post as jest.Mock).mockImplementation(async (url: string) => {
+      if (url === '/api/try-on/hold') return { data: { requestId: 'shopping-test-job' } };
+      if (url.endsWith('/api/try-on')) return { data: { image_url: '/private-result.jpg', job_id: 'shopping-test-job' } };
+      if (url.endsWith('/api/identify-products')) return { data: { search_query: 'blue shirt' } };
+      if (url.endsWith('/api/shop')) return { data: { results: [{ title: 'Matched shirt', price: '$20', link: 'https://retailer.example/shirt', thumbnail: '/shirt.jpg', source: 'Test retailer' }] } };
+      throw new Error(`Unexpected POST ${url}`);
+    });
+    window.scrollTo = jest.fn();
+  });
+
+  afterEach(() => {
+    if (originalFlag === undefined) delete process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES;
+    else process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES = originalFlag;
+  });
+
+  async function uploadPhotos(container: HTMLElement) {
+    const inputs = container.querySelectorAll('input[type="file"]');
+    const person = new File(['person'], 'person.jpg', { type: 'image/jpeg' });
+    const garment = new File(['garment'], 'garment.jpg', { type: 'image/jpeg' });
+    await act(async () => { fireEvent.change(inputs[0], { target: { files: [person] } }); });
+    await act(async () => { fireEvent.change(inputs[1], { target: { files: [garment] } }); });
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Try it on/ })).toBeEnabled());
+  }
+
+  async function generate() {
+    fireEvent.click(screen.getByRole('button', { name: /^Try it on/ }));
+    await waitFor(() => expect(httpClient.post).toHaveBeenCalledWith('http://localhost:8000/api/try-on', expect.any(FormData), expect.any(Object)));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Try it on/ })).toBeEnabled());
+  }
+
+  test.each([false, true])('successful try-on makes no shopping requests without opt-in (feature enabled: %s)', async enabled => {
+    if (enabled) process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES = 'true';
+    const { container } = render(<Home />);
+    await screen.findByRole('heading', { name: 'Virtual Try-On Studio' });
+    if (enabled) expect(screen.getByRole('checkbox', { name: shoppingLabel })).not.toBeChecked();
+    else expect(screen.queryByRole('checkbox', { name: shoppingLabel })).not.toBeInTheDocument();
+    await uploadPhotos(container);
+    await generate();
+    expect((httpClient.post as jest.Mock).mock.calls.map(([url]) => url)).toEqual(['/api/try-on/hold', 'http://localhost:8000/api/try-on']);
+    expect(screen.getByRole('heading', { name: 'Example shopping ideas' })).toBeVisible();
+    expect(screen.getAllByRole('link', { name: 'Search retailers' }).length).toBeGreaterThan(0);
+  });
+
+  test('enabled shopping and explicit opt-in dispatch identification and shopping after the try-on', async () => {
+    process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES = 'true';
+    const { container } = render(<Home />);
+    await screen.findByRole('heading', { name: 'Virtual Try-On Studio' });
+    fireEvent.click(screen.getByRole('checkbox', { name: shoppingLabel }));
+    await uploadPhotos(container);
+    await generate();
+    expect((httpClient.post as jest.Mock).mock.calls.map(([url]) => url)).toEqual([
+      '/api/try-on/hold', 'http://localhost:8000/api/try-on',
+      'http://localhost:8000/api/identify-products', 'http://localhost:8000/api/shop',
+    ]);
+    expect(screen.getByRole('heading', { name: 'Matched shirt' })).toBeVisible();
+  });
+
+  test('disabling shopping prevents dispatch even if the opt-in state was previously selected', async () => {
+    process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES = 'true';
+    const { container, rerender } = render(<Home />);
+    await screen.findByRole('heading', { name: 'Virtual Try-On Studio' });
+    fireEvent.click(screen.getByRole('checkbox', { name: shoppingLabel }));
+    process.env.NEXT_PUBLIC_ENABLE_SHOPPING_MATCHES = 'false';
+    rerender(<Home />);
+    expect(screen.queryByRole('checkbox', { name: shoppingLabel })).not.toBeInTheDocument();
+    await uploadPhotos(container);
+    await generate();
+    expect((httpClient.post as jest.Mock).mock.calls.map(([url]) => url)).toEqual(['/api/try-on/hold', 'http://localhost:8000/api/try-on']);
+  });
+});
