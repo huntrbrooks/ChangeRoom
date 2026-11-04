@@ -16,6 +16,21 @@ The drill applies the candidate schema/migrations and creates one artificial acc
 
 **Restore safety:** A snapshot rehearsal must explicitly use `finalize: false` and a separate target. The provider's default restore finalization can reassign the live compute. Do not finalize, move endpoints, change the default branch or overwrite production during a drill. Independently record the live endpoint-to-branch mapping before and after; an isolated restore is not proved merely by choosing a new branch name.
 
+## Isolated hosted rehearsal — 4 November 2026
+
+The operator restored existing staging snapshot `snap-blue-shape-bbhkz7x2` into new branch `br-late-rain-bb6ice8l` with **`finalize: false`** and no existing target. The provider automatically created a separate 0.25-CU endpoint. The branch was ready and original mappings verified after 17.35 seconds; the first complete SQL parity check was recorded at 07:55:30 UTC. Both existing endpoints and the active default branch remained unchanged throughout. This timing is a small staging observation, not a production RTO promise.
+
+The restored wallet had 8 credits, five ledger rows/net 8 and two succeeded jobs containing 88,777 bytes. Full ledger/job row digests and both image byte hashes matched the snapshot-source baseline. Against that isolated database, exact candidate `1c7704885e1f23bf8a2ac32c52125416022835ec` passed:
+
+- Actual private-result GET handler: matching owner received matching bytes and `private, no-store`; another owner received 404 and anonymous access 401. Auth was injected in the private harness, so this does not establish production Clerk recovery.
+- Actual grant function using captured, already-paid sandbox packs: Starter added zero again, Value added 30 once and Pro 100 once. Each was invoked twice, with exactly one original grant per pack; wallet and ledger net reached 138.
+- Actual reconciliation of the captured, already-completed A$34.99 Value refund: dry-run and wrong-hash attempts changed nothing; running work blocked reconciliation. One 30-credit adjustment produced 108 credits/net 108, and two repeat applications changed nothing. No Stripe write or new money refund occurred.
+- Actual closure and cleanup functions inside a transaction deliberately rolled back after assertions: a synthetic later deletion suppressed recovered photos and pointers, retained billing and a tombstone, scrubbed late profile writes, rejected new jobs/Checkout reservations and preserved another owner. Synthetic expired bytes were removed and stale work released exactly one credit. All tested table digests returned to their pre-test values after rollback.
+
+The financial replay deliberately covers captured purchases/refund, not every later product-use delta. The recovery copy ended at 108 credits/eight ledger rows; active staging stayed at 107/eighteen rows, and the untouched snapshot source stayed at 8/five rows. This is not a claim that Stripe can reconstruct lost product usage, hosted webhook delivery, or a current independent real deletion register.
+
+At 08:15:31 UTC, recovery endpoint `ep-dawn-wildflower-bbmy9d0w` was independently verified **disabled and idle**. No branch or snapshot was deleted. The attempted five-minute suspension setting had been rejected by the account, so no custom idle timeout is claimed. Evidence remains private in `provider-recovery-phase1-proof.json`, `provider-recovery-completion-proof.json` and the three `recovery-runner/*-evidence.private.json` receipts. Owner-accepted production recovery/retention targets and the real deletion-register procedure remain release decisions.
+
 ## Provider drill required before accepting payments
 
 1. Use a real provider-created recovery point on an **isolated** branch/database. Restore into it; never overwrite the live database in a rehearsal. Disable outgoing Clerk/Stripe webhooks, mail and all checkout/checkout retries on the restore environment. Use a private staging bucket/prefix and synthetic fixture customer. Record timestamp and elapsed time in a private release receipt; don't record the DSN.

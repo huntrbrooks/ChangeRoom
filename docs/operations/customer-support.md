@@ -87,6 +87,10 @@ On 4 November 2026, the owner confirmed **FRESH'N UP AU PTY LTD (ABN 11 678 658 
 
 No street address, GST claim or commercial-use permission was added. Tax display, intended sale countries and actual provider/backup retention still require their separate validation. The support contact is available for remedies; this guide does not invent a blanket refund window or promise legal compliance.
 
+At approximately 08:00 UTC on 4 November, [ABN Lookup](https://abr.business.gov.au/ABN/View?id=11678658823) reported the approved seller **not currently registered for GST**. No GST-inclusive claim or merchant tax configuration was changed. This current registry fact does not resolve future registration obligations or taxes in other countries; the initial sale-country scope is awaiting the owner's choice.
+
+The live Stripe Customer emails page for the verified `igetdressed.online` account has **Successful payments** and **Refunds** switched on, with replies directed to the approved business support address. It lists **stripe.com** as Sending. The optional `igetdressed.online` custom sending domain shows Verification failed, so do not claim custom-domain email is working. These saved settings support automatic Stripe receipts but do not prove a particular receipt reached an inbox. This was read-only; no email was sent or setting changed. Private evidence: `stripe-receipt-settings-proof.json`.
+
 Useful current sources: [Stripe testing](https://docs.stripe.com/testing), [Stripe receipts](https://docs.stripe.com/receipts), [ACCC consumer guarantees](https://www.accc.gov.au/consumers/buying-products-and-services/consumer-rights-and-guarantees), [OAIC privacy policy guidance](https://www.oaic.gov.au/privacy/your-privacy-rights/your-personal-information/what-is-a-privacy-policy).
 
 ## Hosted sandbox refund rehearsal — 4 November 2026
