@@ -43,3 +43,11 @@ At 05:45 UTC, the live canonical pricing page still showed sales paused and bill
 3. For the candidate production release, verify owner access succeeds, anonymous access returns 401, another account returns 404, results older than 24 hours are unavailable, and the scheduled sweep removes expired bytes. Keep the existing deletion queue's external-cleanup gate until provider/file/backup checks are complete.
 
 No public exposure of a person/result was demonstrated by this inventory. Legacy static storage exposure remains a concrete architectural risk requiring configuration/object metadata validation. A new subscriber flow using the protected result route does not by itself remediate or erase old objects.
+
+## Provider follow-up at 07:42 UTC
+
+The original Render workspace reports suspension for non-payment. Its ChangeRoom service `srv-d4l1p4ali9vc73e21c5g` is **Suspended by Render**, with last successfully deployed source `1253b345fcb80f69895a97df3b167ae05157275c`. That actual deployed source still mounts `/uploads`; the earlier source review remains relevant but is not the deployed revision identifier. HEAD requests to the service root and a nonexistent synthetic uploads path both returned 503. The service was not resumed or modified.
+
+The current service environment has no `STORAGE_TYPE` setting and no linked environment groups. Its `.env` secret file contains nonempty R2 configuration entries, but likewise no `STORAGE_TYPE`; the deployed storage module defaults to local storage. This supports local storage as the configured default, not a proof of historical runtime state or file erasure. The Disk page says disks are unsupported with the service's scaling configuration; it did not provide a file inventory.
+
+A read-only request to the exact R2 account/bucket configured in that secret file returned **404** from `HeadBucket`. No object listing was possible, and no objects, customer filenames, image bytes or public object URLs were downloaded or emitted. A missing/inaccessible configured bucket is not proof that all historical buckets or uploads are gone. Keep the legacy service suspended; any future resumption must first remove its public static-media path and complete the historical storage review. Private evidence: `legacy-render-containment-proof.json` and `legacy-r2-metadata-proof.json`.

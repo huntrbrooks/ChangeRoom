@@ -2,6 +2,8 @@
 
 **Decision: keep purchases closed.** This records the initial inspection and the dated production preparation update below. It is not a production application release or proof of a live customer journey. New acquisition is one-time packs only; recurring checkout remains closed.
 
+**Latest reconciliation:** use [launch readiness at 07:35 UTC](launch-readiness-2026-11-04.md) for current completed and pending gates. Initial tables below preserve historical evidence; later seller publication, billing/contact verification, credential preparation, monitoring and dependency findings supersede earlier unknowns. Do not repeat completed migrations or credential changes from an old gap row.
+
 ## Production preparation update — 4 November 2026
 
 The user approved the US$7/month production worker and reduced production database capacity. Endpoint `ep-proud-bonus-a778rjt6` remains mapped to `br-snowy-brook-a7slxiau`; its minimum/maximum compute is now 0.25–1 CU with 300-second auto-suspend. The original recovery branch was not modified. Scheduled five-minute operations can keep minimum compute awake; see the private cost review before assuming idle savings.

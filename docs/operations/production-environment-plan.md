@@ -2,6 +2,8 @@
 
 Prepared 2026-11-04. **No deployment, paid service, credential change or sales reopening is authorized by this file.** The cost review is in the operator's private `~/.local/state/changeroom/production-readiness-20261104/cost-review.md`. Production topology and migration proof are in the [cutover inventory](production-cutover-inventory-2026-11-04.md).
 
+Current execution status is in [the 07:35 UTC launch reconciliation](launch-readiness-2026-11-04.md). The user has since approved the US$7/month worker and US$25/month OpenAI budget, but the worker is not created and production key issuance/funding remain pending. The fresh restricted ops DSN and distinct heartbeat secret are installed in the main-only **Production** GitHub environment; the schedule remains disabled. Historical inventory statements below describe their inspection time, not the current absence of those controls.
+
 Apply service configuration only after cost review and final source pin. The production schema and restricted database logins described below were prepared and verified on 4 November; deployment and complete customer-journey checks are separate gates. Values below are public configuration or secret names; real keys/DSNs belong in provider secret stores.
 
 ## Vercel: existing production project only
