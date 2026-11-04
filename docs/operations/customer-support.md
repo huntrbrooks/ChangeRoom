@@ -83,7 +83,9 @@ Local automated evidence on 4 November 2026: 43 focused cases passed, including 
 
 ## Public promises requiring owner validation
 
-The candidate does not establish the legal seller name, registered/business address, tax treatment, sale countries, the governing-law jurisdiction, or actual provider/backup retention periods. The owner must validate the public terms and privacy notice against those facts and the intended customers. The existing terms limit outputs to personal use; confirm that this matches the offer rather than silently advertising commercial rights. The notice preserves non-excludable consumer rights and offers a refund contact; this guide does not invent a blanket refund window or promise legal compliance.
+On 4 November 2026, the owner confirmed **FRESH'N UP AU PTY LTD (ABN 11 678 658 823), Victoria**, and explicitly retained personal-use terms. The name matches the verified live Stripe company record and [official ABN Lookup](https://abr.business.gov.au/ABN/View?id=11678658823), extracted that day. The candidate terms now identify the contracting company and Victorian governing law; the privacy notice identifies the same operator and existing support contact. The generated-image personal-use restriction and non-excludable consumer rights remain unchanged. Confirm these pages on the matching deployed release before considering the publication step complete.
+
+No street address, GST claim or commercial-use permission was added. Tax display, intended sale countries and actual provider/backup retention still require their separate validation. The support contact is available for remedies; this guide does not invent a blanket refund window or promise legal compliance.
 
 Useful current sources: [Stripe testing](https://docs.stripe.com/testing), [Stripe receipts](https://docs.stripe.com/receipts), [ACCC consumer guarantees](https://www.accc.gov.au/consumers/buying-products-and-services/consumer-rights-and-guarantees), [OAIC privacy policy guidance](https://www.oaic.gov.au/privacy/your-privacy-rights/your-personal-information/what-is-a-privacy-policy).
 
