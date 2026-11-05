@@ -3,6 +3,7 @@ import { offerForPrice, packCredits } from './billing-catalog';
 import { CHECKOUT_MARKET_POLICY, expectedCheckoutLivemode, isCheckoutMarketCountry } from './checkout-market';
 import { stripeConfig } from './config';
 import { getUserBillingByStripeCustomer, withPackAuthority, type PackAuthority } from './db-access';
+import { stripeReceiptUrl } from './pack-receipt';
 import { stripeId, validPackPrice } from './subscription-lifecycle';
 
 // Existing financial obligations still settle on their original terms. Sales were paused
@@ -23,7 +24,7 @@ const reviewStatus = {ok: true, settled: false, granted: false, status: 'needs_r
 const refunded = {ok: true, settled: false, granted: false, status: 'refunded'} as const;
 const bounded = {timeout: 4000, maxNetworkRetries: 0};
 
-async function deliver(lock: PackAuthority, s: Session, credits: number, price: string, pi: string, source: Source, country?: string) {
+async function deliver(lock: PackAuthority, s: Session, credits: number, price: string, pi: string, source: Source, receiptUrl: string | null, country?: string) {
   if (!lock.alreadyGranted && (lock.closed || lock.billing.is_frozen)) {
     await lock.review('captured_but_cannot_deliver',s.id);
     return reviewStatus;
@@ -33,7 +34,8 @@ async function deliver(lock: PackAuthority, s: Session, credits: number, price: 
     ...(source === 'verify-checkout-session' ? {verified_via: source} : {}),
     ...(country ? {market_policy: CHECKOUT_MARKET_POLICY, buyer_country: country, origin_country: country, billing_country: country} : {})});
   return {ok: true, settled: true, granted: !lock.alreadyGranted, creditsGranted: credits,
-    creditsAvailable: updated.credits_available, sessionId: s.id, paymentIntentId: pi};
+    creditsAvailable: updated.credits_available, sessionId: s.id, paymentIntentId: pi,
+    ...(receiptUrl && !lock.closed ? {receiptUrl} : {})};
 }
 
 async function reversal(lock: PackAuthority, charge: Stripe.Charge, s: Session) {
@@ -79,13 +81,17 @@ export async function reconcilePack(stripe: Stripe, s: Session, source: Source, 
     const pi = await stripe.paymentIntents.retrieve(payment,{expand:['latest_charge']},bounded);
     insist(pi.id === payment && stripeId(pi.customer) === customer, 'pack_payment_owner_mismatch');
     if (succeededEvent) insist(pi.status === 'succeeded','succeeded_event_payment_not_current');
+    const buyerReceipt = (charge: Stripe.Charge) => source === 'verify-checkout-session' && viewer &&
+      viewer.user_id === owner.user_id && stripeId(charge.customer) === customer && charge.paid &&
+      charge.status === 'succeeded' && charge.captured && charge.amount_captured > 0
+        ? stripeReceiptUrl(charge.receipt_url) : null;
     if (!policy) {
       insist(!pi.metadata?.changeRoomMarketPolicy && pi.status === 'succeeded' && pi.amount_received > 0 &&
         pi.amount_received === s.amount_total,'legacy_paid_pack_requires_reconciliation');
       const charge = pi.latest_charge;
       insist(charge && typeof charge === 'object' && stripeId(charge.payment_intent) === pi.id &&
         charge.captured && charge.amount_captured === pi.amount_received,'legacy_charge_unsettled');
-      return await reversal(lock,charge,s) ?? await deliver(lock,s,credits,priceId,payment,source);
+      return await reversal(lock,charge,s) ?? await deliver(lock,s,credits,priceId,payment,source,buyerReceipt(charge));
     }
     const m = s.metadata!;
     const offer = offerForPrice(stripeConfig, priceId);
@@ -143,7 +149,7 @@ export async function reconcilePack(stripe: Stripe, s: Session, source: Source, 
       if (source === 'webhook') throw new Error('captured_pack_session_not_paid_yet');
       return pending;
     }
-    return deliver(lock,s,credits,priceId,payment,source,country);
+    return deliver(lock,s,credits,priceId,payment,source,buyerReceipt(charge),country);
   });
   // Commit durable review evidence *before* returning a redeliverable failure.
   if ('status' in result && result.status === 'needs_review' && source === 'webhook') throw new Error('pack_payment_manual_review');

@@ -1,12 +1,14 @@
 'use client';
 import Link from 'next/link';
+import { stripeReceiptUrl } from '@/lib/pack-receipt';
 import { useEffect, useRef, useState } from 'react';
-export function CheckoutStatus({onSettled}: {onSettled:()=>Promise<void>}) {
+export function CheckoutStatus({onSettled,sessionId}: {onSettled?:()=>Promise<void>; sessionId?:string}) {
   const [message,setMessage] = useState('');
+  const [receipt,setReceipt] = useState<string | null>(null);
   const refresh = useRef(onSettled);
   useEffect(()=>{refresh.current=onSettled;},[onSettled]);
   useEffect(()=>{
-    const session=new URL(window.location.href).searchParams.get('session_id');
+    const session=sessionId ?? new URL(window.location.href).searchParams.get('session_id');
     if (!session) return;
     let stopped=false, timer:ReturnType<typeof setTimeout> | undefined, checks=0;
     const controller=new AbortController();
@@ -15,7 +17,7 @@ export function CheckoutStatus({onSettled}: {onSettled:()=>Promise<void>}) {
       checks++;
       try {
         const response=await fetch('/api/billing/verify-checkout-session',{
-          method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:session}),signal:controller.signal});
+          method:'POST',cache:'no-store',referrerPolicy:'no-referrer',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:session}),signal:controller.signal});
         if (!response.ok && response.status===403) {
           if (!stopped) setMessage('This checkout does not belong to the signed-in account.'); return;
         }
@@ -34,9 +36,12 @@ export function CheckoutStatus({onSettled}: {onSettled:()=>Promise<void>}) {
         }
         if (result?.settled) {
           if (stopped) return;
-          setMessage('Payment confirmed. Your balance has been updated.');
+          setReceipt(stripeReceiptUrl(result.receiptUrl));
+          const confirmation = sessionId ? 'This pack payment was confirmed.' : 'Payment confirmed. Your balance has been updated.';
+          setMessage(result.sessionId && !stripeReceiptUrl(result.receiptUrl) ? confirmation+' For a missing receipt, contact support.' : confirmation);
+          if (sessionId) return;
           const url=new URL(window.location.href);url.searchParams.delete('session_id');window.history.replaceState({},'',url);
-          await refresh.current(); return;
+          await refresh.current?.(); return;
         }
       } catch { /* temporary network failure; retry below */ }
       if (stopped) return;
@@ -46,6 +51,6 @@ export function CheckoutStatus({onSettled}: {onSettled:()=>Promise<void>}) {
     setMessage('Confirming payment and updating your balance…');
     void check();
     return ()=>{ stopped=true;controller.abort();clearTimeout(timer); };
-  },[]);
-  return message ? <p role="status" className="mb-4 rounded-lg bg-blue-50 p-4">{message}{/contact support/i.test(message) && <> <Link href="/support" className="underline">Get support</Link></>}</p> : null;
+  },[sessionId]);
+  return message ? <p role="status" className="mb-4 rounded-lg bg-blue-50 p-4">{message}{receipt && <> <a href={receipt} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" className="underline">View or save your receipt</a></>}{/contact support/i.test(message) && <> <Link href="/support" className="underline">Get support</Link></>}</p> : null;
 }

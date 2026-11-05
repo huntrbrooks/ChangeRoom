@@ -102,3 +102,32 @@ describe('card authorization and delivery for the limited-market launch',()=>{
     expect(capture).not.toHaveBeenCalled();expect(cancel).not.toHaveBeenCalled();expect(grantCredits).not.toHaveBeenCalled();
   });
 });
+
+describe('private buyer receipts', () => {
+  const receiptUrl = 'https://pay.stripe.com/receipts/payment/test_receipt';
+  it('adds the official current Charge receipt only to the verified owner return, never to a webhook grant or the ledger', async () => {
+    const s=fixture({captured:true}); Object.assign(s.payment_intent.latest_charge,{receipt_url:receiptUrl});
+    retrieve.mockResolvedValue(s.payment_intent);
+    const current = await reconcilePack(stripe,asSession(s),'verify-checkout-session',owner);
+    expect(current).toMatchObject({settled:true,receiptUrl});
+    expect(await reconcilePack(stripe,asSession(s),'webhook')).not.toHaveProperty('receiptUrl');
+    expect(JSON.stringify((grantCredits as jest.Mock).mock.calls)).not.toContain(receiptUrl);
+    await expect(reconcilePack(stripe,asSession(s),'verify-checkout-session',{...owner,user_id:'other'})).rejects.toThrow('owner_mismatch');
+  });
+  it.each(['https://pay.stripe.com.evil.example/receipts/payment/plausible',
+    'https://person@pay.stripe.com/receipts/payment/plausible','https://pay.stripe.com/redirect',
+    'http://pay.stripe.com/receipts/payment/plausible',null])('unsafe or missing receipt is omitted without blocking delivery',async(url)=>{
+    const s=fixture({captured:true}); Object.assign(s.payment_intent.latest_charge,{receipt_url:url});
+    retrieve.mockResolvedValue(s.payment_intent);
+    const result=await reconcilePack(stripe,asSession(s),'verify-checkout-session',owner);
+    expect(result.settled).toBe(true);expect(result).not.toHaveProperty('receiptUrl');
+  });
+  it.each(['authorization','refund','dispute'])('withholds a paid receipt link for %s',async(state)=>{
+    const s=fixture({captured:state!=='authorization'}); Object.assign(s.payment_intent.latest_charge,{receipt_url:receiptUrl});
+    if(state==='refund')Object.assign(s.payment_intent.latest_charge,{refunded:true,amount_refunded:1499});
+    if(state==='dispute')s.payment_intent.latest_charge.disputed=true;
+    retrieve.mockResolvedValue(s.payment_intent);
+    const result=await reconcilePack(stripe,asSession(s),'verify-checkout-session',owner);
+    expect(result.settled).toBe(false);expect(result).not.toHaveProperty('receiptUrl');
+  });
+});

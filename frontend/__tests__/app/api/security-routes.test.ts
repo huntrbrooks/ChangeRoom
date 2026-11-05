@@ -14,11 +14,13 @@ const db = {
   createCreditHold: jest.fn(),
   getEffectiveUserBilling: jest.fn(),
   getOrCreateUserBilling: jest.fn(),
+  getUserBillingByStripeCustomer: jest.fn(),
   isPrivilegedUserId: jest.fn(),
   markFreeTrialUsed: jest.fn(),
   upsertUserProfileFromClerk: jest.fn(),
   grantCredits: jest.fn(),
   withPackAuthority: jest.fn(),
+  listPackPurchases: jest.fn(),
   getClothingItemOfferUrls: jest.fn(),
   logAffiliateClick: jest.fn(),
 };
@@ -54,6 +56,9 @@ beforeEach(() => {
     is_frozen: false,
     stripe_customer_id: "cus_attacker",
   });
+  db.getUserBillingByStripeCustomer.mockImplementation(async(customer:string)=>customer === 'cus_attacker'
+    ? {user_id:'user_attacker',stripe_customer_id:customer,credits_available:5}
+    : {user_id:'user_victim',stripe_customer_id:customer,credits_available:0});
   db.logAffiliateClick.mockResolvedValue(undefined);
 });
 
@@ -151,6 +156,15 @@ describe("POST /api/billing/verify-checkout-session", () => {
     expect(res.status).toBe(403);
   });
 
+  it('rejects another owner’s tagged checkout before any billing lookup or creation', async()=>{
+    mockRetrieve.mockResolvedValue({...paidSession,client_reference_id:'user_victim'});
+    const {POST}=await import('@/app/api/billing/verify-checkout-session/route');
+    const res=await POST(request('https://example.com/api/billing/verify-checkout-session',{method:'POST',body:{sessionId:'cs_test_123'}}));
+    expect(res.status).toBe(403);expect(await res.json()).toEqual({error:'Forbidden'});
+    expect(db.getUserBillingByStripeCustomer).not.toHaveBeenCalled();
+    expect(db.getOrCreateUserBilling).not.toHaveBeenCalled();expect(mockPiRetrieve).not.toHaveBeenCalled();
+  });
+
   it("grants the purchased SKU to its mapped customer", async () => {
     mockRetrieve.mockResolvedValue({ ...paidSession, client_reference_id: "user_attacker" });
     mockRetrieve.mockResolvedValue({ ...paidSession, customer: "cus_attacker", client_reference_id: "user_attacker", payment_intent:{...paidSession.payment_intent,customer:"cus_attacker"} });
@@ -166,5 +180,22 @@ describe("POST /api/billing/verify-checkout-session", () => {
 
     expect(res.status).toBe(200);
     expect(db.grantCredits).toHaveBeenCalledWith("user_attacker", 10, expect.any(Object), "pi_123");
+  });
+});
+
+describe('GET /api/billing/pack-purchases',()=>{
+  it('a caller cannot select another user in the request; only self history is returned privately',async()=>{
+    db.listPackPurchases.mockResolvedValue({purchases:[],hasMore:false});
+    const {GET}=await import('@/app/api/billing/pack-purchases/route');
+    const r=await GET(request('https://example.com/api/billing/pack-purchases?page=1&userId=victim'));
+    expect(r.status).toBe(200);expect(r.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(db.listPackPurchases).toHaveBeenCalledWith('user_attacker',1);
+  });
+  it('refuses unauthenticated history and invalid page numbers without looking up a ledger',async()=>{
+    const {GET}=await import('@/app/api/billing/pack-purchases/route');
+    mockAuth.mockResolvedValueOnce({userId:null});
+    expect((await GET(request('https://example.com/api/billing/pack-purchases'))).status).toBe(401);
+    expect((await GET(request('https://example.com/api/billing/pack-purchases?page=-1'))).status).toBe(400);
+    expect(db.listPackPurchases).not.toHaveBeenCalled();
   });
 });

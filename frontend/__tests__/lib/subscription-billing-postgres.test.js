@@ -58,6 +58,21 @@ jest.mock('@clerk/nextjs/server',()=>({auth:async()=>({userId:'buyer'})}));
     await mockPool.query("INSERT INTO credit_ledger_entries(id,user_id,request_id,entry_type,credits_change,metadata) VALUES(gen_random_uuid(),$1,'pi_pack','grant',100,'{\"source\":\"stripe\",\"reason\":\"credit_pack_purchase\"}')",[user]);
   });
   afterAll(async()=>{if(mockPool) await mockPool.end(); if(admin){await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();}});
+  it('lists only the signed-in buyer’s original pack grants, across pages, without returning private receipt links',async()=>{
+    async function seed(owner,prefix,count){
+      await mockPool.query(`INSERT INTO credit_ledger_entries(id,user_id,request_id,entry_type,credits_change,metadata)
+        SELECT gen_random_uuid(),$1,$2 || n,'grant',10,jsonb_build_object('source','stripe','reason','credit_pack_purchase',
+          'payment_intent_id',$2 || n,'session_id','cs_test_' || $2 || n,'receipt_url','must-not-escape') FROM generate_series(1,$3) n`,
+        [owner,prefix,count]);
+    }
+    await seed(user,'pi_mine',21);await seed('someone_else','pi_other',2);
+    const first=await db.listPackPurchases(user,0),second=await db.listPackPurchases(user,1);
+    expect(first.hasMore).toBe(true);expect(second.hasMore).toBe(false);
+    const all=[...first.purchases,...second.purchases];
+    expect(new Set(all.map(x=>x.sessionId)).size).toBe(21);
+    expect(all.every(x=>x.sessionId.startsWith('cs_test_pi_mine')&&x.credits===10)).toBe(true);
+    expect(JSON.stringify(all)).not.toContain('must-not-escape');
+  });
   it.each([['STARTER',10],['VALUE',30],['PRO',100]])('settles a signed %s pack once across webhook retries and browser verification',async(sku,credits)=>{
     const {NextRequest}=require('next/server');
     const webhook=require('@/app/api/webhooks/stripe/route').POST;

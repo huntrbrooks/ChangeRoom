@@ -2607,6 +2607,19 @@ export async function flagUndeliveredPackOnClosure(userId: string): Promise<void
             OR (f.request_id='pack-fully_refunded:'||(c.metadata->>'payment_intent_id') AND f.entry_type='adjustment'))))`;
 }
 
+// Only original, owner-scoped Stripe pack grants identify purchase history. Return
+// no provider receipt URLs; the owner verifies the current payment when opening a row.
+export async function listPackPurchases(userId: string, page: number) {
+  if (!Number.isSafeInteger(page) || page < 0 || page > 100000) throw new Error('invalid_purchase_page');
+  const result = await sql`SELECT metadata->>'session_id' AS session_id, created_at, credits_change
+    FROM credit_ledger_entries WHERE user_id=${userId} AND entry_type='grant' AND credits_change > 0
+    AND metadata->>'source'='stripe' AND metadata->>'reason'='credit_pack_purchase'
+    AND request_id=metadata->>'payment_intent_id' AND metadata->>'session_id' ~ '^cs_(test|live)_[A-Za-z0-9_]+$'
+    ORDER BY created_at DESC, id DESC LIMIT 21 OFFSET ${page * 20}`;
+  return {purchases:result.rows.slice(0,20).map(row => ({sessionId:row.session_id as string,
+    addedAt:new Date(row.created_at).toISOString(), credits:Number(row.credits_change)})), hasMore:result.rows.length > 20};
+}
+
 export interface PackAuthority {
   billing: UserBilling;
   closed: boolean;
