@@ -1,5 +1,6 @@
 import Stripe from 'stripe';
 import { sql } from './db';
+import { flagUndeliveredPackOnClosure } from './db-access';
 
 // Either the Clerk account or the actual Stripe customer must prove ownership.
 // An app-side customer id alone is insufficient for canceling a recurring charge.
@@ -17,6 +18,7 @@ export function cancellationDecision(
 export async function closeDeletedAccount(userId: string) {
   // Transactional tombstone and removal; safe on duplicate signed deletion events.
   await sql`SELECT public.request_account_closure(${userId})`;
+  await flagUndeliveredPackOnClosure(userId);
   const record = (await sql`
     SELECT b.stripe_customer_id, b.stripe_subscription_id FROM public.users_billing b WHERE user_id=${userId}
   `).rows[0];
@@ -59,12 +61,12 @@ export async function closeDeletedAccount(userId: string) {
     } else if (record?.stripe_subscription_id) {
       needsReview = true;
     }
-    await sql`UPDATE public.account_closures SET billing_state=${needsReview ? 'review' : 'resolved'},
-      last_attempt_at=now(),last_error=NULL WHERE user_id=${userId}`;
+    await sql`UPDATE public.account_closures SET billing_state=CASE WHEN last_error='pack_payment_manual_review' THEN 'review' ELSE ${needsReview ? 'review' : 'resolved'} END,
+      last_attempt_at=now(),last_error=CASE WHEN last_error='pack_payment_manual_review' THEN last_error ELSE NULL END WHERE user_id=${userId}`;
     if (needsReview) console.warn('account_closure_requires_billing_review');
   } catch {
-    await sql`UPDATE public.account_closures SET billing_state='pending', last_attempt_at=now(),
-      last_error='billing_retry_required' WHERE user_id=${userId}`;
+    await sql`UPDATE public.account_closures SET billing_state=CASE WHEN last_error='pack_payment_manual_review' THEN 'review' ELSE 'pending' END, last_attempt_at=now(),
+      last_error=CASE WHEN last_error='pack_payment_manual_review' THEN last_error ELSE 'billing_retry_required' END WHERE user_id=${userId}`;
     throw new Error('account_closure_billing_retry_required');
   }
 }

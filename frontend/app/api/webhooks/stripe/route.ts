@@ -4,27 +4,15 @@ import { stripeConfig } from '@/lib/config';
 import { offerForPrice, packCredits } from '@/lib/billing-catalog';
 import { invoiceSubscription, liveSnapshot, paidAllowance, stripeId } from '@/lib/subscription-lifecycle';
 import { logger } from '@/lib/logger';
-import { grantCredits, getUserBillingByStripeCustomer, syncSubscriptionBilling } from '@/lib/db-access';
+import { syncSubscriptionBilling } from '@/lib/db-access';
 
-async function pack(stripe: Stripe, sessionId: string) {
-  const s = await stripe.checkout.sessions.retrieve(sessionId,{expand:['line_items.data.price']});
-  if (s.mode !== 'payment' || s.payment_status !== 'paid') return;
-  const line = s.line_items?.data[0];
-  const price = line?.price?.id;
-  const amount = packCredits(stripeConfig, price);
-  if (!amount) {
-    if (s.metadata?.clerkUserId) throw new Error('app_pack_price_unmapped');
-    return; // unrelated merchant products
-  }
-  const owner = await getUserBillingByStripeCustomer(stripeId(s.customer));
-  if (!owner || (s.metadata?.clerkUserId && owner.user_id !== s.metadata.clerkUserId) ||
-      (s.client_reference_id && owner.user_id !== s.client_reference_id))
-    throw new Error('paid_pack_owner_needs_reconciliation');
-  const payment = stripeId(s.payment_intent);
-  if (!payment || line?.quantity !== 1 || s.line_items?.data.length !== 1 || s.line_items.has_more)
-    throw new Error('paid_pack_line_needs_reconciliation');
-  await grantCredits(owner.user_id,amount,{source:'stripe',reason:'credit_pack_purchase',
-    price_id:price,payment_intent_id:payment,session_id:s.id},payment);
+import { packSessionExpansions, reconcilePack } from '@/lib/pack-settlement';
+import { CHECKOUT_MARKET_POLICY } from '@/lib/checkout-market';
+
+async function pack(stripe: Stripe, sessionId: string, expectedIntent?: string, succeededEvent=false) {
+  const s = await stripe.checkout.sessions.retrieve(sessionId, {expand: packSessionExpansions});
+  if (expectedIntent && stripeId(s.payment_intent) !== expectedIntent) throw new Error('pack_intent_session_mismatch');
+  await reconcilePack(stripe, s, 'webhook', undefined, succeededEvent);
 }
 
 export async function POST(req: NextRequest) {
@@ -36,6 +24,8 @@ export async function POST(req: NextRequest) {
   catch { return NextResponse.json({error:'Invalid signature'},{status:400}); }
 
   try {
+    // This direct-merchant endpoint does not collect payments for Connect accounts.
+    if (event.account) return NextResponse.json({received: true});
     switch (event.type) {
       case 'checkout.session.completed':
       case 'checkout.session.async_payment_succeeded': {
@@ -44,14 +34,16 @@ export async function POST(req: NextRequest) {
         // Subscriptions are fulfilled only by a settled subscription invoice.
         break;
       }
+      case 'payment_intent.amount_capturable_updated':
       case 'payment_intent.succeeded': {
         const pi=event.data.object;
         // This fallback is for application-labelled packs, including delayed methods.
         // Subscription/non-Checkout PIs do not imply an allowance.
-        if (!packCredits(stripeConfig, pi.metadata.priceId)) break;
-        const matches=await stripe.checkout.sessions.list({payment_intent:pi.id,limit:1});
-        if (!matches.data.length) throw new Error('paid_pack_session_unresolved');
-        await pack(stripe,matches.data[0].id);
+        if (event.type === 'payment_intent.amount_capturable_updated' && pi.metadata.changeRoomMarketPolicy !== CHECKOUT_MARKET_POLICY) break;
+        if (!packCredits(stripeConfig, pi.metadata.priceId) && !pi.metadata.changeRoomMarketPolicy) break;
+        const matches=await stripe.checkout.sessions.list({payment_intent:pi.id,limit:2});
+        if (matches.data.length !== 1 || matches.has_more) throw new Error('paid_pack_session_unresolved');
+        await pack(stripe,matches.data[0].id,pi.id,event.type === 'payment_intent.succeeded');
         break;
       }
       case 'customer.subscription.created':

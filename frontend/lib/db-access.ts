@@ -1250,98 +1250,98 @@ export async function grantCredits(
 
   await ensureUsersBillingTable();
   await ensureCreditTables();
-  const result = await runTransaction(async (tx) => {
-    // Ensure billing exists and lock row for safe concurrent updates
-    await ensureUserBillingWithLock(tx, userId);
+  return runTransaction(tx => grantCreditsInTransaction(tx, userId, amount, metadata, requestId));
+}
 
-    // Idempotency gate: if requestId is provided, check if grant already exists.
-    // Only if no existing grant do we mutate the user's balance.
-    let insertedLedgerId: string | null = null;
-    if (requestId && requestId.trim()) {
-      // Check if grant already exists for this requestId (idempotency check)
-      const existingGrant = await tx`
-        SELECT id FROM credit_ledger_entries
-        WHERE request_id = ${requestId} AND entry_type = 'grant'
-        LIMIT 1
-      `;
-      if (existingGrant.rows.length > 0) {
-        // Already granted for this requestId
-        const existing = await tx`
-          SELECT * FROM users_billing WHERE user_id = ${userId} FOR UPDATE
-        `;
-        return existing.rows[0] as UserBilling;
-      }
+async function grantCreditsInTransaction(tx: typeof sql, userId: string, amount: number, metadata: Record<string, unknown>, requestId?: string): Promise<UserBilling> {
+  // Ensure billing exists and lock row for safe concurrent updates
+  await ensureUserBillingWithLock(tx, userId);
 
-      // Insert the ledger row
-      const newId = generateUuid();
-      await tx`
-        INSERT INTO credit_ledger_entries (
-          id,
-          user_id,
-          request_id,
-          entry_type,
-          credits_change,
-          balance_after,
-          metadata
-        )
-        VALUES (
-          ${newId},
-          ${userId},
-          ${requestId},
-          'grant',
-          ${amount},
-          NULL,
-          ${JSON.stringify(metadata)}
-        )
-      `;
-      insertedLedgerId = newId;
-    }
-
-    const updated = await tx`
-      UPDATE users_billing
-      SET 
-        credits_available = credits_available + ${amount},
-        updated_at = now()
-      WHERE user_id = ${userId}
-      RETURNING *
+  // Idempotency gate: if requestId is provided, check if grant already exists.
+  // Only if no existing grant do we mutate the user's balance.
+  let insertedLedgerId: string | null = null;
+  if (requestId && requestId.trim()) {
+    // Check if grant already exists for this requestId (idempotency check)
+    const existingGrant = await tx`
+      SELECT id FROM credit_ledger_entries
+      WHERE request_id = ${requestId} AND entry_type = 'grant'
+      LIMIT 1
     `;
-
-    const updatedCredits = toNumber(asRow(updated.rows[0]).credits_available, 0);
-    // If requestId wasn't provided, we still write an audit ledger row (non-idempotent by design).
-    if (!requestId || !requestId.trim()) {
-      await tx`
-        INSERT INTO credit_ledger_entries (
-          id,
-          user_id,
-          request_id,
-          entry_type,
-          credits_change,
-          balance_after,
-          metadata
-        )
-        VALUES (
-          ${generateUuid()},
-          ${userId},
-          NULL,
-          'grant',
-          ${amount},
-          ${updatedCredits},
-          ${JSON.stringify(metadata)}
-        )
+    if (existingGrant.rows.length > 0) {
+      // Already granted for this requestId
+      const existing = await tx`
+        SELECT * FROM users_billing WHERE user_id = ${userId} FOR UPDATE
       `;
-    } else if (insertedLedgerId) {
-      // Fill in balance_after for the inserted ledger row
-      await tx`
-        UPDATE credit_ledger_entries
-        SET balance_after = ${updatedCredits}
-        WHERE id = ${insertedLedgerId}
-      `;
+      return existing.rows[0] as UserBilling;
     }
 
-    return updated.rows[0] as UserBilling;
-  });
-  
-  return result;
+    // Insert the ledger row
+    const newId = generateUuid();
+    await tx`
+      INSERT INTO credit_ledger_entries (
+        id,
+        user_id,
+        request_id,
+        entry_type,
+        credits_change,
+        balance_after,
+        metadata
+      )
+      VALUES (
+        ${newId},
+        ${userId},
+        ${requestId},
+        'grant',
+        ${amount},
+        NULL,
+        ${JSON.stringify(metadata)}
+      )
+    `;
+    insertedLedgerId = newId;
+  }
+
+  const updated = await tx`
+    UPDATE users_billing
+    SET
+      credits_available = credits_available + ${amount},
+      updated_at = now()
+    WHERE user_id = ${userId}
+    RETURNING *
+  `;
+
+  const updatedCredits = toNumber(asRow(updated.rows[0]).credits_available, 0);
+  // If requestId wasn't provided, we still write an audit ledger row (non-idempotent by design).
+  if (!requestId || !requestId.trim()) {
+    await tx`
+      INSERT INTO credit_ledger_entries (
+        id,
+        user_id,
+        request_id,
+        entry_type,
+        credits_change,
+        balance_after,
+        metadata
+      )
+      VALUES (
+        ${generateUuid()},
+        ${userId},
+        NULL,
+        'grant',
+        ${amount},
+        ${updatedCredits},
+        ${JSON.stringify(metadata)}
+      )
+    `;
+  } else if (insertedLedgerId) {
+    // Fill in balance_after for the inserted ledger row
+    await tx`
+      UPDATE credit_ledger_entries
+      SET balance_after = ${updatedCredits}
+      WHERE id = ${insertedLedgerId}
+    `;
+  }
+
+  return updated.rows[0] as UserBilling;
 }
 
 /**
@@ -2586,6 +2586,71 @@ export async function getUserBillingByStripeCustomer(
   `;
 
   return (result.rows[0] as UserBilling) || null;
+}
+
+/** Fast preflight. withPackAuthority repeats the check under the closure lock before capture/delivery. */
+export async function isClosedForPackPurchase(userId: string): Promise<boolean> {
+  const result = await sql`SELECT EXISTS(SELECT 1 FROM account_closures WHERE user_id=${userId}) AS closed`;
+  if (typeof result.rows[0]?.closed !== 'boolean') throw new Error('pack_closure_status_unknown');
+  return result.rows[0].closed;
+}
+
+// Run after the durable tombstone. A capture that won the advisory lock is already
+// journalled, even if the subsequent Stripe success event has not reached us.
+export async function flagUndeliveredPackOnClosure(userId: string): Promise<void> {
+  await sql`UPDATE account_closures SET billing_state='review',last_error='pack_payment_manual_review',last_attempt_at=now()
+    WHERE user_id=${userId} AND EXISTS (
+      SELECT 1 FROM credit_ledger_entries c WHERE c.user_id=${userId} AND c.entry_type='adjustment'
+        AND (c.metadata->>'reason'='pack_capture_requested' OR c.metadata->>'review_reason'='capture_outcome_unknown')
+        AND NOT EXISTS (SELECT 1 FROM credit_ledger_entries f WHERE f.user_id=c.user_id
+          AND ((f.request_id=c.metadata->>'payment_intent_id' AND f.entry_type='grant')
+            OR (f.request_id='pack-fully_refunded:'||(c.metadata->>'payment_intent_id') AND f.entry_type='adjustment'))))`;
+}
+
+export interface PackAuthority {
+  billing: UserBilling;
+  closed: boolean;
+  alreadyGranted: boolean;
+  grant: (credits: number, metadata: Record<string,unknown>) => Promise<UserBilling>;
+  review: (reason: string, sessionId: string) => Promise<void>;
+  receipt: (outcome: 'capture_requested' | 'fully_refunded', sessionId: string) => Promise<void>;
+}
+
+// Serialize the decision with request_account_closure() and any freeze/ownership update.
+// Stripe calls inside work must have bounded timeouts and stable idempotency keys.
+export async function withPackAuthority<T>(userId: string, customerId: string, paymentId: string,
+  work: (authority: PackAuthority) => Promise<T>): Promise<T> {
+  return runTransaction(async tx => {
+    await tx`SET LOCAL lock_timeout = '5s'`;
+    await tx`SET LOCAL idle_in_transaction_session_timeout = '30s'`;
+    await tx`SELECT pg_advisory_xact_lock(hashtextextended(${userId},4711))`;
+    const current = await tx`SELECT * FROM users_billing WHERE user_id=${userId} FOR UPDATE`;
+    const billing = current.rows[0] as UserBilling | undefined;
+    if (!billing || billing.stripe_customer_id !== customerId) throw new Error('pack_customer_owner_changed');
+    const check = await tx`SELECT EXISTS(SELECT 1 FROM account_closures WHERE user_id=${userId}) AS closed,
+      EXISTS(SELECT 1 FROM credit_ledger_entries WHERE user_id=${userId} AND request_id=${paymentId} AND entry_type='grant') AS granted`;
+    const {closed,granted} = check.rows[0];
+    if (typeof closed !== 'boolean' || typeof granted !== 'boolean') throw new Error('pack_billing_state_unknown');
+    // Zero-value receipts do not affect credits. Never edit an original grant or guess a refund.
+    const journal = async (kind: string, metadata: Record<string,string>) => {
+      await tx`INSERT INTO credit_ledger_entries(id,user_id,request_id,entry_type,credits_change,balance_after,metadata)
+        VALUES(${generateUuid()},${userId},${'pack-'+kind+':'+paymentId},'adjustment',0,${billing.credits_available},
+          ${JSON.stringify({source:'stripe',payment_intent_id:paymentId,...metadata})})
+        ON CONFLICT(request_id,entry_type) WHERE request_id IS NOT NULL DO NOTHING`;
+    };
+    return work({billing, closed, alreadyGranted:granted,
+      receipt: (outcome,sessionId) => journal(outcome,{reason:'pack_'+outcome,session_id:sessionId}),
+      grant: async (credits,metadata) => {
+        if (!Number.isSafeInteger(credits) || credits <= 0 || closed || billing.is_frozen) throw new Error('pack_delivery_ineligible');
+        return grantCreditsInTransaction(tx, userId, credits, metadata, paymentId);
+      },
+      review: async (reason,sessionId) => {
+        // Persist separately from the 503 so operator evidence survives webhook retries.
+        await journal('review:'+reason,{reason:'pack_payment_review',review_reason:reason,session_id:sessionId});
+        if (closed) await tx`UPDATE account_closures SET billing_state='review',last_error='pack_payment_manual_review',last_attempt_at=now()
+          WHERE user_id=${userId}`;
+      }});
+  });
 }
 
 // Shop & Save Offer Types

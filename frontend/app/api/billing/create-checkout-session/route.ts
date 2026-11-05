@@ -6,12 +6,15 @@ import { z } from "zod";
 import { stripeConfig, appConfig } from "@/lib/config";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { resolveCheckout } from "@/lib/billing-catalog";
+import { CHECKOUT_MARKET_COUNTRIES, checkoutMarketEvidence, expectedCheckoutLivemode } from "@/lib/checkout-market";
 import { validPackPrice } from "@/lib/subscription-lifecycle";
 import { logger } from "@/lib/logger";
 
-const checkoutRequestSchema = z.union([z.object({sku:z.string().min(1).max(40)}).strict(), z.object({
+const buyer = {buyerCountry: z.enum(CHECKOUT_MARKET_COUNTRIES), personalUse: z.literal(true)};
+const checkoutRequestSchema = z.union([z.object({...buyer, sku:z.string().min(1).max(40)}).strict(), z.object({
+  ...buyer,
   priceId: z.string().trim().regex(/^price_/, "Invalid price ID"),
-  mode: z.enum(["subscription", "payment"]),
+  mode: z.literal("payment"),
 }).strict()]);
 
 // Lazy Stripe client initialization (only created when route handler runs, not during build)
@@ -25,7 +28,7 @@ function getStripe() {
  * POST /api/billing/create-checkout-session
  * Creates only one-time pack Checkout Sessions. Existing subscriptions are managed separately.
  * 
- * Body: {sku: string} or a legacy allowlisted {priceId, mode: "payment"}.
+ * Body: {buyerCountry, personalUse: true} plus {sku} or an allowlisted {priceId, mode: "payment"}.
  */
 export async function POST(req: NextRequest) {
   if (!canCreateCheckout()) return pausedCheckoutResponse();
@@ -50,9 +53,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const db = await import(
-      "@/lib/db-access"
-    );
     const ip =
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
       req.headers.get("x-real-ip") ||
@@ -66,6 +66,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // This endpoint accepts only the documented JSON body. No query can set or override market evidence.
+    if (req.nextUrl.search) return NextResponse.json({error: 'invalid_request'}, {status: 400});
     const body = await req.json().catch(() => null);
     const parsed = checkoutRequestSchema.safeParse(body);
     if (!parsed.success) {
@@ -81,9 +83,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const market = checkoutMarketEvidence(parsed.data.buyerCountry, req.headers);
+    if (!market) {
+      return NextResponse.json({error: 'market_unavailable', message:
+        'Purchases are available only to residents buying for personal use while in Australia or New Zealand. Your location must match your country of residence.'}, {status: 403});
+    }
+
     // Validate Stripe configuration
-    if (!stripeConfig.secretKey || !stripeConfig.secretKey.trim()) {
-      logger.error("stripe_secret_key_missing");
+    const livemode = expectedCheckoutLivemode(stripeConfig.secretKey);
+    if (livemode === null) {
+      logger.error("stripe_checkout_mode_invalid");
       return NextResponse.json(
         { 
           error: "Payment system configuration error. Please contact support.",
@@ -112,9 +121,15 @@ export async function POST(req: NextRequest) {
     const {offer,priceId} = selection;
     const mode = "payment" as const;
     const stripe = getStripe();
-    if (!validPackPrice(await stripe.prices.retrieve(priceId, {expand:["product"]}), offer))
+    const price = await stripe.prices.retrieve(priceId, {expand:["product"]});
+    if (price.livemode !== livemode || !validPackPrice(price, offer))
       throw new Error('Stripe price disagrees with the published offer');
+    const db = await import("@/lib/db-access");
+    const accountUnavailable = () => NextResponse.json({error:'account_unavailable',
+      message:'Purchases are unavailable for this account. Please contact support.'}, {status:403});
+    if (await db.isClosedForPackPurchase(userId)) return accountUnavailable();
     const billing = await db.getOrCreateUserBilling(userId);
+    if (billing.is_frozen !== false) return accountUnavailable();
     let customerId = billing.stripe_customer_id;
     if (!customerId) {
       const customer = await stripe.customers.create({metadata:{clerkUserId:userId}},
@@ -122,13 +137,17 @@ export async function POST(req: NextRequest) {
       customerId = customer.id;
       await db.setStripeCustomerIdForUser(userId,customerId);
     }
-    const metadata = {clerkUserId:userId,priceId,mode,creditAmount:String(offer.credits)};
+    const metadata = {clerkUserId:userId,priceId,mode,creditAmount:String(offer.credits), ...market};
     // Never resume a stored subscription attempt or pass a caller-selected mode to Stripe.
     const session = await stripe.checkout.sessions.create({
         customer:customerId,mode,line_items:[{price:priceId,quantity:1}],metadata,
         // Launch only the verified card flow; account-wide dynamic methods include untested alternatives.
         payment_method_types:["card"],
-        payment_intent_data:{metadata},client_reference_id:userId,
+        billing_address_collection:'required', adaptive_pricing:{enabled:false}, automatic_tax:{enabled:false},
+        // Authorization alone does not sell credits. Check the final card billing country before capture.
+        payment_intent_data:{capture_method:'manual',metadata,
+          description:`${offer.name} — ${offer.credits} ChangeRoom try-on credits. FRESH'N UP AU PTY LTD, ABN 11 678 658 823. No GST charged.`},
+        client_reference_id:userId,
         success_url:appConfig.appUrl+'/billing?session_id={CHECKOUT_SESSION_ID}',cancel_url:appConfig.appUrl+'/pricing',
       });
     if (!session.url) {

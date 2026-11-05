@@ -1,4 +1,4 @@
-import { packCredits } from "@/lib/billing-catalog";
+import { packSessionExpansions, reconcilePack } from "@/lib/pack-settlement";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import Stripe from "stripe";
@@ -69,9 +69,10 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { getOrCreateUserBilling, grantCredits, hasSubscriptionAllowance } = await import("@/lib/db-access");
-    const session = await getStripe().checkout.sessions.retrieve(sessionId, {
-      expand: ["line_items.data.price", "payment_intent"],
+    const { getOrCreateUserBilling, hasSubscriptionAllowance } = await import("@/lib/db-access");
+    const stripe = getStripe();
+    const session = await stripe.checkout.sessions.retrieve(sessionId, {
+      expand: packSessionExpansions,
     });
 
     // Fail closed: the session must be provably this user's (our checkout sets metadata and
@@ -93,65 +94,7 @@ export async function POST(req: NextRequest) {
       const settled = Boolean(subId && session.status === "complete" && await hasSubscriptionAllowance(userId, subId));
       return NextResponse.json({ ok:true, settled, granted:false, reason:settled ? "subscription_settled" : "awaiting_invoice" });
     }
-    if (session.payment_status !== "paid") {
-      return NextResponse.json({
-        ok: true,
-        granted: false,
-        reason: "not_paid",
-        sessionId: session.id,
-        paymentStatus: session.payment_status,
-      });
-    }
-
-    const paymentIntentId =
-      typeof session.payment_intent === "string"
-        ? session.payment_intent
-        : session.payment_intent?.id;
-    if (!paymentIntentId) {
-      return NextResponse.json(
-        { error: "Missing payment_intent on session", sessionId: session.id },
-        { status: 500 }
-      );
-    }
-
-    const line = session.line_items?.data?.[0];
-    const priceIdFromSession = line?.price?.id ?? "";
-    const creditAmount = line?.quantity === 1 && session.line_items?.data.length === 1 && !session.line_items.has_more
-      ? packCredits(stripeConfig, priceIdFromSession) : 0;
-
-    if (creditAmount <= 0) {
-      return NextResponse.json({
-        ok: true,
-        granted: false,
-        reason: "no_credit_amount",
-        sessionId: session.id,
-        priceId: priceIdFromSession,
-      });
-    }
-
-    const creditMetadata = {
-      source: "stripe",
-      reason: "credit_pack_purchase",
-      price_id: priceIdFromSession,
-      session_id: session.id,
-      payment_intent_id: paymentIntentId,
-      verified_via: "verify-checkout-session",
-    };
-
-    // Idempotent: requestId = payment_intent id
-    const before = await getOrCreateUserBilling(userId);
-    const updated = await grantCredits(userId, creditAmount, creditMetadata, paymentIntentId);
-    const granted = updated.credits_available !== before.credits_available;
-
-    return NextResponse.json({
-      ok: true,
-      granted,
-      settled: true,
-      creditsGranted: creditAmount,
-      sessionId: session.id,
-      paymentIntentId,
-      creditsAvailable: updated.credits_available,
-    });
+    return NextResponse.json(await reconcilePack(stripe, session, 'verify-checkout-session', billingRow));
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
     logger.error("verify_checkout_session_failed", { error });

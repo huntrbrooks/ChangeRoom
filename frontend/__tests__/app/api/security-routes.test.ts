@@ -18,6 +18,7 @@ const db = {
   markFreeTrialUsed: jest.fn(),
   upsertUserProfileFromClerk: jest.fn(),
   grantCredits: jest.fn(),
+  withPackAuthority: jest.fn(),
   getClothingItemOfferUrls: jest.fn(),
   logAffiliateClick: jest.fn(),
 };
@@ -26,9 +27,9 @@ jest.mock("@/lib/db-access", () => db);
 const mockJobSql = jest.fn();
 jest.mock("@/lib/db", () => ({ sql: (...args: unknown[]) => mockJobSql(...args) }));
 
-const mockRetrieve = jest.fn();
+const mockRetrieve = jest.fn(), mockPiRetrieve=jest.fn();
 jest.mock("stripe", () =>
-  jest.fn().mockImplementation(() => ({ checkout: { sessions: { retrieve: mockRetrieve } } }))
+  jest.fn().mockImplementation(() => ({ checkout: { sessions: { retrieve: mockRetrieve } }, paymentIntents:{retrieve:mockPiRetrieve} }))
 );
 
 let ipCounter = 0;
@@ -119,9 +120,12 @@ describe("POST /api/billing/verify-checkout-session", () => {
   beforeAll(() => { process.env.STRIPE_STARTER_PRICE_ID = "price_test_starter"; });
   const paidSession = {
     id: "cs_test_123",
+    created: 1700000000, // historical paid pack, before market-limited checkout
     mode: "payment",
     payment_status: "paid",
-    payment_intent: "pi_123",
+    amount_total: 1499,
+    payment_intent: {id: "pi_123", status: "succeeded", customer: "cus_victim", amount_received: 1499,
+      latest_charge: {payment_intent:"pi_123",captured:true,amount_captured:1499}},
     metadata: { creditAmount: "10" },
     client_reference_id: null,
     customer: "cus_victim",
@@ -149,7 +153,10 @@ describe("POST /api/billing/verify-checkout-session", () => {
 
   it("grants the purchased SKU to its mapped customer", async () => {
     mockRetrieve.mockResolvedValue({ ...paidSession, client_reference_id: "user_attacker" });
-    mockRetrieve.mockResolvedValue({ ...paidSession, customer: "cus_attacker", client_reference_id: "user_attacker" });
+    mockRetrieve.mockResolvedValue({ ...paidSession, customer: "cus_attacker", client_reference_id: "user_attacker", payment_intent:{...paidSession.payment_intent,customer:"cus_attacker"} });
+    mockPiRetrieve.mockResolvedValue({...paidSession.payment_intent,customer:'cus_attacker'});
+    db.withPackAuthority.mockImplementation(async (user,customer,pi,work)=>work({billing:{is_frozen:false},closed:false,alreadyGranted:false,
+      grant:(amount:number,metadata:Record<string,unknown>)=>db.grantCredits(user,amount,metadata,pi)}));
     db.grantCredits.mockResolvedValue({ credits_available: 15 });
     const { POST } = await import("@/app/api/billing/verify-checkout-session/route");
 

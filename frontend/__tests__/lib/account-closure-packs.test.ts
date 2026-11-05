@@ -20,7 +20,7 @@ const envKeys = ['STRIPE_SECRET_KEY', 'STRIPE_STARTER_PRICE_ID', 'STRIPE_VALUE_P
   'STRIPE_STARTER_XMAS_PRICE_ID', 'STRIPE_CREATOR_PRICE_ID', 'STRIPE_POWER_PRICE_ID'] as const;
 const prior = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
 let warning: jest.SpyInstance;
-const states = () => mockSql.mock.calls.filter(([parts]) => parts[0].trimEnd().endsWith('SET billing_state='))
+const states = () => mockSql.mock.calls.filter(([parts]) => parts[0].includes("THEN 'review' ELSE ") && parts.length === 3)
   .map(([, state]) => state);
 
 beforeEach(() => {
@@ -100,7 +100,7 @@ it('does not cancel or expire anything when customer ownership conflicts', async
 it('leaves a retriable pending closure after Stripe fails instead of losing the billing obligation', async () => {
   mockSubscriptions.mockImplementation(() => { throw new Error('temporary provider failure'); });
   await expect(closeDeletedAccount(user)).rejects.toThrow('account_closure_billing_retry_required');
-  const updates = mockSql.mock.calls.filter(([parts]) => parts.join('').includes("billing_state='pending'"));
+  const updates = mockSql.mock.calls.filter(([parts]) => parts.join('').includes("ELSE 'pending' END"));
   expect(updates).toHaveLength(1);
   expect(states()).toEqual([]);
 });
