@@ -17,13 +17,17 @@ function SignedPricing({showCreditPacks}: {showCreditPacks: boolean}) {
 function Cards({showCreditPacks, signedIn}: {showCreditPacks: boolean; signedIn: boolean}) {
   const [pending, setPending] = useState('');
   const [message, setMessage] = useState('');
+  const [buyerCountry, setBuyerCountry] = useState('');
+  const [personalUse, setPersonalUse] = useState(false);
+  const eligible = (buyerCountry === 'AU' || buyerCountry === 'NZ') && personalUse;
   async function buy(offer: Pack) {
     if (!signedIn) { window.location.assign('/sign-in?redirect_url=%2Fpricing'); return; }
+    if (!eligible || pending) return;
     setPending(offer.key); setMessage('');
     try {
       const response = await fetch('/api/billing/create-checkout-session', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sku: offer.sku }),
+        body: JSON.stringify({ sku: offer.sku, buyerCountry, personalUse }),
       });
       const result = await response.json();
       if (!response.ok || !result.url) {
@@ -36,13 +40,23 @@ function Cards({showCreditPacks, signedIn}: {showCreditPacks: boolean; signedIn:
   }
   return <section className="space-y-6">
     <p>New verified accounts get one free standard try-on. After that, each successful look costs 1 credit. No card is needed for the free try-on.</p>
-    {showCreditPacks && <section><h2 className="mb-3 text-xl font-semibold">One-time credit packs</h2>
+    {showCreditPacks && <section><h2 className="mb-2 text-xl font-semibold">One-time credit packs</h2>
+      <p className="mb-4">Packs are available to residents of Australia and New Zealand buying from their home country for personal use. Prices are the final amounts in Australian dollars. Purchased credits have no expiry date.</p>
+      {signedIn && <fieldset disabled={!!pending} className="mb-5 space-y-3 rounded-xl border border-gray-300 p-4">
+        <legend className="px-1 font-semibold">Before you buy</legend>
+        <label className="block" htmlFor="pack-residence">Country of residence</label>
+        <select id="pack-residence" value={buyerCountry} onChange={e => setBuyerCountry(e.target.value)} className="rounded-md border border-gray-400 bg-white px-3 py-2">
+          <option value="">Select your country</option><option value="AU">Australia</option><option value="NZ">New Zealand</option>
+        </select>
+        <label className="flex items-start gap-2"><input type="checkbox" className="mt-1" checked={personalUse} onChange={e => setPersonalUse(e.target.checked)} />I’m buying these credits for my own personal use.</label>
+        <p className="text-sm text-gray-700">Your location and card billing address must match your country of residence. If they don’t match, we won’t take payment. Your bank may temporarily show a pending card authorization.</p>
+      </fieldset>}
       <div className="grid gap-3 sm:grid-cols-3">{purchasablePacks.map(offer =>
         <article key={offer.key} className="rounded-xl border border-gray-300 p-4">
           <h3 className="font-semibold">{offer.name}</h3>
           <p>{aud(offer.cents)} once · {offer.credits} credits</p>
-          <button disabled={!!pending} onClick={() => buy(offer)} className="mt-3 rounded-lg bg-black px-5 py-2 text-white disabled:opacity-60">
-            {pending === offer.key ? 'Opening checkout…' : 'Buy pack'}
+          <button disabled={!!pending || (signedIn && !eligible)} aria-label={`${signedIn ? 'Buy' : 'Sign in to buy'} ${offer.name}`} onClick={() => buy(offer)} className="mt-3 rounded-lg bg-black px-5 py-2 text-white disabled:opacity-60">
+            {pending === offer.key ? 'Opening checkout…' : signedIn ? 'Buy pack' : 'Sign in to buy'}
           </button>
         </article>)}</div></section>}
     <p>Each pack is a single payment with no automatic renewal. Credits are added to your account after payment. Existing subscribers can manage billing or cancel in <Link className="underline" href="/billing">billing</Link>.</p>

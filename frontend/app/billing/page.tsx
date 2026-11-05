@@ -7,6 +7,7 @@ import { Settings, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { httpClient } from '@/lib/httpClient';
 import { offers } from '@/lib/billing-catalog';
+import { PackPurchaseHistory } from '../components/PackPurchaseHistory';
 import { CheckoutStatus } from '../components/CheckoutStatus';
 
 // Force dynamic rendering to prevent static generation issues with Clerk
@@ -123,7 +124,7 @@ function BillingPageContent() {
       </header>
 
       <div className="container mx-auto px-4 py-8 max-w-4xl">
-        <CheckoutStatus onSettled={fetchBilling} />
+        <CheckoutStatus key={user.id} onSettled={fetchBilling} />
         {billingError && (
           <div className="mb-6 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
             {billingError}
@@ -185,6 +186,7 @@ function BillingPageContent() {
         </div>
 
         {billing?.isFrozen && <p role="alert" className="mb-4 rounded-lg bg-amber-50 p-4">Your payment needs attention. Choose Manage above to update your payment method or review the invoice.</p>}
+        <PackPurchaseHistory key={'receipts:'+user.id} />
         {!isUnlimited && <div className="space-y-3">
           <Link href="/pricing" className="underline">View one-time credit packs</Link>
           <p>Pack credits are added after a successful one-time payment. Packs do not renew. If you have an existing subscription, you can still manage it here; unused purchased credits remain after cancellation.</p>

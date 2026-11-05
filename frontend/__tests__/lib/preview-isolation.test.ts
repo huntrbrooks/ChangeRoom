@@ -24,6 +24,14 @@ test('test checkout is opt-in and cannot open production or live Stripe', () => 
   expect(canCreateCheckout({...staging, STRIPE_SECRET_KEY:'sk_live_fixture', CHANGEROOM_TEST_CHECKOUT:'true'})).toBe(false);
 });
 
+test('the release opens pack checkout only in the hosted live environment with the canonical return origin', () => {
+  const live = {VERCEL:'1',VERCEL_ENV:'production',NEXT_PUBLIC_APP_URL:'https://igetdressed.online',STRIPE_SECRET_KEY:'sk_live_fixture'};
+  expect(canCreateCheckout(live)).toBe(true);
+  for (const mismatch of [{VERCEL:'0'}, {VERCEL_ENV:'preview'}, {NEXT_PUBLIC_APP_URL:'https://stage.example.invalid'},
+    {STRIPE_SECRET_KEY:'sk_test_fixture'}, {CHANGEROOM_TEST_CHECKOUT:'true'}, {CHANGEROOM_ISOLATED_PREVIEW:'true'}])
+    expect(canCreateCheckout({...live,...mismatch})).toBe(false);
+});
+
 test.each([
   ['https://igetdressed.online', 'igetdressed.online'],
   ['https://www.getdressed.online', 'www.getdressed.online'],
